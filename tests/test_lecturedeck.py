@@ -103,6 +103,41 @@ class LecturedeckTest(unittest.TestCase):
             self.assertIn("window.LECTUREDECK", combined)
             self.assertIn("COURSE TITLE", combined)
 
+    def test_local_video_assets_are_validated(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "Video deck")
+            webdeck = unit / "webdeck"
+            assets = webdeck / "assets"
+            for name in ("clip.mp4", "poster.jpg", "captions.vtt"):
+                (assets / name).write_bytes(b"fixture")
+            slides = webdeck / "slides.js"
+            slides.write_text(
+                slides.read_text(encoding="utf-8")
+                + '\nconst videoFixture = {video: {src: "assets/clip.mp4", '
+                'poster: "assets/poster.jpg", tracks: [{src: "assets/captions.vtt"}], '
+                'originalUrl: "https://example.com/original"}};\n',
+                encoding="utf-8",
+            )
+            self.assertEqual([], validate_unit(unit))
+            (assets / "captions.vtt").unlink()
+            self.assertTrue(any("captions.vtt" in error for error in validate_unit(unit)))
+
+    def test_video_runtime_preserves_media_controls(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "Video runtime")
+            webdeck = unit / "webdeck"
+            script = (webdeck / "lecturedeck.js").read_text(encoding="utf-8")
+            styles = (webdeck / "lecturedeck.css").read_text(encoding="utf-8")
+            self.assertIn("function videoMarkup", script)
+            self.assertIn("controls playsinline", script)
+            self.assertIn('event.target.closest("video, audio', script)
+            self.assertIn(".layout-video", styles)
+            self.assertIn(".video-original-link", styles)
+
 
 if __name__ == "__main__":
     unittest.main()

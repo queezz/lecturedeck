@@ -2,6 +2,10 @@
 
 ## Shipped
 
+- **v0.2.0** - Add first-class offline video slides with local source and caption
+  validation, poster-based overview placeholders, explicit original-video
+  attribution links, and media-safe keyboard and touch navigation.
+
 - **v0.1.1** — Validate the local stylesheet and presentation runtime declared
   by `index.html` instead of forcing scaffold filenames. Existing self-contained
   unit snapshots can move to the shared CLI without runtime renames or release

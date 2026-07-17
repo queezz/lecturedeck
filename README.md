@@ -100,6 +100,43 @@ bundle Plotly JavaScript (`include_plotlyjs=True` or an equivalent local file),
 not use `"cdn"`. Any other interactive runtime must also be vendored inside the
 unit's `webdeck/assets/` tree before `lecturedeck check` can pass.
 
+## Local video excerpts
+
+Video slides use local, rights-cleared media under the unit's `webdeck/assets/`
+tree. The runtime loads metadata only until the presenter presses play, does not
+autoplay in overview, and leaves the video's keyboard and touch controls alone.
+
+```js
+{
+  title: "Hamilton's leap",
+  claim: "Three-dimensional rotations require four parameters.",
+  video: {
+    src: "assets/hamilton-bridge-excerpt.mp4",
+    type: "video/mp4",
+    poster: "assets/hamilton-bridge-poster.jpg",
+    title: "Hamilton and the quaternion rule",
+    caption: "A short classroom excerpt.",
+    source: "Video creator",
+    originalUrl: "https://www.youtube.com/watch?v=example",
+    originalLabel: "Watch the original video",
+    tracks: [
+      {
+        src: "assets/hamilton-bridge-en.vtt",
+        kind: "captions",
+        srclang: "en",
+        label: "English",
+        default: true
+      }
+    ]
+  }
+}
+```
+
+`sources: [{src, type}, ...]` may replace the single `src`/`type` pair when a
+unit provides multiple local encodings. A source link may be remote because it
+is ordinary attribution; every playable source, poster, and caption track must
+remain local so `lecturedeck check` and static releases work offline.
+
 ## Public-repository boundary
 
 This repository is intentionally generic and public. Do not commit:

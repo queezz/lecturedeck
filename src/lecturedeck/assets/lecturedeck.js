@@ -38,6 +38,22 @@
     return `<div class="interactive-frame"><iframe src="${escapeHtml(interactive.src)}" title="${escapeHtml(title)}" loading="eager" referrerpolicy="no-referrer"></iframe></div>`;
   }
 
+  function videoMarkup(video, thumbnail = false) {
+    if (!video) return "";
+    const title = video.title || "Lecture video";
+    const poster = video.poster ? ` poster="${escapeHtml(video.poster)}"` : "";
+    if (thumbnail) {
+      if (video.poster) return `<div class="video-placeholder has-poster"><img src="${escapeHtml(video.poster)}" alt=""><span>${escapeHtml(title)}</span></div>`;
+      return `<div class="video-placeholder">${escapeHtml(title)}</div>`;
+    }
+    const sources = video.sources?.length ? video.sources : video.src ? [video] : [];
+    const sourceMarkup = sources.map(source => `<source src="${escapeHtml(source.src)}"${source.type ? ` type="${escapeHtml(source.type)}"` : ""}>`).join("");
+    const trackMarkup = (video.tracks || []).map(track => `<track src="${escapeHtml(track.src)}" kind="${escapeHtml(track.kind || "captions")}" srclang="${escapeHtml(track.srclang || "en")}" label="${escapeHtml(track.label || track.srclang || "Captions")}"${track.default ? " default" : ""}>`).join("");
+    const originalLink = video.originalUrl ? `<a class="video-original-link" href="${escapeHtml(video.originalUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(video.originalLabel || "Open the original video")}</a>` : "";
+    const caption = video.caption || video.source || originalLink ? `<figcaption>${video.caption || ""}${video.source ? `<strong>${video.source}</strong>` : ""}${originalLink}</figcaption>` : "";
+    return `<figure class="video-card"><video class="lecture-video" controls playsinline preload="metadata" aria-label="${escapeHtml(title)}"${poster}${video.muted ? " muted" : ""}${video.loop ? " loop" : ""}>${sourceMarkup}${trackMarkup}<p>Your browser cannot play this local video.</p></video>${caption}</figure>`;
+  }
+
   function partLabel(i) {
     let label = spec.meta.opening || "OPENING";
     for (let j = 0; j <= i; j += 1) {
@@ -50,12 +66,13 @@
   function slideMarkup(slide, i, thumbnail = false) {
     const chromeFree = slide.chrome === false;
     const figures = slide.figures || (slide.figure ? [slide.figure] : []);
-    const layout = slide.layout || (slide.interactive ? "interactive" : figures.length > 1 ? "figures" : figures.length ? "figure" : slide.type === "title" ? "title" : slide.cards?.length ? "cards" : slide.formula ? "equation" : "statement");
+    const layout = slide.layout || (slide.interactive ? "interactive" : slide.video ? "video" : figures.length > 1 ? "figures" : figures.length ? "figure" : slide.type === "title" ? "title" : slide.cards?.length ? "cards" : slide.formula ? "equation" : "statement");
     const figureBlock = figures.length ? `<div class="figure-stack ${figures.length === 2 ? "two" : figures.length >= 3 ? "three" : ""}">${figures.map(figureMarkup).join("")}</div>` : "";
     const cardBlock = cardsMarkup(slide.cards);
     const interactiveBlock = interactiveMarkup(slide.interactive, thumbnail);
+    const videoBlock = videoMarkup(slide.video, thumbnail);
     const copy = `<div class="copy">${slide.claim ? `<p class="claim">${slide.claim}</p>` : ""}${formulaMarkup(slide.formula)}${slide.body ? `<div class="body-copy">${slide.body}</div>` : ""}${slide.quote ? `<div class="quote">${slide.quote}</div>` : ""}</div>`;
-    const body = ["figure", "figure-dominant", "figure-stage", "title", "figures"].includes(layout) ? `${copy}${figureBlock}` : layout === "cards" ? `${copy}${cardBlock}` : layout === "interactive" ? `${copy}${interactiveBlock}` : copy;
+    const body = ["figure", "figure-dominant", "figure-stage", "title", "figures"].includes(layout) ? `${copy}${figureBlock}` : layout === "cards" ? `${copy}${cardBlock}` : layout === "interactive" ? `${copy}${interactiveBlock}` : layout === "video" ? `${copy}${videoBlock}` : copy;
     const header = chromeFree ? "" : `<header class="slide-head"><p class="eyebrow">${partLabel(i)}</p><h1 class="slide-title">${slide.title || ""}</h1></header>`;
     const footer = chromeFree ? "" : `<footer class="slide-foot"><span class="source">${slide.source || ""}</span><span class="footer-nav"><span class="course-name">${spec.meta.section || ""}</span>${slide.beat ? `<span class="beat">${slide.beat}</span>` : ""}<span class="page-number">${i + 1} / ${spec.slides.length}</span></span></footer>`;
     return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || "red")}" data-index="${i}" aria-label="Slide ${i + 1}: ${escapeHtml(slide.title)}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
@@ -144,6 +161,7 @@
     if (direction === 1 || direction === -1) go(index + direction);
   });
   addEventListener("keydown", event => {
+    if (event.target instanceof Element && event.target.closest("video, audio, input, textarea, select, button, a, [contenteditable]")) return;
     if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(event.key)) { event.preventDefault(); go(index + 1); }
     else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(event.key)) { event.preventDefault(); go(index - 1); }
     else if (event.key === "Home") go(0);
@@ -152,7 +170,7 @@
     else if (event.key.toLowerCase() === "f") toggleFullscreen();
   });
   let touchX = null;
-  addEventListener("touchstart", e => { touchX = e.changedTouches[0].clientX; }, {passive:true});
+  addEventListener("touchstart", e => { touchX = e.target instanceof Element && e.target.closest("video") ? null : e.changedTouches[0].clientX; }, {passive:true});
   addEventListener("touchend", e => { if (touchX === null) return; const dx = e.changedTouches[0].clientX - touchX; if (Math.abs(dx) > 55) go(index + (dx < 0 ? 1 : -1)); touchX = null; }, {passive:true});
   overview.addEventListener("click", event => { const card = event.target.closest("[data-index]"); if (!card) return; index = Number(card.dataset.index); toggleOverview(false); });
   document.querySelector("#overview-button").addEventListener("click", () => toggleOverview());

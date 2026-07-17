@@ -99,9 +99,20 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 .layout-interactive { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
 .layout-interactive .copy { display: block; }
 .layout-interactive .claim { font-size: 24px; line-height: 1.1; }
+.layout-video { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
+.layout-video .copy { display: block; }
+.layout-video .claim { font-size: 24px; line-height: 1.1; }
 .interactive-frame { min-width: 0; min-height: 0; overflow: hidden; border: 1px solid #504945; background: #111516; }
 .interactive-frame iframe { width: 100%; height: 100%; border: 0; display: block; background: #111516; }
 .interactive-placeholder { height: 100%; display: grid; place-items: center; border: 2px dashed #504945; color: var(--muted); font-size: 28px; }
+.video-card { min-width: 0; min-height: 0; margin: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 7px; }
+.lecture-video { width: 100%; height: 100%; min-height: 0; object-fit: contain; display: block; background: #050708; }
+.video-card figcaption { min-height: 28px; display: flex; align-items: baseline; gap: 12px; padding: 5px 10px 6px; border-left: 3px solid var(--accent); background: rgba(40,40,40,.88); color: var(--ink); font-size: 16px; line-height: 1.15; }
+.video-card figcaption strong { color: var(--muted); font-size: 14px; font-weight: 600; }
+.video-original-link { margin-left: auto; color: var(--blue); font-weight: 700; text-underline-offset: 3px; }
+.video-placeholder { height: 100%; position: relative; overflow: hidden; display: grid; place-items: center; border: 2px dashed #504945; background: #111516; color: var(--muted); font-size: 28px; }
+.video-placeholder.has-poster img { width: 100%; height: 100%; object-fit: cover; opacity: .58; }
+.video-placeholder.has-poster span { position: absolute; inset: 0; display: grid; place-items: center; padding: 28px; color: var(--strong); background: rgba(5,7,8,.34); text-align: center; font-weight: 700; }
 .copy { display: flex; min-width: 0; flex-direction: column; justify-content: center; gap: 18px; }
 .claim { margin: 0; color: var(--strong); font-size: 36px; line-height: 1.12; font-weight: 700; }
 .claim strong, .body-copy strong { color: var(--accent); }
