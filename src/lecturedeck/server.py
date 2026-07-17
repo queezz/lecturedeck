@@ -3,19 +3,32 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import posixpath
 from functools import partial
 from hashlib import sha1
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from importlib.resources import files
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from . import __version__
 
+VIEWER_ROUTES = {
+    "/webdeck": "index.html",
+    "/webdeck/": "index.html",
+    "/webdeck/index.html": "index.html",
+    "/webdeck/lecturedeck.css": "lecturedeck.css",
+    "/webdeck/lecturedeck.js": "lecturedeck.js",
+    "/webdeck/deck.css": "deck.css",
+}
+ADJUST_ROUTE = "/__lecturedeck/adjust.js"
+
 
 def content_version(root: Path) -> str:
     digest = sha1()
+    digest.update(__version__.encode("ascii"))
     for path in sorted(p for p in root.rglob("*") if p.is_file()):
         stat = path.stat()
         digest.update(path.relative_to(root).as_posix().encode("utf-8"))
@@ -36,6 +49,36 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
         """Decoded, dot-segment-free request path, mirroring translate_path."""
         return posixpath.normpath(unquote(urlsplit(self.path).path))
 
+    def packaged_asset(self, route: str):
+        """Return a packaged viewer asset when the unit has no local override."""
+        name = VIEWER_ROUTES.get(route)
+        if name is None or (self.deck_root / "webdeck" / name).is_file():
+            return None
+        return files("lecturedeck").joinpath("assets", name)
+
+    def send_packaged(self, asset, include_body: bool) -> None:
+        payload = asset.read_bytes()
+        content_type = mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        if include_body:
+            self.wfile.write(payload)
+
+    def send_served_index(self, include_body: bool) -> None:
+        local = self.deck_root / "webdeck" / "index.html"
+        index = local if local.is_file() else files("lecturedeck").joinpath("assets", "index.html")
+        text = index.read_text(encoding="utf-8")
+        script = '<script src="/__lecturedeck/adjust.js"></script>'
+        payload = text.replace("</body>", f"{script}</body>").encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        if include_body:
+            self.wfile.write(payload)
+
     @staticmethod
     def serves(route: str) -> bool:
         """Only the unit's webdeck bundle is public; scripts and briefs are not."""
@@ -43,6 +86,10 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
         route = self.normalized_route()
+        if route == ADJUST_ROUTE:
+            asset = files("lecturedeck").joinpath("assets", "adjust.js")
+            self.send_packaged(asset, include_body=True)
+            return
         if route == "/__lecturedeck/version":
             payload = json.dumps(
                 {
@@ -66,11 +113,30 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
         if not self.serves(route):
             self.send_error(HTTPStatus.NOT_FOUND, "Only webdeck/ is served")
             return
+        if route in {"/webdeck", "/webdeck/", "/webdeck/index.html"}:
+            self.send_served_index(include_body=True)
+            return
+        packaged = self.packaged_asset(route)
+        if packaged is not None:
+            self.send_packaged(packaged, include_body=True)
+            return
         super().do_GET()
 
     def do_HEAD(self) -> None:  # noqa: N802 - stdlib handler API
-        if not self.serves(self.normalized_route()):
+        route = self.normalized_route()
+        if route == ADJUST_ROUTE:
+            asset = files("lecturedeck").joinpath("assets", "adjust.js")
+            self.send_packaged(asset, include_body=False)
+            return
+        if not self.serves(route):
             self.send_error(HTTPStatus.NOT_FOUND, "Only webdeck/ is served")
+            return
+        if route in {"/webdeck", "/webdeck/", "/webdeck/index.html"}:
+            self.send_served_index(include_body=False)
+            return
+        packaged = self.packaged_asset(route)
+        if packaged is not None:
+            self.send_packaged(packaged, include_body=False)
             return
         super().do_HEAD()
 

@@ -6,8 +6,9 @@
     <meta name="color-scheme" content="dark">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>{{TITLE}}</title>
+    <title>Lecturedeck</title>
     <link rel="stylesheet" href="lecturedeck.css">
+    <link rel="stylesheet" href="deck.css">
   </head>
   <body>
     <main id="deck" class="deck" aria-live="polite"></main>
@@ -15,6 +16,7 @@
     <nav class="deck-chrome" aria-label="Presentation controls">
       <button id="overview-button" type="button" title="Overview (O)">Overview</button>
       <span id="counter" aria-label="Slide number"></span>
+      <button id="theme-button" type="button" title="Switch theme (T)">Light theme</button>
       <button id="fullscreen-button" type="button" title="Fullscreen (F)">Fullscreen</button>
     </nav>
     <nav id="touch-nav" class="touch-nav" aria-label="Slide navigation">

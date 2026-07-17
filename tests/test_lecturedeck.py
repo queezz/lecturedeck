@@ -4,6 +4,7 @@ import tempfile
 import threading
 import unittest
 from contextlib import redirect_stderr
+from importlib.resources import files
 from io import StringIO
 from pathlib import Path
 
@@ -14,17 +15,58 @@ from lecturedeck.server import make_server
 from lecturedeck.validation import release_unit, validate_unit
 
 
+def packaged_text(name: str) -> str:
+    return files("lecturedeck").joinpath("assets", name).read_text(encoding="utf-8")
+
+
 class LecturedeckTest(unittest.TestCase):
-    def test_scaffold_check_and_release(self):
+    def test_scaffold_is_content_only(self):
         with tempfile.TemporaryDirectory() as root:
             unit = Path(root) / "unit"
             unit.mkdir()
             created = scaffold_unit(unit, "Test deck")
-            self.assertEqual(4, len(created))
+            webdeck = unit / "webdeck"
+            self.assertEqual({"deck.css", "slides.js"}, {path.name for path in created})
+            self.assertTrue((webdeck / "assets").is_dir())
+            self.assertFalse((webdeck / "index.html").exists())
+            self.assertFalse((webdeck / "lecturedeck.js").exists())
+            self.assertIn('title: "Test deck"', (webdeck / "slides.js").read_text())
             self.assertEqual([], validate_unit(unit))
+
+    def test_release_materializes_viewer_and_preserves_unit_css(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "Release deck")
+            custom_css = ".claim { letter-spacing: .01em; }\n"
+            (unit / "webdeck" / "deck.css").write_text(custom_css, encoding="utf-8")
             output = Path(root) / "release"
             release_unit(unit, output)
-            self.assertTrue((output / "index.html").is_file())
+            for name in ("index.html", "lecturedeck.css", "lecturedeck.js", "slides.js"):
+                self.assertTrue((output / name).is_file(), name)
+            self.assertFalse((output / "adjust.js").exists())
+            self.assertEqual(custom_css, (output / "deck.css").read_text(encoding="utf-8"))
+            self.assertIn('href="deck.css"', (output / "index.html").read_text())
+
+    def test_release_preserves_legacy_viewer_overrides(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "Legacy deck")
+            webdeck = unit / "webdeck"
+            for name in ("index.html", "lecturedeck.css", "lecturedeck.js"):
+                marker = (
+                    f"<!-- local {name} -->"
+                    if name == "index.html"
+                    else f"/* local {name} */"
+                    if name.endswith(".css")
+                    else f"// local {name}"
+                )
+                content = packaged_text(name) + f"\n{marker}\n"
+                (webdeck / name).write_text(content, encoding="utf-8")
+            output = Path(root) / "release"
+            release_unit(unit, output)
+            self.assertIn("local lecturedeck.js", (output / "lecturedeck.js").read_text())
 
     def test_external_dependency_is_rejected(self):
         with tempfile.TemporaryDirectory() as root:
@@ -32,7 +74,10 @@ class LecturedeckTest(unittest.TestCase):
             unit.mkdir()
             scaffold_unit(unit, "Test deck")
             index = unit / "webdeck" / "index.html"
-            index.write_text(index.read_text() + '<script src="https://example.com/x.js"></script>')
+            index.write_text(
+                packaged_text("index.html") + '<script src="https://example.com/x.js"></script>',
+                encoding="utf-8",
+            )
             self.assertTrue(any("external dependency" in error for error in validate_unit(unit)))
 
     def test_external_source_link_is_not_a_runtime_dependency(self):
@@ -40,10 +85,10 @@ class LecturedeckTest(unittest.TestCase):
             unit = Path(root) / "unit"
             unit.mkdir()
             scaffold_unit(unit, "Test deck")
-            index = unit / "webdeck" / "index.html"
-            index.write_text(
-                index.read_text()
-                + '<a href="https://example.com/source">Source</a>',
+            slides = unit / "webdeck" / "slides.js"
+            slides.write_text(
+                slides.read_text(encoding="utf-8")
+                + '\nconst source = \'<a href="https://example.com/source">Source</a>\';',
                 encoding="utf-8",
             )
             self.assertEqual([], validate_unit(unit))
@@ -54,15 +99,15 @@ class LecturedeckTest(unittest.TestCase):
             unit.mkdir()
             scaffold_unit(unit, "Retained deck")
             webdeck = unit / "webdeck"
-            (webdeck / "lecturedeck.css").rename(webdeck / "retained-runtime.css")
-            (webdeck / "lecturedeck.js").rename(webdeck / "retained-runtime.js")
-            index = webdeck / "index.html"
-            index.write_text(
-                index.read_text(encoding="utf-8")
-                .replace("lecturedeck.css", "retained-runtime.css")
-                .replace("lecturedeck.js", "retained-runtime.js"),
-                encoding="utf-8",
+            (webdeck / "retained-runtime.css").write_text(
+                packaged_text("lecturedeck.css"), encoding="utf-8"
             )
+            (webdeck / "retained-runtime.js").write_text(
+                packaged_text("lecturedeck.js"), encoding="utf-8"
+            )
+            index = packaged_text("index.html").replace("lecturedeck.css", "retained-runtime.css")
+            index = index.replace("lecturedeck.js", "retained-runtime.js")
+            (webdeck / "index.html").write_text(index, encoding="utf-8")
             self.assertEqual([], validate_unit(unit))
 
     def test_serve_lan_shortcut(self):
@@ -74,26 +119,33 @@ class LecturedeckTest(unittest.TestCase):
         parser = build_parser()
         with redirect_stderr(StringIO()):
             with self.assertRaises(SystemExit):
-                parser.parse_args(
-                    ["serve", "sample-unit", "--lan", "--host", "192.0.2.10"]
-                )
+                parser.parse_args(["serve", "sample-unit", "--lan", "--host", "192.0.2.10"])
 
-    def test_touch_navigation_is_packaged(self):
-        with tempfile.TemporaryDirectory() as root:
-            unit = Path(root) / "unit"
-            unit.mkdir()
-            scaffold_unit(unit, "Touch deck")
-            webdeck = unit / "webdeck"
-            index = (webdeck / "index.html").read_text(encoding="utf-8")
-            script = (webdeck / "lecturedeck.js").read_text(encoding="utf-8")
-            styles = (webdeck / "lecturedeck.css").read_text(encoding="utf-8")
-            self.assertIn('id="previous-button"', index)
-            self.assertIn('id="touch-fullscreen-button"', index)
-            self.assertIn('id="next-button"', index)
-            self.assertIn("webkitRequestFullscreen", script)
-            self.assertIn("pseudo-fullscreen", script)
-            self.assertIn("/__lecturedeck/version", script)
-            self.assertIn("body.immersive-slide .touch-nav", styles)
+    def test_runtime_features_are_packaged(self):
+        index = packaged_text("index.html")
+        script = packaged_text("lecturedeck.js")
+        styles = packaged_text("lecturedeck.css")
+        self.assertIn('id="previous-button"', index)
+        self.assertIn('href="deck.css"', index)
+        self.assertIn('id="theme-button"', index)
+        self.assertIn("webkitRequestFullscreen", script)
+        self.assertIn("function setTheme", script)
+        self.assertIn("escapedNativeFullscreen", script)
+        self.assertIn("deliberateNativeFullscreenExit", script)
+        self.assertIn('addEventListener("wheel"', script)
+        self.assertIn("function partAccent", script)
+        self.assertIn("slide.className", script)
+        self.assertIn("function videoMarkup", script)
+        self.assertIn("function figureGeometry", script)
+        self.assertIn("data-figure-index", script)
+        self.assertIn("figure.shift", script)
+        self.assertIn("controls playsinline", script)
+        self.assertIn('event.target.closest("video, audio', script)
+        self.assertIn("body.immersive-slide .touch-nav", styles)
+        self.assertIn("body.light-theme", styles)
+        self.assertIn(":fullscreen .deck-chrome", styles)
+        self.assertIn(".layout-video", styles)
+        self.assertIn(".body-copy table", styles)
 
     def test_scaffold_has_no_course_specific_identity(self):
         with tempfile.TemporaryDirectory() as root:
@@ -129,41 +181,28 @@ class LecturedeckTest(unittest.TestCase):
             (assets / "captions.vtt").unlink()
             self.assertTrue(any("captions.vtt" in error for error in validate_unit(unit)))
 
-    def test_wheel_navigation_is_packaged(self):
-        with tempfile.TemporaryDirectory() as root:
-            unit = Path(root) / "unit"
-            unit.mkdir()
-            scaffold_unit(unit, "Wheel deck")
-            webdeck = unit / "webdeck"
-            script = (webdeck / "lecturedeck.js").read_text(encoding="utf-8")
-            styles = (webdeck / "lecturedeck.css").read_text(encoding="utf-8")
-            self.assertIn('addEventListener("wheel"', script)
-            self.assertIn("scaleOverviewThumbs", script)
-            self.assertIn(".body-copy a", styles)
-            self.assertIn(".body-copy table", styles)
-
     def test_published_hashes_include_current_runtime(self):
-        with tempfile.TemporaryDirectory() as root:
-            unit = Path(root) / "unit"
-            unit.mkdir()
-            scaffold_unit(unit, "Hash deck")
-            for name in scaffold.RUNTIME_FILES:
-                text = (unit / "webdeck" / name).read_text(encoding="utf-8")
-                self.assertIn(runtime_hash(text), scaffold.PUBLISHED_RUNTIME_HASHES, name)
+        for name in scaffold.RUNTIME_FILES:
+            self.assertIn(
+                runtime_hash(packaged_text(name)), scaffold.PUBLISHED_RUNTIME_HASHES, name
+            )
 
-    def test_refresh_updates_snapshots_and_keeps_forks(self):
+    def test_refresh_updates_legacy_snapshots_and_ignores_content_only_units(self):
         with tempfile.TemporaryDirectory() as root:
             unit = Path(root) / "unit"
             unit.mkdir()
             scaffold_unit(unit, "Refresh deck")
+            self.assertEqual(
+                [("lecturedeck.css", "missing"), ("lecturedeck.js", "missing")],
+                refresh_unit(unit),
+            )
             webdeck = unit / "webdeck"
-            slides = (webdeck / "slides.js").read_text(encoding="utf-8") + "// unit-owned\n"
-            (webdeck / "slides.js").write_text(slides, encoding="utf-8", newline="\n")
+            for name in scaffold.RUNTIME_FILES:
+                (webdeck / name).write_text(packaged_text(name), encoding="utf-8", newline="\n")
             self.assertEqual(
                 [("lecturedeck.css", "current"), ("lecturedeck.js", "current")],
                 refresh_unit(unit),
             )
-
             stale = "// an older published runtime\n"
             (webdeck / "lecturedeck.js").write_text(stale, encoding="utf-8", newline="\n")
             original_hashes = scaffold.PUBLISHED_RUNTIME_HASHES
@@ -172,15 +211,10 @@ class LecturedeckTest(unittest.TestCase):
                 self.assertIn(("lecturedeck.js", "refreshed"), refresh_unit(unit))
             finally:
                 scaffold.PUBLISHED_RUNTIME_HASHES = original_hashes
-            packaged = (webdeck / "lecturedeck.js").read_text(encoding="utf-8")
-            self.assertIn('addEventListener("wheel"', packaged)
-
-            fork = packaged + "// local fork\n"
+            fork = packaged_text("lecturedeck.js") + "// local fork\n"
             (webdeck / "lecturedeck.js").write_text(fork, encoding="utf-8", newline="\n")
             self.assertIn(("lecturedeck.js", "kept"), refresh_unit(unit))
-            self.assertEqual(fork, (webdeck / "lecturedeck.js").read_text(encoding="utf-8"))
             self.assertIn(("lecturedeck.js", "refreshed"), refresh_unit(unit, force=True))
-            self.assertEqual(slides, (webdeck / "slides.js").read_text(encoding="utf-8"))
 
     def test_refresh_treats_crlf_snapshot_as_clean(self):
         with tempfile.TemporaryDirectory() as root:
@@ -188,44 +222,49 @@ class LecturedeckTest(unittest.TestCase):
             unit.mkdir()
             scaffold_unit(unit, "CRLF deck")
             target = unit / "webdeck" / "lecturedeck.css"
-            crlf = target.read_text(encoding="utf-8").replace("\n", "\r\n")
-            target.write_text(crlf, encoding="utf-8", newline="")
+            target.write_text(
+                packaged_text("lecturedeck.css").replace("\n", "\r\n"),
+                encoding="utf-8",
+                newline="",
+            )
             self.assertIn(("lecturedeck.css", "current"), refresh_unit(unit))
 
-    def test_section_accent_flows_to_following_slides(self):
-        with tempfile.TemporaryDirectory() as root:
-            unit = Path(root) / "unit"
-            unit.mkdir()
-            scaffold_unit(unit, "Accent deck")
-            script = (unit / "webdeck" / "lecturedeck.js").read_text(encoding="utf-8")
-            self.assertIn("function partAccent", script)
-            self.assertIn("openingAccent", script)
-            self.assertIn("slide.className", script)
-
-    def test_server_serves_only_webdeck(self):
+    def test_server_serves_packaged_viewer_content_and_unit_override(self):
         with tempfile.TemporaryDirectory() as root:
             unit = Path(root) / "unit"
             unit.mkdir()
             scaffold_unit(unit, "Scope deck")
+            webdeck = unit / "webdeck"
+            custom_css = "/* unit deck css */"
+            (webdeck / "deck.css").write_text(custom_css, encoding="utf-8")
             (unit / "script.md").write_text("private lecture notes", encoding="utf-8")
             server = make_server(unit, "127.0.0.1", 0, livereload=False)
             port = server.server_address[1]
             threading.Thread(target=server.serve_forever, daemon=True).start()
             try:
-                def request(path):
+                def request(path, method="GET"):
                     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
                     try:
-                        connection.request("GET", path)
+                        connection.request(method, path)
                         response = connection.getresponse()
-                        return response.status, response.read()
+                        return response.status, response.read(), response.getheader("Content-Type")
                     finally:
                         connection.close()
 
-                self.assertEqual(200, request("/webdeck/")[0])
-                self.assertEqual(302, request("/")[0])
-                status, body = request("/__lecturedeck/version")
+                status, body, _ = request("/webdeck/")
+                self.assertEqual(200, status)
+                self.assertIn(b"lecturedeck.js", body)
+                self.assertIn(b"/__lecturedeck/adjust.js", body)
+                self.assertEqual(200, request("/webdeck/lecturedeck.js", "HEAD")[0])
+                status, body, content_type = request("/__lecturedeck/adjust.js")
+                self.assertEqual(200, status)
+                self.assertIn(b"Geometry adjust", body)
+                self.assertEqual("text/javascript", content_type)
+                self.assertEqual(custom_css.encode(), request("/webdeck/deck.css")[1])
+                status, body, _ = request("/__lecturedeck/version")
                 self.assertEqual(200, status)
                 self.assertFalse(json.loads(body)["livereload"])
+                self.assertEqual(302, request("/")[0])
                 self.assertEqual(404, request("/script.md")[0])
                 self.assertEqual(404, request("/webdeck/../script.md")[0])
                 self.assertEqual(404, request("/webdeck/%2e%2e/script.md")[0])
@@ -234,19 +273,25 @@ class LecturedeckTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
-    def test_video_runtime_preserves_media_controls(self):
+    def test_server_prefers_legacy_local_viewer(self):
         with tempfile.TemporaryDirectory() as root:
             unit = Path(root) / "unit"
             unit.mkdir()
-            scaffold_unit(unit, "Video runtime")
-            webdeck = unit / "webdeck"
-            script = (webdeck / "lecturedeck.js").read_text(encoding="utf-8")
-            styles = (webdeck / "lecturedeck.css").read_text(encoding="utf-8")
-            self.assertIn("function videoMarkup", script)
-            self.assertIn("controls playsinline", script)
-            self.assertIn('event.target.closest("video, audio', script)
-            self.assertIn(".layout-video", styles)
-            self.assertIn(".video-original-link", styles)
+            scaffold_unit(unit, "Legacy serve")
+            local = b"/* local viewer */"
+            (unit / "webdeck" / "lecturedeck.js").write_bytes(local)
+            server = make_server(unit, "127.0.0.1", 0, livereload=False)
+            port = server.server_address[1]
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                connection.request("GET", "/webdeck/lecturedeck.js")
+                response = connection.getresponse()
+                self.assertEqual(local, response.read())
+                connection.close()
+            finally:
+                server.shutdown()
+                server.server_close()
 
 
 if __name__ == "__main__":

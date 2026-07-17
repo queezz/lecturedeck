@@ -15,7 +15,7 @@ what shipped. Update this document when a phase ships or the design changes.
 - Figure placement is judged visually; iterating numeric offsets against a
   reload is slow. Small on-the-glass adjustments are wanted.
 
-## 1. Viewer/content split (target: v0.5.0)
+## 1. Viewer/content split (shipped in v0.5.0)
 
 `lecturedeck` becomes a viewer; a deck is files.
 
@@ -36,8 +36,8 @@ what shipped. Update this document when a phase ships or the design changes.
 - `init` scaffolds only content files. The `{{TITLE}}` substitution in
   `index.html` is dropped; the runtime already titles the document from
   `meta.title`.
-- Optional soft check: `meta.requires: ">=0.5"` warns when a deck expects a
-  newer viewer.
+- A future soft check may let `meta.requires: ">=0.5"` warn when a deck expects
+  a newer viewer; this was not required for the split itself.
 
 ## 2. Markdown authoring (target: v0.6.x)
 
@@ -58,18 +58,20 @@ Markdown in, the current deck model out. Authoring sugar, not a new runtime.
   stay standard-library-only, offline, CDN-free; decks without the extra
   remain fully viewable.
 
-## 3. Geometry adjust mode (independent; can precede §2)
+## 3. Geometry adjust mode (stage one shipped in v0.6.0)
 
 Figure shifting and scaling happen on the glass, persist as data.
 
-- In serve mode, an adjust key enters keyboard-only geometry mode on slides
-  with figures: arrows nudge the selected figure, brackets scale, reset key
-  restores. Rendering is a CSS transform on the figure card.
+- Stage one: in serve mode, `G` enters keyboard-only geometry mode on slides
+  with figures. Arrow keys nudge the selected figure, brackets scale, `R`
+  restores its source values, and `Tab` changes selection. Rendering is a CSS
+  transform on the figure card.
 - The result is declarative data on the figure — `shift: [dx, dy]`,
   `scale: 1.08` (markdown: `{shift=4,-12 scale=1.08}`) — never a persisted
   DOM mutation. Stage one displays the values on screen for hand-pasting;
   stage two persists them through the guarded write-back channel (§4).
-- No adjust code ships in static releases.
+- Stage one controls are injected only by the server; static releases contain
+  no adjustment code. Declarative source geometry still renders in releases.
 
 ## 4. Guarded write-back (accepted; passkey model)
 

@@ -106,9 +106,9 @@ def build_parser() -> argparse.ArgumentParser:
 def serve(args: argparse.Namespace) -> int:
     repo = args.repo.resolve() if args.repo else find_repo_root(Path.cwd())
     unit_root = repo / "Studio" / "work" / "presentations" / args.unit
-    index = unit_root / "webdeck" / "index.html"
-    if not index.is_file():
-        print(f"ERROR: web deck not found: {index}", file=sys.stderr)
+    slides = unit_root / "webdeck" / "slides.js"
+    if not slides.is_file():
+        print(f"ERROR: web deck not found: {slides}", file=sys.stderr)
         return 2
 
     bind_host = "0.0.0.0" if args.lan else args.host
@@ -172,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
             "current": "already matches this runtime",
             "refreshed": "updated to this runtime",
             "kept": "locally modified; kept (use --force to overwrite)",
-            "missing": "not present; unit retains its own runtime files",
+            "missing": "not present; installed viewer is used",
         }
         for name, state in results:
             print(f"{name}: {notes[state]}")
@@ -183,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
             for error in errors:
                 print(f"ERROR: {error}", file=sys.stderr)
             return 2
-        print(f"OK: {args.unit} webdeck is self-contained")
+        print(f"OK: {args.unit} webdeck content and installed viewer are valid")
         return 0
     if args.command == "release":
         try:

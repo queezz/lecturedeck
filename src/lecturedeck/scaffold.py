@@ -1,4 +1,4 @@
-"""Create and refresh unit-local webdecks from the shared runtime scaffold."""
+"""Create content-only webdecks and refresh legacy runtime snapshots."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from importlib.resources import files
 from pathlib import Path
 
 RUNTIME_FILES = ("lecturedeck.css", "lecturedeck.js")
+CONTENT_FILES = ("deck.css", "slides.js")
 
 # sha256 of every published runtime file (BOM stripped, CRLF normalized).
 # Append the new hashes whenever a release changes a runtime asset; a unit
@@ -20,6 +21,10 @@ PUBLISHED_RUNTIME_HASHES = frozenset(
         "05fb40d8e95899e7e0f7f55ee96089349f2c91551784097bde6bec4801ce08b5",  # css v0.3.0
         "dde8d9366bdc95159b37609f8d36fa1ad15351e8852b1e916ec9cd5b542eb2a1",  # js v0.3.0
         "6941b10008cc4137f7205b0bc04f4d9e392995ea46766ad9ddb9ab9fd44dbce8",  # js v0.4.0
+        "ccde58190cea3d80ab6b14cd708aaead1c97592ebe330b61bf5dd76726d8798a",  # css v0.6.0
+        "8ce2c24057be95c8f6988b2366966e0aba8750ef1c7c17e9ea0506975e943ebf",  # js v0.6.0
+        "8e19f06ba6478ada711165bd13ed372df445190175cb153e8468062360c23f12",  # css v0.7.0
+        "87c4097f4962b7b3f065e957e88f4012b6dd37c3b5b2ce4e6f82aa13a80ec103",  # js v0.7.0
     }
 )
 
@@ -36,8 +41,8 @@ def refresh_unit(unit_root: Path, force: bool = False) -> list[tuple[str, str]]:
     (the unit retained its own runtime filenames).
     """
     webdeck = unit_root / "webdeck"
-    if not (webdeck / "index.html").is_file():
-        raise FileNotFoundError(f"web deck not found: {webdeck / 'index.html'}")
+    if not (webdeck / "slides.js").is_file():
+        raise FileNotFoundError(f"web deck not found: {webdeck / 'slides.js'}")
     asset_root = files("lecturedeck").joinpath("assets")
     results: list[tuple[str, str]] = []
     for name in RUNTIME_FILES:
@@ -64,13 +69,12 @@ def scaffold_unit(unit_root: Path, title: str) -> list[Path]:
     webdeck.mkdir(exist_ok=True)
     asset_root = files("lecturedeck").joinpath("assets")
     created: list[Path] = []
-    names = ("index.html", "lecturedeck.css", "lecturedeck.js", "slides.js")
-    for name in names:
+    for name in CONTENT_FILES:
         target = webdeck / name
         if target.exists():
             continue
         content = asset_root.joinpath(name).read_text(encoding="utf-8")
-        if name in {"index.html", "slides.js"}:
+        if name == "slides.js":
             content = content.replace("{{TITLE}}", title)
         target.write_text(content, encoding="utf-8", newline="\n")
         created.append(target)

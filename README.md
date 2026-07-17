@@ -39,16 +39,21 @@ Studio/work/presentations/<unit>/
   script.md
   workflow-state.yaml
   webdeck/
-    index.html
-    lecturedeck.css
-    lecturedeck.js
     slides.js
+    deck.css
     assets/
 ```
 
-Only `webdeck/` is served or copied into a static release. `lecturedeck` never
-reads adjacent lecture scripts, source books, agent notes, or other course
-materials.
+`slides.js` and `assets/` are the deck content. `deck.css` is an optional,
+unit-owned override loaded after the installed viewer styles. While serving,
+`index.html`, `lecturedeck.css`, and `lecturedeck.js` come from the installed
+package; `release` materializes them into the static bundle. Only `webdeck/`
+content is exposed or copied, and `lecturedeck` never reads adjacent lecture
+scripts, source books, agent notes, or other course materials.
+
+Legacy units may retain local copies of any viewer file. Those files override
+the installed package while serving and are preserved in releases, so migration
+to content-only units can happen deliberately.
 
 ## Commands
 
@@ -62,19 +67,21 @@ lecturedeck serve <unit> --livereload
 lecturedeck release <unit> --output <new-output-directory>
 ```
 
-`init` creates the four runtime files and an `assets/` directory without
-overwriting existing files. `check` rejects missing files, references that
-escape `webdeck/`, and external runtime dependencies. Normal citation links in
-`<a href="https://...">` remain allowed. `release` validates first, copies one
-static bundle, and refuses to overwrite its destination.
+`init` creates `slides.js`, `deck.css`, and an `assets/` directory without
+overwriting existing files. `check` validates the content against the installed
+viewer and rejects missing files, references that escape `webdeck/`, and
+external runtime dependencies. Normal citation links in
+`<a href="https://...">` remain allowed. `release` validates first, freezes the
+installed viewer into one self-contained static bundle, and refuses to
+overwrite its destination.
 
-`refresh` updates a unit's copies of `lecturedeck.css` and `lecturedeck.js`
-to the installed runtime. Unit webdecks hold snapshots, so pulling a new
-`lecturedeck` does not change existing units until they are refreshed. A
-snapshot matching any published runtime version is replaced; a file with
-local modifications is kept and reported until `--force`, and `slides.js`,
-`index.html`, and `assets/` are never touched. Review the diff in the course
-repository afterward.
+`refresh` remains a migration aid for legacy units. It updates local copies of
+`lecturedeck.css` and `lecturedeck.js` to the installed runtime. A snapshot
+matching any published runtime version is replaced; a file with local
+modifications is kept and reported until `--force`, and `slides.js`,
+`index.html`, `deck.css`, and `assets/` are never touched. Content-only units
+report the viewer files as missing because they already use the installed
+viewer. Review any resulting diff in the course repository afterward.
 
 Serving is localhost-only by default. For a trusted local network:
 
@@ -94,6 +101,37 @@ endpoint). Adjacent unit files such as `script.md`, `brief.md`, and
 - **Overview grid:** `O` or `Escape`; click a thumbnail to jump.
 - **Full screen:** `F` (falls back to a pseudo-fullscreen on iPad Safari;
   `Escape` leaves it).
+- **Theme:** `T` or the **Light theme**/**Dark theme** control; the selection
+  stays on the same browser.
+
+Browsers reserve `Escape` while using native full screen, so it cannot open the
+overview directly. `O` and the always-visible fullscreen control bar still open
+the overview. When `Escape` exits native full screen, lecturedeck opens the
+overview automatically; press `F` when you want to leave full screen without
+opening it.
+
+### Serve-only figure adjustment
+
+On a slide with one or more figures, press `G` while using `lecturedeck serve`
+to enter geometry adjustment mode. Arrow keys nudge the selected figure,
+`Shift`+arrow keys move it 10 px, `[` and `]` scale it, `Tab` selects another
+figure, and `R` restores that figure's source values. The on-screen panel shows
+a pasteable result such as `shift: [4, -12], scale: 1.08`; `G` or `Escape`
+leaves adjustment mode. These controls never write files and are absent from
+static releases.
+
+Store an accepted adjustment on the figure itself:
+
+```js
+{
+  src: "assets/example.png",
+  alt: "Example figure",
+  shift: [4, -12],
+  scale: 1.08
+}
+```
+
+The viewer applies these values in both served decks and static releases.
 
 Each discrete wheel click turns exactly one slide with no lock-out, so rapid
 clicking pages quickly. Trackpad glides turn one slide per gesture and absorb
@@ -182,6 +220,7 @@ history.
 
 ```powershell
 & "$env:USERPROFILE\.venvs\lecturedeck\Scripts\python.exe" -m unittest discover -s tests -v
+& "$env:USERPROFILE\.venvs\lecturedeck\Scripts\python.exe" -m ruff check src tests
 & "$env:USERPROFILE\.venvs\lecturedeck\Scripts\python.exe" -m compileall -q src tests
 ```
 

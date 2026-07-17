@@ -2,6 +2,22 @@
 
 ## Shipped
 
+- **v0.7.0** — Add a persistent dark/light theme control (`T`) to the viewer.
+  Native-fullscreen controls remain visible, and an Escape-driven exit now
+  opens the overview; `F` exits full screen without opening it.
+
+- **v0.6.0** — Add serve-only keyboard geometry adjustment for figure slides.
+  `G` opens a HUD with pasteable `shift`/`scale` values; arrows, brackets,
+  `Tab`, and `R` adjust, select, and reset figures without writing source
+  files. The packaged viewer renders accepted declarative geometry in every
+  context, while static releases omit the adjustment controls.
+
+- **v0.5.0** — Split deck content from the viewer. New units contain only
+  `slides.js`, unit-owned `deck.css`, and `assets/`; serving supplies the
+  installed HTML/CSS/JavaScript viewer, while local legacy viewer files still
+  override it. Validation accepts content-only units and static releases
+  materialize the installed viewer into self-contained bundles.
+
 - **v0.4.0** — Add `lecturedeck refresh`, which updates a unit's runtime
   snapshot to the installed version: clean snapshots of any published version
   are replaced, locally modified files are kept unless `--force`, and

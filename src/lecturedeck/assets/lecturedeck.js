@@ -6,11 +6,14 @@
   const counter = document.querySelector("#counter");
   const previousButton = document.querySelector("#previous-button");
   const nextButton = document.querySelector("#next-button");
+  const themeButton = document.querySelector("#theme-button");
   const fullscreenButtons = [
     document.querySelector("#fullscreen-button"),
     document.querySelector("#touch-fullscreen-button"),
   ].filter(Boolean);
   let index = Math.max(0, Math.min(spec.slides.length - 1, Number(location.hash.replace("#/", "")) || 0));
+  let nativeFullscreenWasActive = false;
+  let deliberateNativeFullscreenExit = false;
 
   const escapeHtml = (value = "") => String(value).replace(/[&<>\"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[char]));
 
@@ -19,9 +22,51 @@
     return String(raw).replace(/<[^>]*>/g, "").trim() || `Slide ${i + 1}`;
   };
 
-  function figureMarkup(figure) {
+  function setTheme(theme) {
+    const light = theme === "light";
+    document.body.classList.toggle("light-theme", light);
+    document.documentElement.style.colorScheme = light ? "light" : "dark";
+    if (themeButton) {
+      themeButton.textContent = light ? "Dark theme" : "Light theme";
+      themeButton.setAttribute("aria-pressed", String(light));
+      themeButton.title = `Switch to ${light ? "dark" : "light"} theme (T)`;
+    }
+    try {
+      localStorage.setItem("lecturedeck-theme", light ? "light" : "dark");
+    } catch (_) {
+      // The viewer remains usable when local storage is unavailable.
+    }
+  }
+
+  function toggleTheme() {
+    setTheme(document.body.classList.contains("light-theme") ? "dark" : "light");
+  }
+
+  try {
+    setTheme(localStorage.getItem("lecturedeck-theme") || "dark");
+  } catch (_) {
+    setTheme("dark");
+  }
+
+  function finiteNumber(value, fallback = 0) {
+    return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  }
+
+  function figureGeometry(figure) {
+    const shift = Array.isArray(figure.shift) ? figure.shift : [];
+    const scale = finiteNumber(figure.scale, 1);
+    return {
+      x: finiteNumber(shift[0]),
+      y: finiteNumber(shift[1]),
+      scale: scale > 0 ? scale : 1,
+    };
+  }
+
+  function figureMarkup(figure, figureIndex) {
     const caption = figure.caption || figure.source ? `<figcaption>${figure.caption || ""}${figure.source ? `<strong>${figure.source}</strong>` : ""}</figcaption>` : "";
-    return `<figure class="figure-card"><img src="${escapeHtml(figure.src)}" alt="${escapeHtml(figure.alt || figure.caption || "Lecture figure")}">${caption}</figure>`;
+    const geometry = figureGeometry(figure);
+    const style = geometry.x || geometry.y || geometry.scale !== 1 ? ` style="transform: translate(${geometry.x}px, ${geometry.y}px) scale(${geometry.scale});"` : "";
+    return `<figure class="figure-card" data-figure-index="${figureIndex}"${style}><img src="${escapeHtml(figure.src)}" alt="${escapeHtml(figure.alt || figure.caption || "Lecture figure")}">${caption}</figure>`;
   }
 
   function formulaMarkup(formula) {
@@ -125,17 +170,27 @@
   }
 
   function updateFullscreenButtons() {
-    const active = isNativeFullscreen() || document.body.classList.contains("pseudo-fullscreen");
+    const nativeActive = isNativeFullscreen();
+    const escapedNativeFullscreen = (
+      nativeFullscreenWasActive && !nativeActive && !deliberateNativeFullscreenExit
+    );
+    nativeFullscreenWasActive = nativeActive;
+    if (!nativeActive) deliberateNativeFullscreenExit = false;
+    const active = nativeActive || document.body.classList.contains("pseudo-fullscreen");
     fullscreenButtons.forEach(button => {
       button.textContent = active ? "Exit full screen" : "Full screen";
       button.setAttribute("aria-pressed", String(active));
     });
+    if (escapedNativeFullscreen && overview.hidden) toggleOverview(true);
   }
 
   async function toggleFullscreen() {
     if (isNativeFullscreen()) {
       const exit = document.exitFullscreen || document.webkitExitFullscreen;
-      if (exit) await exit.call(document);
+      if (exit) {
+        deliberateNativeFullscreenExit = true;
+        await exit.call(document);
+      }
       return;
     }
     if (document.body.classList.contains("pseudo-fullscreen")) {
@@ -200,6 +255,7 @@
     else if (event.key === "Escape" && overview.hidden && document.body.classList.contains("pseudo-fullscreen")) toggleFullscreen();
     else if (event.key.toLowerCase() === "o" || event.key === "Escape") toggleOverview();
     else if (event.key.toLowerCase() === "f") toggleFullscreen();
+    else if (event.key.toLowerCase() === "t") toggleTheme();
   });
   let wheelStreak = 0;
   let wheelPrevAt = -1e6;
@@ -238,6 +294,7 @@
   addEventListener("touchend", e => { if (touchX === null) return; const dx = e.changedTouches[0].clientX - touchX; if (Math.abs(dx) > 55) go(index + (dx < 0 ? 1 : -1)); touchX = null; }, {passive:true});
   overview.addEventListener("click", event => { const card = event.target.closest("[data-index]"); if (!card) return; index = Number(card.dataset.index); toggleOverview(false); });
   document.querySelector("#overview-button").addEventListener("click", () => toggleOverview());
+  themeButton?.addEventListener("click", toggleTheme);
   previousButton.addEventListener("click", () => go(index - 1));
   nextButton.addEventListener("click", () => go(index + 1));
   fullscreenButtons.forEach(button => button.addEventListener("click", toggleFullscreen));
