@@ -73,6 +73,25 @@ Serving is localhost-only by default. For a trusted local network:
 lecturedeck serve <unit> --lan --livereload
 ```
 
+The server exposes only the unit's `webdeck/` tree (plus the live-reload
+endpoint). Adjacent unit files such as `script.md`, `brief.md`, and
+`workflow-state.yaml` are never reachable, and directory listings are off.
+
+## Presenter controls
+
+- **Next / previous:** arrow keys, `PageDown`/`PageUp`, `Space`, mouse wheel
+  or trackpad scroll, and horizontal swipe on touch screens.
+- **First / last slide:** `Home` / `End`.
+- **Overview grid:** `O` or `Escape`; click a thumbnail to jump.
+- **Full screen:** `F` (falls back to a pseudo-fullscreen on iPad Safari;
+  `Escape` leaves it).
+
+Each discrete wheel click turns exactly one slide with no lock-out, so rapid
+clicking pages quickly. Trackpad glides turn one slide per gesture and absorb
+the inertia tail. Wheel navigation ignores pinch-zoom gestures and stays
+inactive over videos and embedded interactives so their own scrolling keeps
+working.
+
 ## Embedded interactive illustrations
 
 An interactive page is a local, self-contained asset embedded by iframe:

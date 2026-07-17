@@ -2,6 +2,14 @@
 
 ## Shipped
 
+- **v0.3.0** — Serve only the unit's `webdeck/` tree so scripts and briefs
+  beside it stay private even on `--lan`, and disable directory listings. Add
+  trackpad-aware wheel navigation, deck styles for links, ordered lists, code,
+  and tables, adaptive overview thumbnails, and keyboard paging that keeps
+  working after chrome clicks. Untitled slides no longer break rendering,
+  edge navigation no longer restarts playing media, live-reload polling stops
+  when disabled or offline, and a busy port reports a friendly error.
+
 - **v0.2.0** - Add first-class offline video slides with local source and caption
   validation, poster-based overview placeholders, explicit original-video
   attribution links, and media-safe keyboard and touch navigation.

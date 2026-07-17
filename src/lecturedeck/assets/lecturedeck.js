@@ -14,6 +14,11 @@
 
   const escapeHtml = (value = "") => String(value).replace(/[&<>\"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[char]));
 
+  const slideTitleText = (slide, i) => {
+    const raw = slide.title || slide.interactive?.title || slide.video?.title || "";
+    return String(raw).replace(/<[^>]*>/g, "").trim() || `Slide ${i + 1}`;
+  };
+
   function figureMarkup(figure) {
     return `<figure class="figure-card"><img src="${escapeHtml(figure.src)}" alt="${escapeHtml(figure.alt || figure.caption || "Lecture figure")}"><figcaption>${figure.caption || ""}<strong>${figure.source || ""}</strong></figcaption></figure>`;
   }
@@ -75,7 +80,7 @@
     const body = ["figure", "figure-dominant", "figure-stage", "title", "figures"].includes(layout) ? `${copy}${figureBlock}` : layout === "cards" ? `${copy}${cardBlock}` : layout === "interactive" ? `${copy}${interactiveBlock}` : layout === "video" ? `${copy}${videoBlock}` : copy;
     const header = chromeFree ? "" : `<header class="slide-head"><p class="eyebrow">${partLabel(i)}</p><h1 class="slide-title">${slide.title || ""}</h1></header>`;
     const footer = chromeFree ? "" : `<footer class="slide-foot"><span class="source">${slide.source || ""}</span><span class="footer-nav"><span class="course-name">${spec.meta.section || ""}</span>${slide.beat ? `<span class="beat">${slide.beat}</span>` : ""}<span class="page-number">${i + 1} / ${spec.slides.length}</span></span></footer>`;
-    return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || "red")}" data-index="${i}" aria-label="Slide ${i + 1}: ${escapeHtml(slide.title)}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
+    return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || "red")}" data-index="${i}" aria-label="Slide ${i + 1}: ${escapeHtml(slideTitleText(slide, i))}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
   }
 
   function scaleCurrent() {
@@ -92,13 +97,16 @@
     counter.textContent = `${index + 1} / ${spec.slides.length}`;
     previousButton.disabled = index === 0;
     nextButton.disabled = index === spec.slides.length - 1;
-    document.title = `${spec.slides[index].title.replace(/<[^>]*>/g, "")} · ${spec.meta.title || "Lecturedeck"}`;
+    document.title = `${slideTitleText(spec.slides[index], index)} · ${spec.meta.title || "Lecturedeck"}`;
     history.replaceState(null, "", `#/${index}`);
+    if (!overview.hidden) overview.querySelectorAll(".overview-card").forEach(card => card.setAttribute("aria-current", String(Number(card.dataset.index) === index)));
     scaleCurrent();
   }
 
   function go(next) {
-    index = Math.max(0, Math.min(spec.slides.length - 1, next));
+    const clamped = Math.max(0, Math.min(spec.slides.length - 1, next));
+    if (clamped === index) return;
+    index = clamped;
     render();
   }
 
@@ -141,15 +149,25 @@
     updateFullscreenButtons();
   }
 
+  function scaleOverviewThumbs() {
+    if (overview.hidden) return;
+    overview.querySelectorAll(".overview-thumb").forEach(thumb => {
+      const frame = thumb.querySelector(".slide-frame");
+      if (frame && thumb.clientWidth) frame.style.transform = `scale(${thumb.clientWidth / 1280})`;
+    });
+  }
+
   function toggleOverview(force) {
     const open = force ?? overview.hidden;
     overview.hidden = !open;
     deck.hidden = open;
     if (!open) { render(); return; }
-    overview.innerHTML = spec.slides.map((slide, i) => `<button class="overview-card" type="button" data-index="${i}" aria-current="${i === index}"><div class="overview-thumb">${slideMarkup(slide, i, true)}</div><span class="overview-label">${i + 1}. ${slide.title.replace(/<[^>]*>/g, "")}</span></button>`).join("");
+    overview.innerHTML = spec.slides.map((slide, i) => `<button class="overview-card" type="button" data-index="${i}" aria-current="${i === index}"><div class="overview-thumb">${slideMarkup(slide, i, true)}</div><span class="overview-label">${i + 1}. ${slideTitleText(slide, i)}</span></button>`).join("");
+    scaleOverviewThumbs();
+    overview.querySelector('[aria-current="true"]')?.focus();
   }
 
-  addEventListener("resize", scaleCurrent);
+  addEventListener("resize", () => { scaleCurrent(); scaleOverviewThumbs(); });
   addEventListener("hashchange", () => {
     const requested = Number(location.hash.replace("#/", ""));
     if (Number.isFinite(requested) && requested !== index) go(requested);
@@ -161,14 +179,50 @@
     if (direction === 1 || direction === -1) go(index + direction);
   });
   addEventListener("keydown", event => {
-    if (event.target instanceof Element && event.target.closest("video, audio, input, textarea, select, button, a, [contenteditable]")) return;
-    if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(event.key)) { event.preventDefault(); go(index + 1); }
+    const target = event.target instanceof Element ? event.target : null;
+    if (target && target.closest("video, audio, input, textarea, select, [contenteditable]")) return;
+    // Buttons and links keep Space/Enter activation but still allow deck paging.
+    const onControl = Boolean(target && target.closest("button, a"));
+    if (["ArrowRight", "ArrowDown", "PageDown"].includes(event.key) || (event.key === " " && !onControl)) { event.preventDefault(); go(index + 1); }
     else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(event.key)) { event.preventDefault(); go(index - 1); }
     else if (event.key === "Home") go(0);
     else if (event.key === "End") go(spec.slides.length - 1);
+    else if (event.key === "Escape" && overview.hidden && document.body.classList.contains("pseudo-fullscreen")) toggleFullscreen();
     else if (event.key.toLowerCase() === "o" || event.key === "Escape") toggleOverview();
     else if (event.key.toLowerCase() === "f") toggleFullscreen();
   });
+  let wheelStreak = 0;
+  let wheelPrevAt = -1e6;
+  let wheelHoldUntil = 0;
+  addEventListener("wheel", event => {
+    if (!overview.hidden || event.ctrlKey) return;
+    if (event.target instanceof Element && event.target.closest("video, audio, .interactive-frame")) return;
+    const now = performance.now();
+    const gap = now - wheelPrevAt;
+    wheelPrevAt = now;
+    const unit = event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? 120 : 1;
+    const delta = event.deltaY * unit;
+    if (!delta) return;
+    const direction = delta > 0 ? 1 : -1;
+    if (event.deltaMode !== 0 || (Math.abs(delta) >= 80 && gap > 60)) {
+      // A discrete wheel notch always turns one slide, with no lock-out.
+      wheelStreak = 0;
+      wheelHoldUntil = now + 150;
+      go(index + direction);
+      return;
+    }
+    // Smooth pixel stream: trackpad glide or a high-resolution wheel.
+    if (now < wheelHoldUntil) {
+      wheelHoldUntil = now + 150; // absorb the inertia tail until the stream pauses
+      return;
+    }
+    if (gap > 250 || (wheelStreak && direction !== Math.sign(wheelStreak))) wheelStreak = 0;
+    wheelStreak += delta;
+    if (Math.abs(wheelStreak) < 60) return;
+    wheelStreak = 0;
+    wheelHoldUntil = now + 150;
+    go(index + direction);
+  }, {passive: true});
   let touchX = null;
   addEventListener("touchstart", e => { touchX = e.target instanceof Element && e.target.closest("video") ? null : e.changedTouches[0].clientX; }, {passive:true});
   addEventListener("touchend", e => { if (touchX === null) return; const dx = e.changedTouches[0].clientX - touchX; if (Math.abs(dx) > 55) go(index + (dx < 0 ? 1 : -1)); touchX = null; }, {passive:true});
@@ -180,19 +234,24 @@
   addEventListener("fullscreenchange", updateFullscreenButtons);
   addEventListener("webkitfullscreenchange", updateFullscreenButtons);
   let reloadVersion = null;
+  let reloadFailures = 0;
+  let reloadTimer = null;
   async function pollLiveReload() {
     try {
       const response = await fetch("/__lecturedeck/version", {cache: "no-store"});
-      if (!response.ok) return;
+      if (!response.ok) throw new Error(response.status);
       const state = await response.json();
-      if (!state.livereload) return;
+      reloadFailures = 0;
+      if (!state.livereload) { clearInterval(reloadTimer); return; }
       if (reloadVersion === null) reloadVersion = state.version;
       else if (reloadVersion !== state.version) location.reload();
     } catch (_) {
       // Static releases and file:// previews intentionally have no reload endpoint.
+      reloadFailures += 1;
+      if (reloadFailures >= 3) clearInterval(reloadTimer);
     }
   }
-  setInterval(pollLiveReload, 900);
+  reloadTimer = setInterval(pollLiveReload, 900);
   pollLiveReload();
   updateFullscreenButtons();
   render();

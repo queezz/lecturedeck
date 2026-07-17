@@ -101,7 +101,12 @@ def serve(args: argparse.Namespace) -> int:
         return 2
 
     bind_host = "0.0.0.0" if args.lan else args.host
-    server = make_server(unit_root, bind_host, args.port, args.livereload)
+    try:
+        server = make_server(unit_root, bind_host, args.port, args.livereload)
+    except OSError as exc:
+        print(f"ERROR: cannot listen on {bind_host}:{args.port} ({exc})", file=sys.stderr)
+        print("Another server may be running; pick a different --port.", file=sys.stderr)
+        return 2
     local_url = f"http://127.0.0.1:{args.port}/webdeck/"
     display_host = "127.0.0.1" if bind_host == "0.0.0.0" else bind_host
     url = f"http://{display_host}:{args.port}/webdeck/"

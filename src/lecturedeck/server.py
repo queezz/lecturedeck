@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import posixpath
 from functools import partial
 from hashlib import sha1
+from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
+
+from . import __version__
 
 
 def content_version(root: Path) -> str:
@@ -21,18 +25,30 @@ def content_version(root: Path) -> str:
 
 
 class DeckRequestHandler(SimpleHTTPRequestHandler):
-    server_version = "lecturedeck/0.1"
+    server_version = f"lecturedeck/{__version__}"
 
     def __init__(self, *args, directory: str, livereload: bool, **kwargs):
         self.deck_root = Path(directory).resolve()
         self.livereload = livereload
         super().__init__(*args, directory=directory, **kwargs)
 
+    def normalized_route(self) -> str:
+        """Decoded, dot-segment-free request path, mirroring translate_path."""
+        return posixpath.normpath(unquote(urlsplit(self.path).path))
+
+    @staticmethod
+    def serves(route: str) -> bool:
+        """Only the unit's webdeck bundle is public; scripts and briefs are not."""
+        return route == "/webdeck" or route.startswith("/webdeck/")
+
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
-        route = urlsplit(self.path).path
+        route = self.normalized_route()
         if route == "/__lecturedeck/version":
             payload = json.dumps(
-                {"version": content_version(self.deck_root), "livereload": self.livereload}
+                {
+                    "version": content_version(self.deck_root / "webdeck"),
+                    "livereload": self.livereload,
+                }
             ).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -47,7 +63,20 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        if not self.serves(route):
+            self.send_error(HTTPStatus.NOT_FOUND, "Only webdeck/ is served")
+            return
         super().do_GET()
+
+    def do_HEAD(self) -> None:  # noqa: N802 - stdlib handler API
+        if not self.serves(self.normalized_route()):
+            self.send_error(HTTPStatus.NOT_FOUND, "Only webdeck/ is served")
+            return
+        super().do_HEAD()
+
+    def list_directory(self, path):
+        self.send_error(HTTPStatus.NOT_FOUND, "Directory listings are disabled")
+        return None
 
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store")

@@ -1,4 +1,7 @@
+import http.client
+import json
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stderr
 from io import StringIO
@@ -6,6 +9,7 @@ from pathlib import Path
 
 from lecturedeck.cli import build_parser
 from lecturedeck.scaffold import scaffold_unit
+from lecturedeck.server import make_server
 from lecturedeck.validation import release_unit, validate_unit
 
 
@@ -123,6 +127,51 @@ class LecturedeckTest(unittest.TestCase):
             self.assertEqual([], validate_unit(unit))
             (assets / "captions.vtt").unlink()
             self.assertTrue(any("captions.vtt" in error for error in validate_unit(unit)))
+
+    def test_wheel_navigation_is_packaged(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "Wheel deck")
+            webdeck = unit / "webdeck"
+            script = (webdeck / "lecturedeck.js").read_text(encoding="utf-8")
+            styles = (webdeck / "lecturedeck.css").read_text(encoding="utf-8")
+            self.assertIn('addEventListener("wheel"', script)
+            self.assertIn("scaleOverviewThumbs", script)
+            self.assertIn(".body-copy a", styles)
+            self.assertIn(".body-copy table", styles)
+
+    def test_server_serves_only_webdeck(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "Scope deck")
+            (unit / "script.md").write_text("private lecture notes", encoding="utf-8")
+            server = make_server(unit, "127.0.0.1", 0, livereload=False)
+            port = server.server_address[1]
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                def request(path):
+                    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                    try:
+                        connection.request("GET", path)
+                        response = connection.getresponse()
+                        return response.status, response.read()
+                    finally:
+                        connection.close()
+
+                self.assertEqual(200, request("/webdeck/")[0])
+                self.assertEqual(302, request("/")[0])
+                status, body = request("/__lecturedeck/version")
+                self.assertEqual(200, status)
+                self.assertFalse(json.loads(body)["livereload"])
+                self.assertEqual(404, request("/script.md")[0])
+                self.assertEqual(404, request("/webdeck/../script.md")[0])
+                self.assertEqual(404, request("/webdeck/%2e%2e/script.md")[0])
+                self.assertEqual(404, request("/webdeck/assets/")[0])
+            finally:
+                server.shutdown()
+                server.server_close()
 
     def test_video_runtime_preserves_media_controls(self):
         with tempfile.TemporaryDirectory() as root:
