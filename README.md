@@ -56,6 +56,7 @@ Run from a course repository, or pass `--repo PATH` explicitly:
 
 ```text
 lecturedeck init <unit> --title "Presentation title"
+lecturedeck refresh <unit>
 lecturedeck check <unit>
 lecturedeck serve <unit> --livereload
 lecturedeck release <unit> --output <new-output-directory>
@@ -66,6 +67,14 @@ overwriting existing files. `check` rejects missing files, references that
 escape `webdeck/`, and external runtime dependencies. Normal citation links in
 `<a href="https://...">` remain allowed. `release` validates first, copies one
 static bundle, and refuses to overwrite its destination.
+
+`refresh` updates a unit's copies of `lecturedeck.css` and `lecturedeck.js`
+to the installed runtime. Unit webdecks hold snapshots, so pulling a new
+`lecturedeck` does not change existing units until they are refreshed. A
+snapshot matching any published runtime version is replaced; a file with
+local modifications is kept and reported until `--force`, and `slides.js`,
+`index.html`, and `assets/` are never touched. Review the diff in the course
+repository afterward.
 
 Serving is localhost-only by default. For a trusted local network:
 

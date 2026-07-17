@@ -20,7 +20,8 @@
   };
 
   function figureMarkup(figure) {
-    return `<figure class="figure-card"><img src="${escapeHtml(figure.src)}" alt="${escapeHtml(figure.alt || figure.caption || "Lecture figure")}"><figcaption>${figure.caption || ""}<strong>${figure.source || ""}</strong></figcaption></figure>`;
+    const caption = figure.caption || figure.source ? `<figcaption>${figure.caption || ""}${figure.source ? `<strong>${figure.source}</strong>` : ""}</figcaption>` : "";
+    return `<figure class="figure-card"><img src="${escapeHtml(figure.src)}" alt="${escapeHtml(figure.alt || figure.caption || "Lecture figure")}">${caption}</figure>`;
   }
 
   function formulaMarkup(formula) {
@@ -68,6 +69,15 @@
     return label;
   }
 
+  function partAccent(i) {
+    let accent = spec.meta.openingAccent || "red";
+    for (let j = 0; j <= i; j += 1) {
+      const candidate = spec.slides[j];
+      if (candidate.type === "section" && candidate.accent) accent = candidate.accent;
+    }
+    return accent;
+  }
+
   function slideMarkup(slide, i, thumbnail = false) {
     const chromeFree = slide.chrome === false;
     const figures = slide.figures || (slide.figure ? [slide.figure] : []);
@@ -80,7 +90,7 @@
     const body = ["figure", "figure-dominant", "figure-stage", "title", "figures"].includes(layout) ? `${copy}${figureBlock}` : layout === "cards" ? `${copy}${cardBlock}` : layout === "interactive" ? `${copy}${interactiveBlock}` : layout === "video" ? `${copy}${videoBlock}` : copy;
     const header = chromeFree ? "" : `<header class="slide-head"><p class="eyebrow">${partLabel(i)}</p><h1 class="slide-title">${slide.title || ""}</h1></header>`;
     const footer = chromeFree ? "" : `<footer class="slide-foot"><span class="source">${slide.source || ""}</span><span class="footer-nav"><span class="course-name">${spec.meta.section || ""}</span>${slide.beat ? `<span class="beat">${slide.beat}</span>` : ""}<span class="page-number">${i + 1} / ${spec.slides.length}</span></span></footer>`;
-    return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || "red")}" data-index="${i}" aria-label="Slide ${i + 1}: ${escapeHtml(slideTitleText(slide, i))}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
+    return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${slide.className ? ` ${escapeHtml(slide.className)}` : ""}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || partAccent(i))}" data-index="${i}" aria-label="Slide ${i + 1}: ${escapeHtml(slideTitleText(slide, i))}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
   }
 
   function scaleCurrent() {

@@ -8,7 +8,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from .scaffold import scaffold_unit
+from .scaffold import refresh_unit, scaffold_unit
 from .server import make_server
 from .validation import release_unit, validate_unit
 
@@ -81,6 +81,17 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--title", required=True, help="presentation title")
     init.add_argument("--repo", type=Path, help="repository root; normally auto-detected")
 
+    refresh = subparsers.add_parser(
+        "refresh", help="update scaffold-owned runtime files in a unit's webdeck"
+    )
+    refresh.add_argument("unit", type=clean_unit)
+    refresh.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite runtime files that carry local modifications",
+    )
+    refresh.add_argument("--repo", type=Path, help="repository root; normally auto-detected")
+
     check = subparsers.add_parser("check", help="validate a unit's static webdeck")
     check.add_argument("unit", type=clean_unit)
     check.add_argument("--repo", type=Path, help="repository root; normally auto-detected")
@@ -150,6 +161,21 @@ def main(argv: list[str] | None = None) -> int:
         created = scaffold_unit(unit_root, args.title)
         for path in created:
             print(path.relative_to(repo))
+        return 0
+    if args.command == "refresh":
+        try:
+            results = refresh_unit(unit_root, force=args.force)
+        except FileNotFoundError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        notes = {
+            "current": "already matches this runtime",
+            "refreshed": "updated to this runtime",
+            "kept": "locally modified; kept (use --force to overwrite)",
+            "missing": "not present; unit retains its own runtime files",
+        }
+        for name, state in results:
+            print(f"{name}: {notes[state]}")
         return 0
     if args.command == "check":
         errors = validate_unit(unit_root)

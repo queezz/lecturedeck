@@ -7,8 +7,9 @@ from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
 
+from lecturedeck import scaffold
 from lecturedeck.cli import build_parser
-from lecturedeck.scaffold import scaffold_unit
+from lecturedeck.scaffold import refresh_unit, runtime_hash, scaffold_unit
 from lecturedeck.server import make_server
 from lecturedeck.validation import release_unit, validate_unit
 
@@ -140,6 +141,66 @@ class LecturedeckTest(unittest.TestCase):
             self.assertIn("scaleOverviewThumbs", script)
             self.assertIn(".body-copy a", styles)
             self.assertIn(".body-copy table", styles)
+
+    def test_published_hashes_include_current_runtime(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "Hash deck")
+            for name in scaffold.RUNTIME_FILES:
+                text = (unit / "webdeck" / name).read_text(encoding="utf-8")
+                self.assertIn(runtime_hash(text), scaffold.PUBLISHED_RUNTIME_HASHES, name)
+
+    def test_refresh_updates_snapshots_and_keeps_forks(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "Refresh deck")
+            webdeck = unit / "webdeck"
+            slides = (webdeck / "slides.js").read_text(encoding="utf-8") + "// unit-owned\n"
+            (webdeck / "slides.js").write_text(slides, encoding="utf-8", newline="\n")
+            self.assertEqual(
+                [("lecturedeck.css", "current"), ("lecturedeck.js", "current")],
+                refresh_unit(unit),
+            )
+
+            stale = "// an older published runtime\n"
+            (webdeck / "lecturedeck.js").write_text(stale, encoding="utf-8", newline="\n")
+            original_hashes = scaffold.PUBLISHED_RUNTIME_HASHES
+            scaffold.PUBLISHED_RUNTIME_HASHES = original_hashes | {runtime_hash(stale)}
+            try:
+                self.assertIn(("lecturedeck.js", "refreshed"), refresh_unit(unit))
+            finally:
+                scaffold.PUBLISHED_RUNTIME_HASHES = original_hashes
+            packaged = (webdeck / "lecturedeck.js").read_text(encoding="utf-8")
+            self.assertIn('addEventListener("wheel"', packaged)
+
+            fork = packaged + "// local fork\n"
+            (webdeck / "lecturedeck.js").write_text(fork, encoding="utf-8", newline="\n")
+            self.assertIn(("lecturedeck.js", "kept"), refresh_unit(unit))
+            self.assertEqual(fork, (webdeck / "lecturedeck.js").read_text(encoding="utf-8"))
+            self.assertIn(("lecturedeck.js", "refreshed"), refresh_unit(unit, force=True))
+            self.assertEqual(slides, (webdeck / "slides.js").read_text(encoding="utf-8"))
+
+    def test_refresh_treats_crlf_snapshot_as_clean(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "CRLF deck")
+            target = unit / "webdeck" / "lecturedeck.css"
+            crlf = target.read_text(encoding="utf-8").replace("\n", "\r\n")
+            target.write_text(crlf, encoding="utf-8", newline="")
+            self.assertIn(("lecturedeck.css", "current"), refresh_unit(unit))
+
+    def test_section_accent_flows_to_following_slides(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "Accent deck")
+            script = (unit / "webdeck" / "lecturedeck.js").read_text(encoding="utf-8")
+            self.assertIn("function partAccent", script)
+            self.assertIn("openingAccent", script)
+            self.assertIn("slide.className", script)
 
     def test_server_serves_only_webdeck(self):
         with tempfile.TemporaryDirectory() as root:
