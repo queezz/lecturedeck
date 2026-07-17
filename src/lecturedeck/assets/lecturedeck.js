@@ -1,0 +1,181 @@
+(() => {
+  "use strict";
+  const spec = window.LECTUREDECK || { meta: {}, slides: [] };
+  const deck = document.querySelector("#deck");
+  const overview = document.querySelector("#overview");
+  const counter = document.querySelector("#counter");
+  const previousButton = document.querySelector("#previous-button");
+  const nextButton = document.querySelector("#next-button");
+  const fullscreenButtons = [
+    document.querySelector("#fullscreen-button"),
+    document.querySelector("#touch-fullscreen-button"),
+  ].filter(Boolean);
+  let index = Math.max(0, Math.min(spec.slides.length - 1, Number(location.hash.replace("#/", "")) || 0));
+
+  const escapeHtml = (value = "") => String(value).replace(/[&<>\"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[char]));
+
+  function figureMarkup(figure) {
+    return `<figure class="figure-card"><img src="${escapeHtml(figure.src)}" alt="${escapeHtml(figure.alt || figure.caption || "Lecture figure")}"><figcaption>${figure.caption || ""}<strong>${figure.source || ""}</strong></figcaption></figure>`;
+  }
+
+  function formulaMarkup(formula) {
+    if (!formula) return "";
+    if (typeof formula === "string") return `<div class="formula formula-plain">${escapeHtml(formula)}</div>`;
+    const math = formula.mathml || formula.html || "";
+    const gloss = (formula.gloss || []).map(item => `<span>${item}</span>`).join("");
+    return `<div class="formula formula-structured">${formula.label ? `<p class="formula-label">${escapeHtml(formula.label)}</p>` : ""}<div class="formula-math">${math}</div>${gloss ? `<div class="formula-gloss">${gloss}</div>` : ""}</div>`;
+  }
+
+  function cardsMarkup(cards = []) {
+    if (!cards.length) return "";
+    return `<div class="concept-cards count-${Math.min(cards.length, 3)}">${cards.map(card => `<div class="concept-card">${card.label ? `<p class="card-label">${card.label}</p>` : ""}<p class="card-value">${card.value || ""}</p>${card.detail ? `<p class="card-detail">${card.detail}</p>` : ""}</div>`).join("")}</div>`;
+  }
+
+  function interactiveMarkup(interactive, thumbnail = false) {
+    if (!interactive) return "";
+    const title = interactive.title || "Interactive demonstration";
+    if (thumbnail) return `<div class="interactive-placeholder">${escapeHtml(title)}</div>`;
+    return `<div class="interactive-frame"><iframe src="${escapeHtml(interactive.src)}" title="${escapeHtml(title)}" loading="eager" referrerpolicy="no-referrer"></iframe></div>`;
+  }
+
+  function partLabel(i) {
+    let label = spec.meta.opening || "OPENING";
+    for (let j = 0; j <= i; j += 1) {
+      const candidate = spec.slides[j];
+      if (candidate.type === "section") label = candidate.eyebrow || candidate.title || label;
+    }
+    return label;
+  }
+
+  function slideMarkup(slide, i, thumbnail = false) {
+    const chromeFree = slide.chrome === false;
+    const figures = slide.figures || (slide.figure ? [slide.figure] : []);
+    const layout = slide.layout || (slide.interactive ? "interactive" : figures.length > 1 ? "figures" : figures.length ? "figure" : slide.type === "title" ? "title" : slide.cards?.length ? "cards" : slide.formula ? "equation" : "statement");
+    const figureBlock = figures.length ? `<div class="figure-stack ${figures.length === 2 ? "two" : figures.length >= 3 ? "three" : ""}">${figures.map(figureMarkup).join("")}</div>` : "";
+    const cardBlock = cardsMarkup(slide.cards);
+    const interactiveBlock = interactiveMarkup(slide.interactive, thumbnail);
+    const copy = `<div class="copy">${slide.claim ? `<p class="claim">${slide.claim}</p>` : ""}${formulaMarkup(slide.formula)}${slide.body ? `<div class="body-copy">${slide.body}</div>` : ""}${slide.quote ? `<div class="quote">${slide.quote}</div>` : ""}</div>`;
+    const body = ["figure", "figure-dominant", "figure-stage", "title", "figures"].includes(layout) ? `${copy}${figureBlock}` : layout === "cards" ? `${copy}${cardBlock}` : layout === "interactive" ? `${copy}${interactiveBlock}` : copy;
+    const header = chromeFree ? "" : `<header class="slide-head"><p class="eyebrow">${partLabel(i)}</p><h1 class="slide-title">${slide.title || ""}</h1></header>`;
+    const footer = chromeFree ? "" : `<footer class="slide-foot"><span class="source">${slide.source || ""}</span><span class="footer-nav"><span class="course-name">${spec.meta.section || ""}</span>${slide.beat ? `<span class="beat">${slide.beat}</span>` : ""}<span class="page-number">${i + 1} / ${spec.slides.length}</span></span></footer>`;
+    return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || "red")}" data-index="${i}" aria-label="Slide ${i + 1}: ${escapeHtml(slide.title)}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
+  }
+
+  function scaleCurrent() {
+    const frame = deck.querySelector(".slide-frame");
+    if (!frame) return;
+    const scale = Math.min(innerWidth / 1280, innerHeight / 720);
+    frame.style.transform = `scale(${scale})`;
+  }
+
+  function render() {
+    if (!spec.slides.length) return;
+    document.body.classList.toggle("immersive-slide", spec.slides[index].chrome === false);
+    deck.innerHTML = slideMarkup(spec.slides[index], index);
+    counter.textContent = `${index + 1} / ${spec.slides.length}`;
+    previousButton.disabled = index === 0;
+    nextButton.disabled = index === spec.slides.length - 1;
+    document.title = `${spec.slides[index].title.replace(/<[^>]*>/g, "")} · ${spec.meta.title || "Lecturedeck"}`;
+    history.replaceState(null, "", `#/${index}`);
+    scaleCurrent();
+  }
+
+  function go(next) {
+    index = Math.max(0, Math.min(spec.slides.length - 1, next));
+    render();
+  }
+
+  function isNativeFullscreen() {
+    return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+
+  function updateFullscreenButtons() {
+    const active = isNativeFullscreen() || document.body.classList.contains("pseudo-fullscreen");
+    fullscreenButtons.forEach(button => {
+      button.textContent = active ? "Exit full screen" : "Full screen";
+      button.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  async function toggleFullscreen() {
+    if (isNativeFullscreen()) {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exit) await exit.call(document);
+      return;
+    }
+    if (document.body.classList.contains("pseudo-fullscreen")) {
+      document.body.classList.remove("pseudo-fullscreen");
+      updateFullscreenButtons();
+      return;
+    }
+    const root = document.documentElement;
+    const request = root.requestFullscreen || root.webkitRequestFullscreen;
+    if (request) {
+      try {
+        if (root.requestFullscreen) await request.call(root, {navigationUI: "hide"});
+        else await request.call(root);
+        if (isNativeFullscreen()) return;
+      } catch (_) {
+        // iPad Safari may expose the API but reject it for non-video elements.
+      }
+    }
+    document.body.classList.add("pseudo-fullscreen");
+    window.scrollTo(0, 0);
+    updateFullscreenButtons();
+  }
+
+  function toggleOverview(force) {
+    const open = force ?? overview.hidden;
+    overview.hidden = !open;
+    deck.hidden = open;
+    if (!open) { render(); return; }
+    overview.innerHTML = spec.slides.map((slide, i) => `<button class="overview-card" type="button" data-index="${i}" aria-current="${i === index}"><div class="overview-thumb">${slideMarkup(slide, i, true)}</div><span class="overview-label">${i + 1}. ${slide.title.replace(/<[^>]*>/g, "")}</span></button>`).join("");
+  }
+
+  addEventListener("resize", scaleCurrent);
+  addEventListener("hashchange", () => {
+    const requested = Number(location.hash.replace("#/", ""));
+    if (Number.isFinite(requested) && requested !== index) go(requested);
+  });
+  addEventListener("message", event => {
+    const iframe = deck.querySelector(".interactive-frame iframe");
+    if (!iframe || event.source !== iframe.contentWindow || event.data?.type !== "lecturedeck:navigate") return;
+    const direction = Number(event.data.direction);
+    if (direction === 1 || direction === -1) go(index + direction);
+  });
+  addEventListener("keydown", event => {
+    if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(event.key)) { event.preventDefault(); go(index + 1); }
+    else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(event.key)) { event.preventDefault(); go(index - 1); }
+    else if (event.key === "Home") go(0);
+    else if (event.key === "End") go(spec.slides.length - 1);
+    else if (event.key.toLowerCase() === "o" || event.key === "Escape") toggleOverview();
+    else if (event.key.toLowerCase() === "f") toggleFullscreen();
+  });
+  let touchX = null;
+  addEventListener("touchstart", e => { touchX = e.changedTouches[0].clientX; }, {passive:true});
+  addEventListener("touchend", e => { if (touchX === null) return; const dx = e.changedTouches[0].clientX - touchX; if (Math.abs(dx) > 55) go(index + (dx < 0 ? 1 : -1)); touchX = null; }, {passive:true});
+  overview.addEventListener("click", event => { const card = event.target.closest("[data-index]"); if (!card) return; index = Number(card.dataset.index); toggleOverview(false); });
+  document.querySelector("#overview-button").addEventListener("click", () => toggleOverview());
+  previousButton.addEventListener("click", () => go(index - 1));
+  nextButton.addEventListener("click", () => go(index + 1));
+  fullscreenButtons.forEach(button => button.addEventListener("click", toggleFullscreen));
+  addEventListener("fullscreenchange", updateFullscreenButtons);
+  addEventListener("webkitfullscreenchange", updateFullscreenButtons);
+  let reloadVersion = null;
+  async function pollLiveReload() {
+    try {
+      const response = await fetch("/__lecturedeck/version", {cache: "no-store"});
+      if (!response.ok) return;
+      const state = await response.json();
+      if (!state.livereload) return;
+      if (reloadVersion === null) reloadVersion = state.version;
+      else if (reloadVersion !== state.version) location.reload();
+    } catch (_) {
+      // Static releases and file:// previews intentionally have no reload endpoint.
+    }
+  }
+  setInterval(pollLiveReload, 900);
+  pollLiveReload();
+  updateFullscreenButtons();
+  render();
+})();

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="dark">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>{{TITLE}}</title>
+    <link rel="stylesheet" href="lecturedeck.css">
+  </head>
+  <body>
+    <main id="deck" class="deck" aria-live="polite"></main>
+    <div id="overview" class="overview" hidden></div>
+    <nav class="deck-chrome" aria-label="Presentation controls">
+      <button id="overview-button" type="button" title="Overview (O)">Overview</button>
+      <span id="counter" aria-label="Slide number"></span>
+      <button id="fullscreen-button" type="button" title="Fullscreen (F)">Fullscreen</button>
+    </nav>
+    <nav id="touch-nav" class="touch-nav" aria-label="Slide navigation">
+      <button id="previous-button" type="button" aria-label="Previous slide" title="Previous slide">‹</button>
+      <button id="touch-fullscreen-button" type="button" title="Full screen">Full screen</button>
+      <button id="next-button" type="button" aria-label="Next slide" title="Next slide">›</button>
+    </nav>
+    <script src="slides.js"></script>
+    <script src="lecturedeck.js"></script>
+  </body>
+</html>
