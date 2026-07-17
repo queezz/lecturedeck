@@ -43,6 +43,23 @@ class LecturedeckTest(unittest.TestCase):
             )
             self.assertEqual([], validate_unit(unit))
 
+    def test_validation_accepts_unit_local_runtime_names(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "Retained deck")
+            webdeck = unit / "webdeck"
+            (webdeck / "lecturedeck.css").rename(webdeck / "retained-runtime.css")
+            (webdeck / "lecturedeck.js").rename(webdeck / "retained-runtime.js")
+            index = webdeck / "index.html"
+            index.write_text(
+                index.read_text(encoding="utf-8")
+                .replace("lecturedeck.css", "retained-runtime.css")
+                .replace("lecturedeck.js", "retained-runtime.js"),
+                encoding="utf-8",
+            )
+            self.assertEqual([], validate_unit(unit))
+
     def test_serve_lan_shortcut(self):
         args = build_parser().parse_args(["serve", "sample-unit", "--lan"])
         self.assertTrue(args.lan)

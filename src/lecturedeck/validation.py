@@ -16,11 +16,39 @@ _REFERENCE = re.compile(
 def validate_unit(unit_root: Path) -> list[str]:
     webdeck = unit_root / "webdeck"
     errors: list[str] = []
-    for required in ("index.html", "lecturedeck.css", "lecturedeck.js", "slides.js"):
+    for required in ("index.html", "slides.js"):
         if not (webdeck / required).is_file():
             errors.append(f"missing webdeck/{required}")
     if errors:
         return errors
+
+    index_text = (webdeck / "index.html").read_text(encoding="utf-8")
+    index_refs = [
+        (match.group("tag"), match.group("attr"), match.group("html_ref"))
+        for match in _REFERENCE.finditer(index_text)
+        if match.group("html_ref")
+    ]
+    local_styles = [
+        ref
+        for tag, attr, ref in index_refs
+        if tag == "link"
+        and attr == "href"
+        and ref.lower().split("?", 1)[0].endswith(".css")
+        and not ref.startswith(("http://", "https://", "//"))
+    ]
+    local_runtime_scripts = [
+        ref
+        for tag, attr, ref in index_refs
+        if tag == "script"
+        and attr == "src"
+        and ref.lower().split("?", 1)[0].endswith(".js")
+        and Path(ref.split("?", 1)[0]).name != "slides.js"
+        and not ref.startswith(("http://", "https://", "//"))
+    ]
+    if not local_styles:
+        errors.append("index.html has no local stylesheet")
+    if not local_runtime_scripts:
+        errors.append("index.html has no local presentation runtime")
 
     for source in webdeck.rglob("*"):
         if source.suffix.lower() not in {".html", ".css", ".js"}:
