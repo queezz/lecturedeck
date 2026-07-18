@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.12.0";
+  const VIEWER_VERSION = "0.12.1";
   const DECK_SCHEMA_VERSION = 1;
   const deck = document.querySelector("#deck");
   const overview = document.querySelector("#overview");
@@ -247,25 +247,29 @@
       const frameLeft = (innerWidth - 1280 * scale) / 2;
       const frameTop = (innerHeight - 720 * scale) / 2;
       const frameBottom = frameTop + 720 * scale;
-      const controlsHeight = presentationControls.offsetHeight || 38;
       const gutter = 8;
-      const hasRoomBelow = innerHeight - frameBottom >= controlsHeight + gutter * 2;
-      const hasRoomAbove = frameTop >= controlsHeight + gutter * 2;
-      const safe = hasRoomBelow || hasRoomAbove;
-      const left = Math.max(gutter, frameLeft + 12);
-      const top = hasRoomBelow
-        ? frameBottom + gutter
-        : hasRoomAbove
-          ? frameTop - controlsHeight - gutter
-          : Math.max(gutter, frameBottom - controlsHeight - 12);
-      presentationControls.style.left = `${left}px`;
-      presentationControls.style.top = `${top}px`;
-      presentationControls.classList.toggle("has-safe-space", safe);
-      presentationControls.classList.toggle("is-expanded", !safe && controlsExpanded);
-      const toolsVisible = safe || controlsExpanded;
-      controlsToggle.setAttribute("aria-expanded", String(toolsVisible));
-      controlsTools.setAttribute("aria-hidden", String(!toolsVisible));
-      controlsTools.inert = !toolsVisible;
+      // Applying the state classes can change the measured height, so
+      // measure again and reposition until the geometry matches the state.
+      for (let pass = 0; pass < 2; pass += 1) {
+        const controlsHeight = presentationControls.offsetHeight || 38;
+        const hasRoomBelow = innerHeight - frameBottom >= controlsHeight + gutter * 2;
+        const hasRoomAbove = frameTop >= controlsHeight + gutter * 2;
+        const safe = hasRoomBelow || hasRoomAbove;
+        const left = Math.max(gutter, frameLeft + 12);
+        const top = hasRoomBelow
+          ? frameBottom + gutter
+          : hasRoomAbove
+            ? frameTop - controlsHeight - gutter
+            : Math.max(gutter, frameBottom - controlsHeight - 12);
+        presentationControls.style.left = `${left}px`;
+        presentationControls.style.top = `${top}px`;
+        presentationControls.classList.toggle("has-safe-space", safe);
+        presentationControls.classList.toggle("is-expanded", !safe && controlsExpanded);
+        const toolsVisible = safe || controlsExpanded;
+        controlsToggle.setAttribute("aria-expanded", String(toolsVisible));
+        controlsTools.setAttribute("aria-hidden", String(!toolsVisible));
+        controlsTools.inert = !toolsVisible;
+      }
     }
 
     function scaleCurrent() {

@@ -2,6 +2,15 @@
 
 ## Shipped
 
+- **v0.12.1** — Keep the presentation controls in one place. Collapsed tools
+  no longer shrink and wrap into a taller hidden block (the counter and theme
+  button previously doubled the strip height), and positioning re-measures
+  after applying the collapse state, so the strip no longer jumps between
+  positions on clicks and slide changes. Scope formula-gloss dividers to the
+  generated item spans so inline markup inside a gloss phrase no longer grows
+  its own divider bars, and use the themed border color. Document composing
+  rules for glosses and `mtext` whitespace in the README.
+
 - **v0.12.0** — Show the viewer version in the presentation controls. The
   expanded bottom-left strip carries a small `vX.Y.Z` label, so a served deck
   reveals the installed viewer and a frozen release reveals the viewer it was

@@ -33,6 +33,8 @@ PUBLISHED_RUNTIME_HASHES = frozenset(
         "e7343bcabc0c8aac6cb5c51627319b2c1863012c5064cbba9caae8cca3cb62e4",  # js v0.11.1
         "26e605ce4207f6d58c335d1a06d16663e4f6367df5f2c84b23eb222372c46596",  # css v0.12.0
         "253b0f5c8a5bad0288a30beac2c1adc64f9e287b20fb45de19a471e80fe4b043",  # js v0.12.0
+        "5fc4d9a05ac40d86717f124fb0cd2b37a6bfd00b17d71d43b16cebc3d1c509bf",  # css v0.12.1
+        "633154df1bd5f1e60e4ee9e7b2d815ace3381947d014256440d4f6dd15d3d990",  # js v0.12.1
     }
 )
 

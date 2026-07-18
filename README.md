@@ -106,6 +106,25 @@ HTTP, with no functions or executable deck code. A minimal deck looks like:
 - A present-but-broken `deck.json` is reported on the slide surface by the
   viewer rather than silently falling back to legacy data.
 
+### Composing rules for formulas and glosses
+
+These rules apply equally to `deck.json` content and legacy `slides.js`
+objects:
+
+- `formula.gloss` entries are standalone phrases. The viewer lays the items
+  out in one row and draws a divider between adjacent items, so punctuation
+  belongs inside each phrase and one sentence must never be split across
+  items.
+- Claim, body, caption, and gloss strings may carry inline markup. The
+  viewer styles only the structure it generates (for example the gloss item
+  spans); nested content spans keep their own appearance.
+- MathML trims ASCII whitespace at the edges of token elements. Write
+  `<mtext>if&#160;</mtext>` when a visible trailing space is needed inside
+  `mtext`.
+- Formulas that overflow their stage are automatically scaled down to fit,
+  but auto-fit is a safety net, not a layout tool: compose formulas for the
+  slide's formula size, and split proofs that need to shrink dramatically.
+
 Reusable visual options, accent names, and the boundary between viewer styles
 and unit-owned CSS are documented in [STYLE_GUIDE.md](STYLE_GUIDE.md).
 

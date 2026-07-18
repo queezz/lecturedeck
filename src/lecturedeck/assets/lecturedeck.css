@@ -181,8 +181,9 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 .formula math { display: block; max-width: 100%; font-size: 1em; color: inherit; }
 .formula-label { margin: 0 0 10px; color: var(--accent); font-family: Calibri, Aptos, Arial, sans-serif; font-size: 16px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .formula-gloss { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--ink); font-family: Calibri, Aptos, Arial, sans-serif; font-size: 19px; line-height: 1.18; }
-.formula-gloss span { padding-right: 18px; border-right: 1px solid #504945; }
-.formula-gloss span:last-child { padding-right: 0; border-right: 0; }
+/* Dividers belong to the generated item spans, not to nested content markup. */
+.formula-gloss > span { padding-right: 18px; border-right: 1px solid var(--border); }
+.formula-gloss > span:last-child { padding-right: 0; border-right: 0; }
 .formula-gloss i { font-family: Cambria Math, STIX Two Math, Cambria, serif; }
 .formula-gloss sub, .formula-gloss sup { font-family: Cambria Math, STIX Two Math, Cambria, serif; font-size: .7em; line-height: 0; }
 .layout-equation .formula { font-size: 72px; }
@@ -231,6 +232,8 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 .deck-chrome button { cursor: pointer; }
 .deck-chrome button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 .controls-tools { max-width: 0; overflow: hidden; display: flex; align-items: center; gap: 8px; opacity: 0; pointer-events: none; transition: max-width .18s ease, opacity .12s ease; }
+/* Collapsing clips the tools; items must not shrink and wrap into taller rows. */
+.controls-tools > * { flex: none; white-space: nowrap; }
 .controls-tools .viewer-version { color: var(--faint); font-size: 12px; white-space: nowrap; }
 .deck-chrome.has-safe-space .controls-toggle { display: none; }
 .deck-chrome.has-safe-space .controls-tools, .deck-chrome.is-expanded .controls-tools { max-width: 520px; opacity: 1; pointer-events: auto; }

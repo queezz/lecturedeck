@@ -369,6 +369,35 @@ class BrowserSmokeTest(unittest.TestCase):
             "parseFloat(getComputedStyle(document.querySelector('.formula')).fontSize)"
         ))
 
+    def test_controls_strip_is_single_row_and_stable(self):
+        page = self.browser.new_page(viewport={"width": 1280, "height": 760})
+        self.addCleanup(page.close)
+        page.goto(self.urls["json"])
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        page.wait_for_selector(".slide-frame")
+
+        def strip():
+            return page.evaluate(
+                "() => { const r = document.querySelector('#presentation-controls')"
+                ".getBoundingClientRect();"
+                " return {top: Math.round(r.top), height: Math.round(r.height)}; }"
+            )
+
+        first = strip()
+        self.assertLessEqual(first["height"], 40, first)
+        page.click("#controls-toggle")
+        page.wait_for_timeout(250)
+        page.keyboard.press("ArrowRight")
+        page.wait_for_timeout(100)
+        page.click("#controls-toggle")
+        page.wait_for_timeout(250)
+        page.keyboard.press("ArrowRight")
+        page.wait_for_timeout(100)
+        last = strip()
+        self.assertEqual(first["top"], last["top"])
+        self.assertLessEqual(last["height"], 40, last)
+        self.assertLessEqual(last["top"] + last["height"], 760)
+
     def test_adjust_hud_nudges_without_paging(self):
         page = self.open_deck("json", "#/2")
         page.keyboard.press("g")
