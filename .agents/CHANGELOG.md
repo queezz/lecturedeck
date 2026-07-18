@@ -2,6 +2,15 @@
 
 ## Shipped
 
+- **v0.11.1** — Auto-fit oversized formulas. MathML does not wrap and math
+  font metrics differ per browser, so an authored formula can exceed its
+  stage; the viewer now measures real ink (scroll metrics, since client
+  rects clamp MathML to its max-width) and shrinks only formulas that
+  overflow, in slides and overview thumbnails alike. Formulas that fit keep
+  their stylesheet size, so existing decks render unchanged. Found when a
+  unit migrated off its local viewer fork, whose equation style was 42px
+  against the packaged 72px.
+
 - **v0.11.0** — Add a Chromium smoke suite for the presenter contract as an
   optional Playwright dev extra. Fifteen headless tests cover the `deck.json`
   and legacy `slides.js` loading paths, keyboard navigation, discrete-wheel

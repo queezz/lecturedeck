@@ -101,6 +101,26 @@ def build_json_unit(unit: Path) -> None:
             {"id": "s-b", "title": "Statement B", "claim": "Sixth slide."},
             {"id": "s-c", "title": "Statement C", "claim": "Seventh slide."},
             {"id": "s-d", "title": "Statement D", "claim": "Eighth slide."},
+            {
+                "id": "s-formula",
+                "title": "Modest formula",
+                "layout": "equation",
+                "formula": {
+                    "mathml": "<math xmlns='http://www.w3.org/1998/Math/MathML' "
+                    "display='block'><mrow><mi>a</mi><mo>+</mo><mi>b</mi></mrow></math>"
+                },
+            },
+            {
+                "id": "s-huge-formula",
+                "title": "Oversized formula",
+                "layout": "equation",
+                "formula": {
+                    "mathml": "<math xmlns='http://www.w3.org/1998/Math/MathML' "
+                    "display='block'><mrow>"
+                    + "<msup><mi>x</mi><mn>2</mn></msup><mo>+</mo>" * 12
+                    + "<mn>1</mn></mrow></math>"
+                },
+            },
         ],
     }
     (webdeck / "deck.json").write_text(json.dumps(deck), encoding="utf-8")
@@ -183,7 +203,7 @@ class BrowserSmokeTest(unittest.TestCase):
     def test_json_deck_loads_and_navigates(self):
         page = self.open_deck("json")
         self.assertIn("Smoke deck", page.title())
-        self.assertEqual(8, page.evaluate("window.LECTUREDECK.slides.length"))
+        self.assertEqual(10, page.evaluate("window.LECTUREDECK.slides.length"))
         self.assertEqual("s-title", page.evaluate(
             "document.querySelector('.slide-frame').dataset.slideId"
         ))
@@ -192,10 +212,10 @@ class BrowserSmokeTest(unittest.TestCase):
         page.keyboard.press("ArrowLeft")
         self.assertEqual(0, self.current_index(page))
         page.keyboard.press("End")
-        self.assertEqual(7, self.current_index(page))
+        self.assertEqual(9, self.current_index(page))
         page.keyboard.press("Home")
         self.assertEqual(0, self.current_index(page))
-        self.assertEqual("1 / 8", page.text_content("#counter"))
+        self.assertEqual("1 / 10", page.text_content("#counter"))
 
     def test_declarative_figure_geometry_renders(self):
         page = self.open_deck("json", "#/2")
@@ -249,7 +269,7 @@ class BrowserSmokeTest(unittest.TestCase):
         page = self.open_deck("json")
         page.keyboard.press("o")
         page.wait_for_selector(".overview-card")
-        self.assertEqual(8, page.locator(".overview-card").count())
+        self.assertEqual(10, page.locator(".overview-card").count())
         page.locator(".overview-card[data-index='5']").click()
         page.wait_for_function("document.querySelector('#overview').hidden")
         self.assertEqual(5, self.current_index(page))
@@ -322,6 +342,30 @@ class BrowserSmokeTest(unittest.TestCase):
             }"""
         )
         self.assertEqual(1, self.current_index(page))
+
+    def test_oversized_formula_shrinks_to_fit(self):
+        page = self.open_deck("json", "#/9")
+        page.wait_for_selector(".formula-math math")
+        fitted = page.evaluate(
+            """() => {
+              const formula = document.querySelector('.formula');
+              const math = formula.querySelector('.formula-math math');
+              return {
+                fontSize: parseFloat(getComputedStyle(formula).fontSize),
+                inkWidth: math.scrollWidth,
+                boxWidth: math.clientWidth,
+              };
+            }"""
+        )
+        self.assertLessEqual(fitted["inkWidth"], fitted["boxWidth"] + 2, fitted)
+        self.assertLess(fitted["fontSize"], 72)
+
+    def test_fitting_formula_keeps_stylesheet_size(self):
+        page = self.open_deck("json", "#/8")
+        page.wait_for_selector(".formula-math math")
+        self.assertEqual(72, page.evaluate(
+            "parseFloat(getComputedStyle(document.querySelector('.formula')).fontSize)"
+        ))
 
     def test_adjust_hud_nudges_without_paging(self):
         page = self.open_deck("json", "#/2")

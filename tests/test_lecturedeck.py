@@ -528,6 +528,7 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn("slide.className", script)
         self.assertIn("function videoMarkup", script)
         self.assertIn("function figureGeometry", script)
+        self.assertIn("function fitFormulas", script)
         self.assertIn("data-figure-index", script)
         self.assertIn("figure.shift", script)
         self.assertIn("controls playsinline", script)

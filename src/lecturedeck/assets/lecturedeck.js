@@ -202,6 +202,38 @@
       return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${slide.className ? ` ${escapeHtml(slide.className)}` : ""}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || partAccent(i))}" data-index="${i}"${slideId} aria-label="Slide ${i + 1}: ${escapeHtml(slideTitleText(slide, i))}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
     }
 
+    function fitFormulas(scope) {
+      // MathML does not wrap and math font metrics differ per browser, so an
+      // authored formula can exceed its stage. Shrink it to fit; leave
+      // formulas that already fit untouched.
+      scope.querySelectorAll(".slide-body").forEach(body => {
+        const formula = body.querySelector(".formula");
+        if (!formula) return;
+        formula.style.fontSize = "";
+        const math = formula.querySelector(".formula-math math");
+        for (let pass = 0; pass < 3; pass += 1) {
+          const bodyRect = body.getBoundingClientRect();
+          if (!bodyRect.height) return;
+          const rects = [...body.children].map(child => child.getBoundingClientRect());
+          const spill = Math.max(...rects.map(rect => rect.bottom))
+            - Math.min(...rects.map(rect => rect.top)) - bodyRect.height;
+          // Client rects clamp MathML to its max-width; scroll metrics expose
+          // the true ink width. Heights stay honest in element boxes.
+          const target = math || formula;
+          const inkWidth = target.scrollWidth;
+          const boxWidth = target.clientWidth;
+          const inkHeight = target.getBoundingClientRect().height;
+          if (!inkWidth || !inkHeight) return;
+          const widthRatio = inkWidth > boxWidth + 1 ? boxWidth / inkWidth : 1;
+          const heightRatio = spill > 1 ? Math.max(0.3, (inkHeight - spill) / inkHeight) : 1;
+          const ratio = Math.min(widthRatio, heightRatio);
+          if (ratio > 0.99) return;
+          const base = parseFloat(getComputedStyle(formula).fontSize);
+          formula.style.fontSize = `${Math.max(18, base * ratio).toFixed(2)}px`;
+        }
+      });
+    }
+
     function positionControls(scale) {
       if (!presentationControls || !controlsToggle || !controlsTools) return;
       const frameLeft = (innerWidth - 1280 * scale) / 2;
@@ -240,6 +272,7 @@
       if (!spec.slides.length) return;
       document.body.classList.toggle("immersive-slide", spec.slides[index].chrome === false);
       deck.innerHTML = slideMarkup(spec.slides[index], index);
+      fitFormulas(deck);
       counter.textContent = `${index + 1} / ${spec.slides.length}`;
       previousButton.disabled = index === 0;
       nextButton.disabled = index === spec.slides.length - 1;
@@ -320,6 +353,7 @@
       deck.hidden = open;
       if (!open) { render(); return; }
       overview.innerHTML = spec.slides.map((slide, i) => `<button class="overview-card" type="button" data-index="${i}" aria-current="${i === index}"><div class="overview-thumb">${slideMarkup(slide, i, true)}</div><span class="overview-label">${i + 1}. ${slideTitleText(slide, i)}</span></button>`).join("");
+      fitFormulas(overview);
       scaleOverviewThumbs();
       overview.querySelector('[aria-current="true"]')?.focus();
     }
