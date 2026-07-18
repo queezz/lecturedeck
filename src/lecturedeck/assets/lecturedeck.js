@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.12.1";
+  const VIEWER_VERSION = "0.12.2";
   const DECK_SCHEMA_VERSION = 1;
   const deck = document.querySelector("#deck");
   const overview = document.querySelector("#overview");

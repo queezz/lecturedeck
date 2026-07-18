@@ -540,6 +540,7 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn(".deck-error", styles)
         self.assertIn(".formula-gloss > span", styles)
         self.assertIn(".controls-tools > *", styles)
+        self.assertIn('mtable[columnalign="right left"]', styles)
         self.assertIn(".slide-frame.style-gradient", styles)
         self.assertIn(".style-title-rule .slide-title::after", styles)
         self.assertIn(".deck-chrome.has-safe-space", styles)

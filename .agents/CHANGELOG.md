@@ -2,6 +2,13 @@
 
 ## Shipped
 
+- **v0.12.2** — Align multi-line derivations on the relation column. MathML
+  Core dropped `columnalign`, so the viewer now honors the declared
+  two-column derivation form (`mtable columnalign="right left"`) with CSS:
+  the left-hand side right-aligns to the axis and each relation row starts
+  at it, matching LaTeX `align`. Document the composing rule and cover it in
+  the smoke suite.
+
 - **v0.12.1** — Keep the presentation controls in one place. Collapsed tools
   no longer shrink and wrap into a taller hidden block (the counter and theme
   button previously doubled the strip height), and positioning re-measures

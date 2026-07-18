@@ -122,6 +122,21 @@ def build_json_unit(unit: Path) -> None:
                     + "<mn>1</mn></mrow></math>"
                 },
             },
+            {
+                "id": "s-derivation",
+                "title": "Aligned derivation",
+                "layout": "equation",
+                "formula": {
+                    "mathml": "<math xmlns='http://www.w3.org/1998/Math/MathML' "
+                    "display='block'><mtable columnalign='right left'>"
+                    "<mtr><mtd><mi>S</mi></mtd><mtd></mtd></mtr>"
+                    "<mtr><mtd></mtd><mtd><mo form='infix'>=</mo><mi>a</mi>"
+                    "<mo>+</mo><mi>b</mi></mtd></mtr>"
+                    "<mtr><mtd></mtd><mtd><mo form='infix'>≤</mo><mn>2</mn>"
+                    "<mi>b</mi></mtd></mtr>"
+                    "</mtable></math>"
+                },
+            },
         ],
     }
     (webdeck / "deck.json").write_text(json.dumps(deck), encoding="utf-8")
@@ -204,7 +219,7 @@ class BrowserSmokeTest(unittest.TestCase):
     def test_json_deck_loads_and_navigates(self):
         page = self.open_deck("json")
         self.assertIn("Smoke deck", page.title())
-        self.assertEqual(10, page.evaluate("window.LECTUREDECK.slides.length"))
+        self.assertEqual(11, page.evaluate("window.LECTUREDECK.slides.length"))
         self.assertEqual("s-title", page.evaluate(
             "document.querySelector('.slide-frame').dataset.slideId"
         ))
@@ -213,10 +228,10 @@ class BrowserSmokeTest(unittest.TestCase):
         page.keyboard.press("ArrowLeft")
         self.assertEqual(0, self.current_index(page))
         page.keyboard.press("End")
-        self.assertEqual(9, self.current_index(page))
+        self.assertEqual(10, self.current_index(page))
         page.keyboard.press("Home")
         self.assertEqual(0, self.current_index(page))
-        self.assertEqual("1 / 10", page.text_content("#counter"))
+        self.assertEqual("1 / 11", page.text_content("#counter"))
         self.assertEqual(f"v{__version__}", page.text_content("#viewer-version"))
 
     def test_declarative_figure_geometry_renders(self):
@@ -271,7 +286,7 @@ class BrowserSmokeTest(unittest.TestCase):
         page = self.open_deck("json")
         page.keyboard.press("o")
         page.wait_for_selector(".overview-card")
-        self.assertEqual(10, page.locator(".overview-card").count())
+        self.assertEqual(11, page.locator(".overview-card").count())
         page.locator(".overview-card[data-index='5']").click()
         page.wait_for_function("document.querySelector('#overview').hidden")
         self.assertEqual(5, self.current_index(page))
@@ -368,6 +383,18 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(72, page.evaluate(
             "parseFloat(getComputedStyle(document.querySelector('.formula')).fontSize)"
         ))
+
+    def test_derivation_rows_align_on_the_relation_column(self):
+        page = self.open_deck("json", "#/10")
+        page.wait_for_selector(".formula-math mtable")
+        lefts = page.evaluate(
+            """() => [...document.querySelectorAll('.formula-math mtr')]
+              .map(row => row.querySelector('mtd:last-child mo'))
+              .filter(Boolean)
+              .map(mo => mo.getBoundingClientRect().left)"""
+        )
+        self.assertEqual(2, len(lefts))
+        self.assertLess(abs(lefts[0] - lefts[1]), 6, lefts)
 
     def test_controls_strip_is_single_row_and_stable(self):
         page = self.browser.new_page(viewport={"width": 1280, "height": 760})

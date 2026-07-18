@@ -121,6 +121,13 @@ objects:
 - MathML trims ASCII whitespace at the edges of token elements. Write
   `<mtext>if&#160;</mtext>` when a visible trailing space is needed inside
   `mtext`.
+- A derivation broken across lines is a two-column
+  `<mtable columnalign="right left">`: the left-hand side (right-aligned) in
+  the first cell, and each relation with its expression
+  (`<mo form="infix">≤</mo>…`) in the second. Continuation rows leave the
+  first cell empty. The viewer honors this alignment even though MathML Core
+  dropped the attribute; never stack centered rows or fake indentation with
+  `mspace`.
 - Formulas that overflow their stage are automatically scaled down to fit,
   but auto-fit is a safety net, not a layout tool: compose formulas for the
   slide's formula size, and split proofs that need to shrink dramatically.

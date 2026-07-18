@@ -179,6 +179,10 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 .formula { align-self: stretch; max-width: 100%; padding: 22px 0; border-top: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); border-bottom: 2px solid color-mix(in srgb, var(--accent) 28%, transparent); color: var(--strong); font-family: Cambria Math, STIX Two Math, Cambria, serif; font-size: 44px; line-height: 1.08; }
 .formula-math { width: 100%; overflow: visible; }
 .formula math { display: block; max-width: 100%; font-size: 1em; color: inherit; }
+/* MathML Core dropped columnalign; honor the declared derivation form.
+   Chromium needs -webkit-right to align block-level math cell content. */
+.formula-math mtable[columnalign="right left"] > mtr > mtd:first-child { text-align: right; text-align: -webkit-right; }
+.formula-math mtable[columnalign="right left"] > mtr > mtd:last-child { text-align: left; }
 .formula-label { margin: 0 0 10px; color: var(--accent); font-family: Calibri, Aptos, Arial, sans-serif; font-size: 16px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .formula-gloss { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--ink); font-family: Calibri, Aptos, Arial, sans-serif; font-size: 19px; line-height: 1.18; }
 /* Dividers belong to the generated item spans, not to nested content markup. */
