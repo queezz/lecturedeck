@@ -1,8 +1,9 @@
 # Design directions — viewer split, authoring, guarded editing
 
-Status: agreed with the instructor on 2026-07-18. This file holds design
-intent; `directions.md` tracks the open work items and `CHANGELOG.md` records
-what shipped. Update this document when a phase ships or the design changes.
+Status: agreed with the instructor and revised after the presentation-system
+orientation on 2026-07-18. This file holds design intent; `directions.md`
+tracks the open work items and `CHANGELOG.md` records what shipped. Update this
+document when a phase ships or the design changes.
 
 ## Why
 
@@ -13,15 +14,25 @@ what shipped. Update this document when a phase ships or the design changes.
   friction in making slides. The instructor wants human-editable decks that
   lean on standards — not another PowerPoint, and not a full web editor.
 - Figure placement is judged visually; iterating numeric offsets against a
-  reload is slow. Small on-the-glass adjustments are wanted.
+  reload is slow. Figures commonly need to occupy more of the slide, followed
+  by small on-the-glass position and crop corrections.
+- Presentation always happens through a local HTTP server. Direct `file://`
+  opening is not a supported requirement and must not force executable course
+  content or distort the runtime-data design.
+- Mature presentation systems remain reference implementations, not product
+  dependencies. The current evidence does not justify replacing the viewer;
+  borrow proven authoring and interaction ideas without importing a second
+  general presentation framework.
 
 ## 1. Viewer/content split (shipped in v0.5.0)
 
 `lecturedeck` becomes a viewer; a deck is files.
 
 - Serve `index.html`, `lecturedeck.css`, and `lecturedeck.js` from the
-  installed package. A unit's `webdeck/` holds only content: `slides.js`
-  (later compiled, see §2), optional `deck.css`, and `assets/`.
+  installed package. A unit's `webdeck/` currently holds only content:
+  `slides.js`, optional `deck.css`, and `assets/`. Section 2 replaces
+  executable `slides.js` as the target contract while retaining it as a
+  compatibility input.
 - `deck.css` is a unit-owned stylesheet loaded after the runtime stylesheet.
   It replaces whole-runtime forks for unit design (custom block classes,
   size tuning), pairing with the shipped `slide.className` passthrough.
@@ -39,37 +50,112 @@ what shipped. Update this document when a phase ships or the design changes.
 - A future soft check may let `meta.requires: ">=0.5"` warn when a deck expects
   a newer viewer; this was not required for the split itself.
 
-## 2. Markdown authoring (target: v0.6.x)
+## 2. Declarative runtime data and Markdown authoring (required for `1.0.0`)
 
-Markdown in, the current deck model out. Authoring sugar, not a new runtime.
+Markdown in, schema-validated JSON out. Authoring remains separate from the
+viewer, and course-owned deck data no longer executes in the parent page.
 
-- `slides.md`: CommonMark body, YAML front matter for `meta`, one slide per
-  top-level heading with brace attributes (`{layout=figure accent=blue}`),
-  a `:claim:` line, and standard image syntax for figures. Structured slide
-  parts that markdown cannot express (cards, formula gloss, video and
-  interactive blocks) ride in small fenced YAML blocks.
-- Math is written as TeX and compiled to native MathML. Raw MathML and HTML
-  passthrough remain available for edge cases.
-- Compilation produces today's `slides.js`, which becomes a generated
-  artifact; the served deck format does not change. `serve` recompiles on
-  change so the edit-livereload loop stays under a second.
-- Dependencies (a Markdown parser, a TeX-to-MathML converter such as
-  `latex2mathml`) are an optional authoring extra. The runtime and server
-  stay standard-library-only, offline, CDN-free; decks without the extra
-  remain fully viewable.
+### Unit files
 
-## 3. Geometry adjust mode (stage one shipped in v0.6.0)
+A new content-only unit uses:
+
+```text
+webdeck/
+  slides.md
+  deck.json
+  adjustments.json   # optional, created after accepted visual changes
+  deck.css            # optional
+  assets/
+```
+
+- `slides.md` is the human-owned narrative and structural source: CommonMark
+  body, YAML front matter for deck metadata, one slide per top-level heading
+  with constrained attributes (`{layout=figure accent=blue}`), a claim field,
+  and standard image syntax where that is sufficient.
+- Small fenced YAML blocks express parts that ordinary Markdown cannot:
+  cards, formula glosses, local video, interactive iframes, multi-panel
+  figures, and other named schema components. They are data, not arbitrary
+  browser programs.
+- Math is written in TeX-like notation and compiled to native MathML. Raw
+  MathML and tightly bounded raw HTML remain escape hatches for reviewed edge
+  cases, not the normal equation or layout language.
+- `deck.json` is the generated browser contract. It contains a schema version,
+  viewer requirement, stable slide and component IDs, compiled content, and
+  explicit local asset references. It contains no functions, helpers, dynamic
+  imports, or executable deck code.
+- `deck.json` is committed. This lets the standard-library runtime serve and
+  release a checked deck without installing the optional authoring toolchain.
+  The generated file records a source digest; `serve` and `check` must report
+  stale output rather than silently presenting an old compilation.
+- `adjustments.json` is a structured, reviewable overlay keyed by stable slide
+  and component IDs. The compiler merges it into `deck.json`. This keeps
+  browser-approved visual corrections out of generated data and avoids
+  brittle Markdown rewriting.
+
+### Loading, releases, and compatibility
+
+- The viewer fetches and validates `deck.json` over HTTP. `lecturedeck serve`
+  is the supported development and presentation path; direct `file://` use is
+  deliberately unsupported.
+- A frozen release is a static directory containing the viewer, `deck.json`,
+  optional `deck.css`, and local assets. It works offline when served by any
+  ordinary static HTTP server and requires no rebuild or package registry.
+  Self-contained means no network runtime dependencies, not double-clickable
+  HTML.
+- `release` may omit authoring-only `slides.md` while preserving the compiled
+  deck, adjustment result, attribution, and every runtime asset needed to
+  reproduce the presentation.
+- `slides.js` remains accepted as a legacy input throughout the `1.x` line so
+  existing units can migrate deliberately. It is executable trusted content,
+  cannot receive the full schema-safety guarantee, and is not created by new
+  scaffolds once `deck.json` ships.
+- Dependencies for Markdown and TeX-to-MathML compilation are an optional
+  authoring extra. The viewer, server, validation of generated JSON, and
+  release path remain Python-standard-library-only and CDN-free.
+
+### Schema and validation boundary
+
+- Validate field types, enum values, IDs, schema compatibility, layouts,
+  figure geometry, media metadata, and every declared local asset before
+  serving or releasing a JSON deck.
+- Normal attribution links may remain remote. Runtime scripts, styles, fonts,
+  media, caption tracks, figures, and interactive dependencies must be local.
+- A custom interactive is an explicit iframe component whose entry point lies
+  under `webdeck/assets/`. Its Canvas, SVG, WebGL, Bokeh, Plotly, or bespoke
+  JavaScript implementation remains free to be application-specific inside
+  that iframe; executable code does not move into `deck.json` or the parent
+  deck.
+- A video component declares local source encodings, MIME types, poster,
+  caption tracks, loading policy, classroom caption, and optional attribution
+  link. The viewer retains native controls and media-safe keyboard, pointer,
+  touch, overview, and theme behavior; JSON changes the data carrier, not the
+  supported media capability.
+- Validation must resolve references relative to the file that contains them,
+  including nested `index.html` files and static CSS/ES-module imports. It must
+  reject path escapes and external runtime dependencies without mistaking
+  ordinary attribution links for dependencies.
+- Parent/iframe communication remains a small versioned `postMessage`
+  protocol. The parent accepts messages only from the active known iframe and
+  validates message type and payload.
+
+## 3. Figure sizing and geometry adjustment (stage one shipped in v0.6.0)
 
 Figure shifting and scaling happen on the glass, persist as data.
 
 - Stage one: in serve mode, `G` enters keyboard-only geometry mode on slides
   with figures. Arrow keys nudge the selected figure, brackets scale, `R`
-  restores its source values, and `Tab` changes selection. Rendering is a CSS
-  transform on the figure card.
-- The result is declarative data on the figure — `shift: [dx, dy]`,
-  `scale: 1.08` (markdown: `{shift=4,-12 scale=1.08}`) — never a persisted
-  DOM mutation. Stage one displays the values on screen for hand-pasting;
-  stage two persists them through the guarded write-back channel (§4).
+  restores its source values, and `Tab` changes selection. Rendering currently
+  uses a CSS transform on the figure card.
+- Stage two treats "make the figure bigger" as the primary operation. It
+  adjusts the figure-stage allocation or panel weight so layout reflows before
+  applying content-scale and position corrections. The declarative geometry
+  vocabulary covers stage share/width, `fit` (`contain` or `cover`), scale,
+  two-axis shift, and multi-panel proportions. Exact field names and ranges
+  are frozen with the JSON schema.
+- Geometry is always source data, never a persisted DOM mutation. For a
+  Markdown/JSON unit, accepted values are written to `adjustments.json` under
+  stable IDs and then compiled into `deck.json`. A legacy `slides.js` unit
+  retains the stage-one copy/paste workflow until migrated.
 - Stage one controls are injected only by the server; static releases contain
   no adjustment code. Declarative source geometry still renders in releases.
 
@@ -84,9 +170,10 @@ non-concern once a passkey is required. Guardrails that still hold:
 - A simple passkey is required on every write (generated and printed at
   startup or supplied by flag; constant-time comparison; sent as a header,
   not a URL parameter).
-- Writes are structured and whitelisted: geometry attributes or a dedicated
-  sidecar file first; possibly typo-level text patches later through the
-  same channel. Never freeform HTML from the DOM.
+- Writes are structured and whitelisted. The first writable surface is
+  `adjustments.json`: figure-stage allocation, fit, scale, shift, and panel
+  proportions keyed by stable IDs. Possibly allow typo-level source patches
+  later through the same channel. Never accept freeform HTML or DOM state.
 - Every write lands in a file under git so edits arrive as reviewable diffs.
 - Releases contain no write code and no endpoints.
 
@@ -98,6 +185,10 @@ runtime responsibility rather than a consumer-orchestration task.
 - Starting with `1.0.0`, a newer viewer in the same major release line accepts
   content-only units that passed `check` under an earlier release in that line.
   Additive content fields are ignored or receive stable defaults.
+- `deck.json` is the primary `1.x` browser contract. Its schema version and
+  viewer requirement are checked independently from the CLI package version.
+  Existing `slides.js` units remain supported compatibility inputs throughout
+  `1.x`, but new capabilities may require migration to declarative JSON.
 - CLI commands and flags used by the documented course workflow remain
   compatible within a major line. Deprecations must warn for at least one minor
   release before removal.
@@ -139,17 +230,26 @@ names then enter the `1.x` compatibility promise.
 
 ## Boundaries that hold across all phases
 
-- Offline and CDN-free; releases are self-contained and inert.
+- Offline and CDN-free; releases are self-contained static directories served
+  over HTTP. They contain no write endpoints or presentation-time build step.
 - Runtime and server remain standard-library-only; authoring dependencies
   are an optional extra.
-- Deck content stays in human-owned files under version control; the browser
+- Deck content stays in human-owned files under version control. Generated
+  data is schema-validated and never executable parent-deck code. The browser
   is a viewer plus, at most, a structured-edit surface.
+- Arbitrary custom code belongs in an explicitly declared, local iframe
+  interactive. The parent viewer owns navigation, layout, theme, media policy,
+  validation, and the adjustment protocol.
 - Not building: a WYSIWYG editor, drag-and-drop layout, or any edit that
   persists DOM state instead of source data.
 
 ## Suggested order
 
-1. §1 viewer/content split (unblocks everything; ends snapshot drift).
-2. §3 stage one (geometry values on screen).
-3. §2 markdown compiler (largest win; decide the optional-extra packaging).
-4. §4 write-back endpoint, then §3 stage two (persisted geometry).
+1. §1 viewer/content split (shipped; ends snapshot drift).
+2. Fix nested-interactive dependency validation and establish browser-level
+   tests for the current contract before changing the data loader.
+3. §2 JSON schema and loader, with legacy `slides.js` compatibility.
+4. §2 Markdown/TeX compiler targeting `deck.json`, including stale-source
+   detection and a reversible representative-unit spike.
+5. §4 guarded write-back to `adjustments.json`, then §3 stage two for
+   reflowing figure size, placement, fit, and panel proportions.
