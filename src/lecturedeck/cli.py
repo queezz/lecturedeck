@@ -9,6 +9,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
+from .pdf import PDFExportError, export_pdf
 from .scaffold import refresh_unit, scaffold_unit
 from .server import make_server
 from .validation import deck_entry, release_unit, validate_unit
@@ -141,6 +142,17 @@ def build_parser() -> argparse.ArgumentParser:
     release.add_argument("unit", type=clean_unit)
     release.add_argument("--output", required=True, type=Path, help="new output directory")
     release.add_argument("--repo", type=Path, help="repository root; normally auto-detected")
+
+    pdf = subparsers.add_parser("pdf", help="export every slide to a 16:9 PDF page")
+    pdf.add_argument("unit", type=clean_unit)
+    pdf.add_argument("--output", required=True, type=Path, help="new .pdf output file")
+    pdf.add_argument(
+        "--theme",
+        choices=("light", "dark"),
+        default="light",
+        help="PDF color theme (default: light)",
+    )
+    pdf.add_argument("--repo", type=Path, help="repository root; normally auto-detected")
     return parser
 
 
@@ -256,6 +268,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
         print(f"Released {args.unit} to {output}")
+        return 0
+    if args.command == "pdf":
+        try:
+            output = export_pdf(unit_root, args.output, theme=args.theme)
+        except (FileExistsError, FileNotFoundError, PDFExportError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        print(f"Exported {args.unit} to {output}")
         return 0
     parser.error(f"unknown command: {args.command}")
     return 2

@@ -10,11 +10,22 @@ Color mode and presentation style are separate choices:
 
 - **Dark** and **light** modes change the palette for ambient conditions and
   readability. The viewer control stores this preference locally.
-- **Presentation styles** are opt-in classes on individual slides. They may be
-  composed and work in both color modes.
+- **Presentation styles** use composable classes that work in both color modes.
+  Decks may opt in per slide, while viewer presets apply the same vocabulary
+  across the presentation.
 
-The current viewer uses a dark/light toggle. An accessible selector that keeps
-color mode distinct from style presets is a requirement for `1.0.0`.
+Open **Appearance** (or press `T`) to choose both axes independently. The
+accessible radio groups persist in the browser and never rewrite deck data.
+The presentation-style choices are:
+
+- **Deck default** — render only the classes authored on each slide.
+- **Accent gradient** — add `style-gradient` to the whole presentation.
+- **Gradient and title rule** — add both `style-gradient` and
+  `style-title-rule` to the whole presentation.
+
+Global presets layer over authored classes rather than removing them. PDF
+export deliberately uses **Deck default** so a saved browser preference cannot
+make the same export command produce different output.
 
 ## Accents
 

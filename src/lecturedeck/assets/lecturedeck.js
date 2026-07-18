@@ -1,14 +1,22 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.12.2";
+  const VIEWER_VERSION = "0.14.0";
   const DECK_SCHEMA_VERSION = 1;
+  const query = new URLSearchParams(location.search);
+  const printMode = query.get("print") === "1";
+  const printTheme = query.get("theme") === "dark" ? "dark" : "light";
   const deck = document.querySelector("#deck");
   const overview = document.querySelector("#overview");
   const counter = document.querySelector("#counter");
   const previousButton = document.querySelector("#previous-button");
   const nextButton = document.querySelector("#next-button");
-  const themeButton = document.querySelector("#theme-button");
+  const appearanceButton = document.querySelector("#appearance-button");
+  const appearanceDialog = document.querySelector("#appearance-dialog");
+  const colorModeInputs = [...document.querySelectorAll('input[name="color-mode"]')];
+  const presentationStyleInputs = [
+    ...document.querySelectorAll('input[name="presentation-style"]'),
+  ];
   const presentationControls = document.querySelector("#presentation-controls");
   const controlsToggle = document.querySelector("#controls-toggle");
   const controlsTools = document.querySelector("#controls-tools");
@@ -19,32 +27,52 @@
 
   const escapeHtml = (value = "") => String(value).replace(/[&<>\"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[char]));
 
-  function setTheme(theme) {
+  function setTheme(theme, persist = true) {
     const light = theme === "light";
     document.body.classList.toggle("light-theme", light);
     document.documentElement.style.colorScheme = light ? "light" : "dark";
-    if (themeButton) {
-      themeButton.textContent = light ? "Dark theme" : "Light theme";
-      themeButton.setAttribute("aria-pressed", String(light));
-      themeButton.title = `Switch to ${light ? "dark" : "light"} theme (T)`;
-    }
-    try {
-      localStorage.setItem("lecturedeck-theme", light ? "light" : "dark");
-    } catch (_) {
-      // The viewer remains usable when local storage is unavailable.
+    colorModeInputs.forEach(input => { input.checked = input.value === theme; });
+    if (persist) {
+      try {
+        localStorage.setItem("lecturedeck-theme", light ? "light" : "dark");
+      } catch (_) {
+        // The viewer remains usable when local storage is unavailable.
+      }
     }
   }
 
-  function toggleTheme() {
-    setTheme(document.body.classList.contains("light-theme") ? "dark" : "light");
+  function setPresentationStyle(style, persist = true) {
+    const allowed = new Set(["default", "gradient", "gradient-title-rule"]);
+    const selected = allowed.has(style) ? style : "default";
+    document.body.dataset.presentationStyle = selected;
+    presentationStyleInputs.forEach(input => { input.checked = input.value === selected; });
+    if (persist) {
+      try {
+        localStorage.setItem("lecturedeck-presentation-style", selected);
+      } catch (_) {
+        // The viewer remains usable when local storage is unavailable.
+      }
+    }
   }
 
   try {
-    setTheme(localStorage.getItem("lecturedeck-theme") || "dark");
+    setTheme(printMode ? printTheme : localStorage.getItem("lecturedeck-theme") || "dark", false);
+    setPresentationStyle(
+      printMode ? "default" : localStorage.getItem("lecturedeck-presentation-style") || "default",
+      false,
+    );
   } catch (_) {
-    setTheme("dark");
+    setTheme(printMode ? printTheme : "dark", false);
+    setPresentationStyle("default", false);
   }
-  themeButton?.addEventListener("click", toggleTheme);
+  appearanceButton?.addEventListener("click", () => appearanceDialog?.showModal());
+  appearanceDialog?.addEventListener("close", () => appearanceButton?.focus());
+  colorModeInputs.forEach(input => input.addEventListener("change", () => {
+    if (input.checked) setTheme(input.value);
+  }));
+  presentationStyleInputs.forEach(input => input.addEventListener("change", () => {
+    if (input.checked) setPresentationStyle(input.value);
+  }));
 
   const viewerVersion = document.querySelector("#viewer-version");
   if (viewerVersion) {
@@ -294,6 +322,24 @@
       scaleCurrent();
     }
 
+    async function renderPrintDeck() {
+      document.body.classList.add("print-deck");
+      deck.innerHTML = spec.slides.map((slide, i) => slideMarkup(slide, i, true)).join("");
+      document.title = spec.meta.title || "Lecturedeck";
+      const images = [...deck.querySelectorAll("img")];
+      await Promise.all(images.map(image => image.complete
+        ? Promise.resolve()
+        : new Promise(resolve => {
+          image.addEventListener("load", resolve, {once: true});
+          image.addEventListener("error", resolve, {once: true});
+        })));
+      if (document.fonts?.ready) await document.fonts.ready;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      fitFormulas(deck);
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      window.LECTUREDECK_PRINT_READY = true;
+    }
+
     function go(next) {
       const clamped = Math.max(0, Math.min(spec.slides.length - 1, next));
       if (clamped === index) return;
@@ -370,6 +416,11 @@
       overview.querySelector('[aria-current="true"]')?.focus();
     }
 
+    if (printMode) {
+      renderPrintDeck();
+      return;
+    }
+
     addEventListener("resize", () => { scaleCurrent(); scaleOverviewThumbs(); });
     addEventListener("hashchange", () => {
       const requested = Number(location.hash.replace("#/", ""));
@@ -382,6 +433,7 @@
       if (direction === 1 || direction === -1) go(index + direction);
     });
     addEventListener("keydown", event => {
+      if (appearanceDialog?.open) return;
       const target = event.target instanceof Element ? event.target : null;
       if (target && target.closest("video, audio, input, textarea, select, [contenteditable]")) return;
       // Buttons and links keep Space/Enter activation but still allow deck paging.
@@ -393,7 +445,7 @@
       else if (event.key === "Escape" && overview.hidden && document.body.classList.contains("pseudo-fullscreen")) toggleFullscreen();
       else if (event.key.toLowerCase() === "o" || event.key === "Escape") toggleOverview();
       else if (event.key.toLowerCase() === "f") toggleFullscreen();
-      else if (event.key.toLowerCase() === "t") toggleTheme();
+      else if (event.key.toLowerCase() === "t") { event.preventDefault(); appearanceDialog?.showModal(); }
     });
     let wheelStreak = 0;
     let wheelPrevAt = -1e6;

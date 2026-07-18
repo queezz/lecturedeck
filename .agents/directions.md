@@ -12,7 +12,5 @@ the items below lives in `design-viewer-authoring.md`.
 - Complete UI figure adjustment with passkey-guarded write-back to stable-ID
   `adjustments.json`. Support reflowing figure size/stage share, fit, scale,
   shift, and multi-panel proportions rather than relying only on transforms.
-- Replace the binary theme toggle with an accessible selector that distinguishes
-  color mode from presentation style and can grow without changing deck data.
 - Complete the public style guide and freeze the supported style vocabulary for
   the `1.x` compatibility line.

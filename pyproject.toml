@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lecturedeck"
-version = "0.12.2"
+version = "0.14.0"
 description = "Filesystem-first local server for self-contained web lecture decks"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,6 +12,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["ruff>=0.12", "playwright>=1.45"]
+pdf = ["playwright>=1.45"]
 
 [project.scripts]
 lecturedeck = "lecturedeck.cli:main"

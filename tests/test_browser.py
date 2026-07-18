@@ -11,6 +11,8 @@ judgment and are deliberately out of scope.
 from __future__ import annotations
 
 import json
+import os
+import re
 import struct
 import tempfile
 import threading
@@ -183,9 +185,14 @@ class BrowserSmokeTest(unittest.TestCase):
             threading.Thread(target=server.serve_forever, daemon=True).start()
             cls.servers.append(server)
             cls.urls[name] = f"http://127.0.0.1:{server.server_address[1]}/webdeck/"
-        cls._playwright = sync_playwright().start()
+        original_cwd = Path.cwd()
         try:
-            cls.browser = cls._playwright.chromium.launch()
+            try:
+                os.chdir(root)
+                cls._playwright = sync_playwright().start()
+                cls.browser = cls._playwright.chromium.launch()
+            finally:
+                os.chdir(original_cwd)
         except Exception as exc:  # browser binaries absent
             cls._playwright.stop()
             for server in cls.servers:
@@ -233,6 +240,25 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(0, self.current_index(page))
         self.assertEqual("1 / 11", page.text_content("#counter"))
         self.assertEqual(f"v{__version__}", page.text_content("#viewer-version"))
+
+    def test_print_mode_renders_one_pdf_page_per_slide(self):
+        page = self.browser.new_page(viewport={"width": 1280, "height": 720})
+        self.addCleanup(page.close)
+        page.add_init_script(
+            "localStorage.setItem('lecturedeck-presentation-style', 'gradient-title-rule')"
+        )
+        page.goto(self.urls["json"] + "?print=1&theme=light")
+        page.wait_for_function("window.LECTUREDECK_PRINT_READY === true")
+        self.assertEqual(11, page.locator("#deck > .slide-frame").count())
+        self.assertTrue(page.evaluate("document.body.classList.contains('light-theme')"))
+        self.assertEqual("default", page.evaluate("document.body.dataset.presentationStyle"))
+        self.assertEqual(0, page.locator(".interactive-frame iframe").count())
+        self.assertEqual(1, page.locator(".interactive-placeholder").count())
+        page.emulate_media(media="print")
+        payload = page.pdf(print_background=True, prefer_css_page_size=True)
+        self.assertTrue(payload.startswith(b"%PDF-"))
+        self.assertGreater(len(payload), 10_000)
+        self.assertEqual(11, len(re.findall(rb"/Type\s*/Page\b", payload)))
 
     def test_declarative_figure_geometry_renders(self):
         page = self.open_deck("json", "#/2")
@@ -314,15 +340,34 @@ class BrowserSmokeTest(unittest.TestCase):
             page.keyboard.press("Escape")
             page.wait_for_function("!document.querySelector('#overview').hidden")
 
-    def test_theme_selection_persists(self):
+    def test_appearance_selection_is_accessible_and_persists(self):
         page = self.open_deck("json")
         page.keyboard.press("t")
+        page.wait_for_selector("#appearance-dialog[open]")
+        page.get_by_label("Light", exact=True).check()
+        page.get_by_label("Gradient and title rule", exact=True).check()
         self.assertTrue(page.evaluate("document.body.classList.contains('light-theme')"))
+        self.assertEqual(
+            "gradient-title-rule",
+            page.evaluate("document.body.dataset.presentationStyle"),
+        )
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#appearance-dialog", state="hidden")
+        self.assertTrue(page.evaluate("document.querySelector('#overview').hidden"))
         page.reload()
         page.wait_for_function("Boolean(window.LECTUREDECK)")
         self.assertTrue(page.evaluate("document.body.classList.contains('light-theme')"))
+        self.assertEqual(
+            "gradient-title-rule",
+            page.evaluate("document.body.dataset.presentationStyle"),
+        )
         page.keyboard.press("t")
+        self.assertTrue(page.get_by_label("Light", exact=True).is_checked())
+        self.assertTrue(page.get_by_label("Gradient and title rule", exact=True).is_checked())
+        page.get_by_label("Dark", exact=True).check()
+        page.get_by_label("Deck default", exact=True).check()
         self.assertFalse(page.evaluate("document.body.classList.contains('light-theme')"))
+        self.assertEqual("default", page.evaluate("document.body.dataset.presentationStyle"))
 
     def test_video_slide_attributes_and_key_guard(self):
         page = self.open_deck("json", "#/3")

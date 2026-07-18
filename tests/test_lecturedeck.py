@@ -10,6 +10,7 @@ from pathlib import Path
 
 from lecturedeck import __version__, scaffold
 from lecturedeck.cli import DEFAULT_PORT, build_parser, make_available_server
+from lecturedeck.pdf import export_pdf
 from lecturedeck.scaffold import refresh_unit, runtime_hash, scaffold_unit
 from lecturedeck.server import make_server
 from lecturedeck.validation import deck_entry, release_unit, validate_unit
@@ -452,6 +453,25 @@ class LecturedeckTest(unittest.TestCase):
         self.assertTrue(args.lan)
         self.assertEqual("127.0.0.1", args.host)
 
+    def test_pdf_cli_defaults_to_light_theme(self):
+        args = build_parser().parse_args(
+            ["pdf", "sample-unit", "--output", "sample.pdf"]
+        )
+        self.assertEqual("pdf", args.command)
+        self.assertEqual("light", args.theme)
+        self.assertEqual(Path("sample.pdf"), args.output)
+
+    def test_pdf_export_requires_new_pdf_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = make_json_unit(root)
+            with self.assertRaisesRegex(ValueError, r"must end in \.pdf"):
+                export_pdf(unit, Path(root) / "slides.out")
+            existing = Path(root) / "slides.pdf"
+            existing.write_bytes(b"keep")
+            with self.assertRaisesRegex(FileExistsError, "already exists"):
+                export_pdf(unit, existing)
+            self.assertEqual(b"keep", existing.read_bytes())
+
     def test_serve_default_port_is_automatic(self):
         args = build_parser().parse_args(["serve", "sample-unit"])
         self.assertIsNone(args.port)
@@ -507,7 +527,10 @@ class LecturedeckTest(unittest.TestCase):
         styles = packaged_text("lecturedeck.css")
         self.assertIn('id="previous-button"', index)
         self.assertIn('href="deck.css"', index)
-        self.assertIn('id="theme-button"', index)
+        self.assertIn('id="appearance-button"', index)
+        self.assertIn('id="appearance-dialog"', index)
+        self.assertIn('name="color-mode"', index)
+        self.assertIn('name="presentation-style"', index)
         self.assertIn('id="controls-toggle"', index)
         self.assertIn('id="controls-tools"', index)
         self.assertNotIn("slides.js", index)
@@ -521,6 +544,8 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn("data-slide-id", script)
         self.assertIn("webkitRequestFullscreen", script)
         self.assertIn("function setTheme", script)
+        self.assertIn("function setPresentationStyle", script)
+        self.assertIn("lecturedeck-presentation-style", script)
         self.assertIn("function positionControls", script)
         self.assertIn("controlsTools.inert", script)
         self.assertIn("escapedNativeFullscreen", script)
@@ -531,20 +556,26 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn("function videoMarkup", script)
         self.assertIn("function figureGeometry", script)
         self.assertIn("function fitFormulas", script)
+        self.assertIn("function renderPrintDeck", script)
+        self.assertIn("LECTUREDECK_PRINT_READY", script)
         self.assertIn("data-figure-index", script)
         self.assertIn("figure.shift", script)
         self.assertIn("controls playsinline", script)
         self.assertIn('event.target.closest("video, audio', script)
         self.assertIn("body.immersive-slide .touch-nav", styles)
         self.assertIn("body.light-theme", styles)
+        self.assertIn('body[data-presentation-style="gradient"]', styles)
+        self.assertIn(".appearance-dialog", styles)
         self.assertIn(".deck-error", styles)
         self.assertIn(".formula-gloss > span", styles)
         self.assertIn(".controls-tools > *", styles)
         self.assertIn('mtable[columnalign="right left"]', styles)
         self.assertIn(".slide-frame.style-gradient", styles)
-        self.assertIn(".style-title-rule .slide-title::after", styles)
+        self.assertIn(".style-title-rule,", styles)
         self.assertIn(".deck-chrome.has-safe-space", styles)
         self.assertIn(":fullscreen .deck-chrome", styles)
+        self.assertIn("body.print-deck", styles)
+        self.assertIn("@page", styles)
         self.assertIn(".layout-video", styles)
         self.assertIn(".body-copy table", styles)
         adjust = packaged_text("adjust.js")

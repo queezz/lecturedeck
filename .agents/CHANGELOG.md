@@ -2,6 +2,21 @@
 
 ## Shipped
 
+- **v0.14.0** — Replace the binary theme toggle with an accessible Appearance
+  dialog. Separate radio groups persist color mode and presentation style as
+  browser preferences without changing deck data; the first curated presets
+  reuse the saved accent-gradient and title-rule vocabulary. `T` opens the
+  dialog, `Escape` closes it without opening the overview, and PDF export
+  ignores saved style presets for deterministic output.
+
+- **v0.13.0** — Export checked decks to PDF with `lecturedeck pdf`. The
+  optional Playwright/Chromium path serves only the unit's `webdeck/`, waits
+  for local images and fonts, renders one fixed 16:9 slide per page, and
+  writes atomically without overwriting an existing file. Light output is the
+  default, dark output is explicit, and video or interactive content becomes
+  a poster or labeled static placeholder. The runtime remains standard-library
+  only; the Chromium smoke suite covers the all-slides print contract.
+
 - **v0.12.2** — Align multi-line derivations on the relation column. MathML
   Core dropped `columnalign`, so the viewer now honors the declared
   two-column derivation form (`mtable columnalign="right left"`) with CSS:

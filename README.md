@@ -8,6 +8,8 @@ interactive exports.
 
 The runtime uses only Python's standard library plus local HTML, CSS, and
 JavaScript. Checked release bundles work offline and do not require a CDN.
+PDF export is an optional authoring capability backed by local headless
+Chromium; it does not add a runtime dependency to serving or static releases.
 
 ## Install outside synchronized course folders
 
@@ -159,6 +161,7 @@ lecturedeck refresh <unit>
 lecturedeck check <unit>
 lecturedeck serve <unit> --livereload
 lecturedeck release <unit> --output <new-output-directory>
+lecturedeck pdf <unit> --output <new-file.pdf>
 ```
 
 `init` creates `deck.json`, `deck.css`, and an `assets/` directory without
@@ -170,6 +173,24 @@ ES-module imports — resolve relative to the file that declares them and must
 stay local. Normal citation links in `<a href="https://...">` remain allowed.
 `release` validates first, freezes the installed viewer into one
 self-contained static bundle, and refuses to overwrite its destination.
+
+`pdf` validates first, starts a temporary localhost-only server, and prints
+every slide through headless Chromium. The result has one 16:9 slide per page,
+uses the light theme by default, and refuses to overwrite an existing file.
+Pass `--theme dark` to preserve the dark presentation surface. Videos export
+their poster (or a labeled placeholder) and interactive iframes export a
+labeled placeholder, since a PDF cannot retain their live behavior.
+
+Install the optional PDF toolchain once in the shared environment:
+
+```powershell
+& "$env:USERPROFILE\.venvs\lecturedeck\Scripts\python.exe" -m pip install -e ".[pdf]"
+& "$env:USERPROFILE\.venvs\lecturedeck\Scripts\python.exe" -m playwright install chromium
+```
+
+The equivalent macOS/Linux commands use `~/.venvs/lecturedeck/bin/python`.
+The `dev` extra already includes Playwright, so contributors only need the
+one-time Chromium installation.
 
 `refresh` remains a migration aid for legacy units. It updates local copies of
 `lecturedeck.css` and `lecturedeck.js` to the installed runtime. A snapshot
@@ -203,8 +224,9 @@ endpoint). Adjacent unit files such as `script.md`, `brief.md`, and
 - **Overview grid:** `O` or `Escape`; click a thumbnail to jump.
 - **Full screen:** `F` (falls back to a pseudo-fullscreen on iPad Safari;
   `Escape` leaves it).
-- **Theme:** `T` or the **Light theme**/**Dark theme** control; the selection
-  stays on the same browser.
+- **Appearance:** `T` or the **Appearance** control opens separate color-mode
+  and presentation-style choices. Both preferences stay in the same browser
+  and do not change deck data.
 - **Viewer version:** the expanded controls strip shows a small `vX.Y.Z`
   label, so a served deck reveals the installed viewer and a frozen release
   reveals the viewer it was built with.

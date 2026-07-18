@@ -19,7 +19,8 @@
       <span id="controls-tools" class="controls-tools" aria-hidden="true" inert>
         <button id="overview-button" type="button" title="Overview (O)">Overview</button>
         <span id="counter" aria-label="Slide number"></span>
-        <button id="theme-button" type="button" title="Switch theme (T)">Light theme</button>
+        <button id="appearance-button" type="button" aria-haspopup="dialog"
+                title="Appearance (T)">Appearance</button>
         <button id="fullscreen-button" type="button" title="Fullscreen (F)">Fullscreen</button>
         <span id="viewer-version" class="viewer-version"></span>
       </span>
@@ -29,6 +30,31 @@
       <button id="touch-fullscreen-button" type="button" title="Full screen">Full screen</button>
       <button id="next-button" type="button" aria-label="Next slide" title="Next slide">›</button>
     </nav>
+    <dialog id="appearance-dialog" class="appearance-dialog"
+            aria-labelledby="appearance-title">
+      <form method="dialog">
+        <div class="appearance-head">
+          <h2 id="appearance-title">Appearance</h2>
+          <button id="appearance-close" class="appearance-close" type="submit"
+                  aria-label="Close appearance settings">Close</button>
+        </div>
+        <fieldset>
+          <legend>Color mode</legend>
+          <label><input type="radio" name="color-mode" value="dark"> Dark</label>
+          <label><input type="radio" name="color-mode" value="light"> Light</label>
+        </fieldset>
+        <fieldset>
+          <legend>Presentation style</legend>
+          <label><input type="radio" name="presentation-style" value="default">
+            Deck default</label>
+          <label><input type="radio" name="presentation-style" value="gradient">
+            Accent gradient</label>
+          <label><input type="radio" name="presentation-style" value="gradient-title-rule">
+            Gradient and title rule</label>
+        </fieldset>
+        <p class="appearance-note">Preferences stay in this browser and do not change deck data.</p>
+      </form>
+    </dialog>
     <script src="lecturedeck.js"></script>
   </body>
 </html>

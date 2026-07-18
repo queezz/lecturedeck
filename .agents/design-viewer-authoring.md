@@ -211,7 +211,7 @@ The public README states the user-facing form of this contract. Compatibility
 fixes within a major line are patch releases; additive capabilities are minor
 releases; incompatible contract changes wait for a major release.
 
-## 6. Theme and style system (started; required for `1.0.0`)
+## 6. Theme and style system (selector shipped in v0.14.0)
 
 Theme has two independent axes:
 
@@ -227,10 +227,35 @@ from a successful downstream treatment but are generic runtime styles; no
 course identity or content belongs here. The public `STYLE_GUIDE.md` documents
 their contract and examples.
 
-Before `1.0.0`, the viewer needs an accessible selector that presents color
-mode and style distinctly, plus a reviewed style guide covering typography,
-layout, accents, figures, formulas, and extension boundaries. The supported
-names then enter the `1.x` compatibility promise.
+The accessible Appearance dialog now presents color mode and style distinctly
+and persists both as browser preferences without changing deck data. Its first
+curated choices are deck-authored styling, accent gradient, and accent gradient
+with title rule. PDF export ignores the saved style preference so its explicit
+theme option remains deterministic.
+
+Before `1.0.0`, complete the style guide review across typography, layout,
+accents, figures, formulas, and extension boundaries. The supported names then
+enter the `1.x` compatibility promise.
+
+## 7. PDF export (shipped in v0.13.0)
+
+PDF is a deterministic export of the viewer, not a second rendering system.
+
+- `lecturedeck pdf` validates the unit, serves its existing `webdeck/` through
+  a temporary localhost-only server, and asks local headless Chromium to print
+  a dedicated all-slides view. This keeps browser and PDF layout on the same
+  HTML/CSS/MathML implementation.
+- Each page is the native 1280 × 720 slide surface (13.333 × 7.5 inches), with
+  backgrounds enabled and no viewer controls. The default theme is light for
+  ordinary documents; dark output is an explicit option.
+- Export waits for images and fonts before formula fitting and printing.
+  Interactive iframes become labeled placeholders; videos use their poster or
+  a labeled placeholder. A static PDF does not pretend to preserve live media.
+- Playwright and Chromium remain an optional authoring/export toolchain. The
+  installed runtime, server, validation, and static-release path keep zero
+  third-party Python dependencies.
+- Output is a new `.pdf` file written atomically. Existing files are never
+  overwritten, and the temporary server exposes no files beside `webdeck/`.
 
 ## Boundaries that hold across all phases
 

@@ -50,10 +50,15 @@ def content_version(root: Path) -> str:
 class DeckRequestHandler(SimpleHTTPRequestHandler):
     server_version = f"lecturedeck/{__version__}"
 
-    def __init__(self, *args, directory: str, livereload: bool, **kwargs):
+    def __init__(self, *args, directory: str, livereload: bool, quiet: bool = False, **kwargs):
         self.deck_root = Path(directory).resolve()
         self.livereload = livereload
+        self.quiet = quiet
         super().__init__(*args, directory=directory, **kwargs)
+
+    def log_message(self, format: str, *args) -> None:
+        if not self.quiet:
+            super().log_message(format, *args)
 
     def normalized_route(self) -> str:
         """Decoded, dot-segment-free request path, mirroring translate_path."""
@@ -172,8 +177,12 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
 
-def make_server(root: Path, host: str, port: int, livereload: bool) -> DeckHTTPServer:
-    handler = partial(DeckRequestHandler, directory=str(root), livereload=livereload)
+def make_server(
+    root: Path, host: str, port: int, livereload: bool, *, quiet: bool = False
+) -> DeckHTTPServer:
+    handler = partial(
+        DeckRequestHandler, directory=str(root), livereload=livereload, quiet=quiet
+    )
     server = DeckHTTPServer((host, port), handler)
     server.daemon_threads = True
     return server
