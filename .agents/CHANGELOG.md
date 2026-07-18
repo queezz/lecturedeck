@@ -2,6 +2,12 @@
 
 ## Shipped
 
+- **v0.10.1** — Keep geometry adjustment off the overview: `G` is inert while
+  the overview grid is open, opening the overview closes an active adjustment
+  HUD, and a single `Escape` closes the overview again. Verified against real
+  course decks (content-only, unit-local runtime, and figure-heavy units) with
+  the `v0.10.0` viewer.
+
 - **v0.10.0** — Make schema-validated `deck.json` the primary browser
   contract. The viewer fetches it over HTTP, reports schema and data problems
   on the slide surface, and falls back to legacy executable `slides.js`

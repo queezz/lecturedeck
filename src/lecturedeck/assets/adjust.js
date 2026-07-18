@@ -2,6 +2,10 @@
   "use strict";
   // The runtime publishes the loaded deck (JSON or legacy) asynchronously.
   const spec = () => window.LECTUREDECK || { slides: [] };
+  const overviewVisible = () => {
+    const overview = document.querySelector("#overview");
+    return Boolean(overview) && !overview.hidden;
+  };
   const values = new Map();
   const step = 2;
   const fastStep = 10;
@@ -100,9 +104,26 @@
     selected = 0;
     setTimeout(refresh, 0);
   });
+  const overview = document.querySelector("#overview");
+  if (overview) {
+    // Geometry belongs to the slide surface; leave the overview to the deck.
+    new MutationObserver(() => {
+      if (!overview.hidden && active) {
+        active = false;
+        refresh();
+      }
+    }).observe(overview, { attributes: true, attributeFilter: ["hidden"] });
+  }
   addEventListener("keydown", event => {
     const target = event.target instanceof Element ? event.target : null;
     if (target && target.closest("input, textarea, select, [contenteditable]")) return;
+    if (overviewVisible()) {
+      if (active) {
+        active = false;
+        refresh();
+      }
+      return;
+    }
     if (event.key.toLowerCase() === "g" && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
       event.stopPropagation();

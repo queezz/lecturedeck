@@ -544,6 +544,8 @@ class LecturedeckTest(unittest.TestCase):
         adjust = packaged_text("adjust.js")
         self.assertIn("const spec = () => window.LECTUREDECK", adjust)
         self.assertIn("event.stopPropagation()", adjust)
+        self.assertIn("overviewVisible", adjust)
+        self.assertIn("MutationObserver", adjust)
 
     def test_scaffold_has_no_course_specific_identity(self):
         with tempfile.TemporaryDirectory() as root:
