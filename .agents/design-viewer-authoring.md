@@ -90,6 +90,53 @@ non-concern once a passkey is required. Guardrails that still hold:
 - Every write lands in a file under git so edits arrive as reviewable diffs.
 - Releases contain no write code and no endpoints.
 
+## 5. Compatibility promise (decided 2026-07-18)
+
+The shared installation replaces per-course source pins, so compatibility is a
+runtime responsibility rather than a consumer-orchestration task.
+
+- Starting with `1.0.0`, a newer viewer in the same major release line accepts
+  content-only units that passed `check` under an earlier release in that line.
+  Additive content fields are ignored or receive stable defaults.
+- CLI commands and flags used by the documented course workflow remain
+  compatible within a major line. Deprecations must warn for at least one minor
+  release before removal.
+- A major release may change the content or CLI contract. Consumers adopting a
+  new major version must run focused checks and review a fresh static release.
+- Static release bundles are frozen artifacts. They remain viewable without an
+  installed package and are not rewritten merely because the shared runtime
+  changes.
+- Legacy unit-local viewer overrides are a migration bridge, not part of the
+  post-`1.0.0` compatibility promise. Their files remain preserved, but custom
+  behavior is owned and tested by the consumer.
+- Pre-`1.0.0` releases continue to use pragmatic `0.x` evolution; the project
+  applies the future promise where practical but does not claim it retroactively.
+
+The public README states the user-facing form of this contract. Compatibility
+fixes within a major line are patch releases; additive capabilities are minor
+releases; incompatible contract changes wait for a major release.
+
+## 6. Theme and style system (started; required for `1.0.0`)
+
+Theme has two independent axes:
+
+- **Color mode** controls readability and ambient use. Dark and light are the
+  two current modes and persist as a viewer preference.
+- **Presentation style** controls visual treatment without changing content.
+  Named, composable slide classes are the low-level vocabulary; a future theme
+  selector may expose curated presets built from them.
+
+The first saved options are `style-gradient`, an accent-tinted surface, and
+`style-title-rule`, an accent underline for the slide title. They were promoted
+from a successful downstream treatment but are generic runtime styles; no
+course identity or content belongs here. The public `STYLE_GUIDE.md` documents
+their contract and examples.
+
+Before `1.0.0`, the viewer needs an accessible selector that presents color
+mode and style distinctly, plus a reviewed style guide covering typography,
+layout, accents, figures, formulas, and extension boundaries. The supported
+names then enter the `1.x` compatibility promise.
+
 ## Boundaries that hold across all phases
 
 - Offline and CDN-free; releases are self-contained and inert.

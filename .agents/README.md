@@ -3,7 +3,8 @@
 This directory contains public, standing policy for `lecturedeck`:
 
 - `commit-culture.md` — authorship, staging, versioning, and push conventions;
-- `release-workflow.md` — the canonical public release and consumer-sync recipe;
+- `release-workflow.md` — the canonical public release and
+  consumer-validation recipe;
 - `directions.md` — forward-looking work only;
 - `CHANGELOG.md` — shipped per-version history.
 

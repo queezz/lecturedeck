@@ -2,6 +2,13 @@
 
 ## Shipped
 
+- **v0.9.0** — Keep presentation controls clear of slide footers: the full
+  toolbar uses spare space around the fitted slide, collapses to an accessible
+  handle when it must overlay content, and hides in fullscreen. Add reusable
+  accent-gradient and title-rule style options with a public style guide.
+  Define the remaining `1.0.0` gates and make the canonical external install,
+  rather than course-local source submodules, the consumer workflow.
+
 - **v0.8.0** — Let concurrent `lecturedeck serve` processes coexist. Without an
   explicit `--port`, each server advances from 4173 to the next available port
   and prints or opens the selected URL; explicit ports remain strict.

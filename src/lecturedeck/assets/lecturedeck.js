@@ -7,6 +7,9 @@
   const previousButton = document.querySelector("#previous-button");
   const nextButton = document.querySelector("#next-button");
   const themeButton = document.querySelector("#theme-button");
+  const presentationControls = document.querySelector("#presentation-controls");
+  const controlsToggle = document.querySelector("#controls-toggle");
+  const controlsTools = document.querySelector("#controls-tools");
   const fullscreenButtons = [
     document.querySelector("#fullscreen-button"),
     document.querySelector("#touch-fullscreen-button"),
@@ -14,6 +17,7 @@
   let index = Math.max(0, Math.min(spec.slides.length - 1, Number(location.hash.replace("#/", "")) || 0));
   let nativeFullscreenWasActive = false;
   let deliberateNativeFullscreenExit = false;
+  let controlsExpanded = false;
 
   const escapeHtml = (value = "") => String(value).replace(/[&<>\"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[char]));
 
@@ -138,11 +142,38 @@
     return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${slide.className ? ` ${escapeHtml(slide.className)}` : ""}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || partAccent(i))}" data-index="${i}" aria-label="Slide ${i + 1}: ${escapeHtml(slideTitleText(slide, i))}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
   }
 
+  function positionControls(scale) {
+    if (!presentationControls || !controlsToggle || !controlsTools) return;
+    const frameLeft = (innerWidth - 1280 * scale) / 2;
+    const frameTop = (innerHeight - 720 * scale) / 2;
+    const frameBottom = frameTop + 720 * scale;
+    const controlsHeight = presentationControls.offsetHeight || 38;
+    const gutter = 8;
+    const hasRoomBelow = innerHeight - frameBottom >= controlsHeight + gutter * 2;
+    const hasRoomAbove = frameTop >= controlsHeight + gutter * 2;
+    const safe = hasRoomBelow || hasRoomAbove;
+    const left = Math.max(gutter, frameLeft + 12);
+    const top = hasRoomBelow
+      ? frameBottom + gutter
+      : hasRoomAbove
+        ? frameTop - controlsHeight - gutter
+        : Math.max(gutter, frameBottom - controlsHeight - 12);
+    presentationControls.style.left = `${left}px`;
+    presentationControls.style.top = `${top}px`;
+    presentationControls.classList.toggle("has-safe-space", safe);
+    presentationControls.classList.toggle("is-expanded", !safe && controlsExpanded);
+    const toolsVisible = safe || controlsExpanded;
+    controlsToggle.setAttribute("aria-expanded", String(toolsVisible));
+    controlsTools.setAttribute("aria-hidden", String(!toolsVisible));
+    controlsTools.inert = !toolsVisible;
+  }
+
   function scaleCurrent() {
     const frame = deck.querySelector(".slide-frame");
     if (!frame) return;
     const scale = Math.min(innerWidth / 1280, innerHeight / 720);
     frame.style.transform = `scale(${scale})`;
+    positionControls(scale);
   }
 
   function render() {
@@ -181,6 +212,7 @@
       button.textContent = active ? "Exit full screen" : "Full screen";
       button.setAttribute("aria-pressed", String(active));
     });
+    if (!active) requestAnimationFrame(scaleCurrent);
     if (escapedNativeFullscreen && overview.hidden) toggleOverview(true);
   }
 
@@ -294,6 +326,10 @@
   addEventListener("touchend", e => { if (touchX === null) return; const dx = e.changedTouches[0].clientX - touchX; if (Math.abs(dx) > 55) go(index + (dx < 0 ? 1 : -1)); touchX = null; }, {passive:true});
   overview.addEventListener("click", event => { const card = event.target.closest("[data-index]"); if (!card) return; index = Number(card.dataset.index); toggleOverview(false); });
   document.querySelector("#overview-button").addEventListener("click", () => toggleOverview());
+  controlsToggle?.addEventListener("click", () => {
+    controlsExpanded = !controlsExpanded;
+    scaleCurrent();
+  });
   themeButton?.addEventListener("click", toggleTheme);
   previousButton.addEventListener("click", () => go(index - 1));
   nextButton.addEventListener("click", () => go(index + 1));

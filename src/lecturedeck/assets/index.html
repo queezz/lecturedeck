@@ -13,11 +13,15 @@
   <body>
     <main id="deck" class="deck" aria-live="polite"></main>
     <div id="overview" class="overview" hidden></div>
-    <nav class="deck-chrome" aria-label="Presentation controls">
-      <button id="overview-button" type="button" title="Overview (O)">Overview</button>
-      <span id="counter" aria-label="Slide number"></span>
-      <button id="theme-button" type="button" title="Switch theme (T)">Light theme</button>
-      <button id="fullscreen-button" type="button" title="Fullscreen (F)">Fullscreen</button>
+    <nav id="presentation-controls" class="deck-chrome" aria-label="Presentation controls">
+      <button id="controls-toggle" class="controls-toggle" type="button"
+              aria-controls="controls-tools" aria-expanded="false">Controls</button>
+      <span id="controls-tools" class="controls-tools" aria-hidden="true" inert>
+        <button id="overview-button" type="button" title="Overview (O)">Overview</button>
+        <span id="counter" aria-label="Slide number"></span>
+        <button id="theme-button" type="button" title="Switch theme (T)">Light theme</button>
+        <button id="fullscreen-button" type="button" title="Fullscreen (F)">Fullscreen</button>
+      </span>
     </nav>
     <nav id="touch-nav" class="touch-nav" aria-label="Slide navigation">
       <button id="previous-button" type="button" aria-label="Previous slide" title="Previous slide">‹</button>

@@ -29,6 +29,12 @@ python3 -m venv ~/.venvs/lecturedeck
 Activation is optional. Call the environment's `lecturedeck` executable
 directly for automation.
 
+Install the shared environment editable from one canonical `lecturedeck`
+checkout only. Course repositories invoke that environment's `lecturedeck`
+executable; they do not copy or submodule the package. A checked static release
+freezes the viewer used for publication, so source pinning inside every course
+repository is unnecessary.
+
 ## Course repository contract
 
 A consuming course repository keeps presentation units under:
@@ -54,6 +60,23 @@ scripts, source books, agent notes, or other course materials.
 Legacy units may retain local copies of any viewer file. Those files override
 the installed package while serving and are preserved in releases, so migration
 to content-only units can happen deliberately.
+
+Reusable visual options, accent names, and the boundary between viewer styles
+and unit-owned CSS are documented in [STYLE_GUIDE.md](STYLE_GUIDE.md).
+
+## Compatibility
+
+Starting with `1.0.0`, newer `lecturedeck` releases in the same major line will
+continue to accept content-only units checked by earlier releases in that line.
+Documented CLI commands and flags follow the same rule; deprecations warn for at
+least one minor release before removal. An incompatible unit or CLI contract
+change requires a new major version and focused consumer QA.
+
+Static release bundles are frozen and self-contained, so an installed runtime
+upgrade never rewrites an existing publication. Legacy unit-local viewer
+overrides remain supported as migration inputs, but their custom behavior is
+owned by the course and is not covered by the post-`1.0.0` compatibility
+promise.
 
 ## Commands
 
@@ -108,6 +131,11 @@ endpoint). Adjacent unit files such as `script.md`, `brief.md`, and
   `Escape` leaves it).
 - **Theme:** `T` or the **Light theme**/**Dark theme** control; the selection
   stays on the same browser.
+
+The presentation controls sit outside the fitted slide whenever the viewport
+has spare space. At tighter aspect ratios they collapse to a small **Controls**
+handle so they do not cover the footer. The desktop strip is hidden in full
+screen, where the keyboard shortcuts remain active.
 
 Browsers reserve `Escape` while using native full screen, so it cannot open the
 overview directly. `O` and the always-visible fullscreen control bar still open

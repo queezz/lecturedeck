@@ -1,7 +1,7 @@
-# Public release and consumer-sync workflow
+# Public release and consumer-validation workflow
 
 This is the canonical workflow for changing `lecturedeck`, publishing it to
-GitHub, and updating course repositories that consume it.
+GitHub, and validating course repositories that consume it.
 
 ## 1. Bound the change
 
@@ -14,6 +14,12 @@ copying. Course-specific claims, styles, figures, and scripts are out of scope.
 Work in the `lecturedeck` checkout, not in a copied course-local fork. Keep the
 runtime standard-library-only. Add or update focused tests for every behavior
 change.
+
+The canonical development checkout is the only permitted editable-install
+source for the shared `lecturedeck` environment. Course repositories do not
+vendor, submodule, or otherwise pin the package source. They invoke the shared
+environment's `lecturedeck` executable, and checked static release bundles are
+the reproducible, self-contained record of the runtime used for publication.
 
 ## 3. Verify the public boundary
 
@@ -60,17 +66,20 @@ user-visible change to `.agents/CHANGELOG.md`; keep unresolved work in
 Review the complete diff, stage explicit paths, commit directly to `main`, and
 push `origin main`. Do not tag unless the user requested it.
 
-## 7. Synchronize consumers
+## 7. Validate consumers
 
-Each course repository consumes the same GitHub origin at `tools/lecturedeck`
-as a git submodule. In every consumer:
+Runtime publication does not require coordinated commits in course
+repositories. For each consumer that should adopt the change:
 
-1. fetch the submodule origin;
-2. check out the intended `lecturedeck` commit;
-3. run the consumer's focused deck checks;
-4. stage only `.gitmodules` and the submodule pointer;
-5. commit in that course repository according to its own policy.
+1. update the canonical checkout and shared environment;
+2. run the consumer's focused deck checks with that environment;
+3. create and review a new static release when the published deck should adopt
+   the new runtime;
+4. commit only course-owned content or release artifacts according to that
+   repository's policy.
 
-Never copy the package source into multiple lecture repositories. Course-local
-webdeck runtime files are generated snapshots and remain owned by their unit;
-update them deliberately when a runtime change is needed.
+Never copy or submodule the package source into lecture repositories. New and
+migrated consumer units are content-only: `slides.js`, optional `deck.css`, and
+`assets/` belong to the unit, while the installed canonical package supplies
+the viewer. Course-local `index.html`, `lecturedeck.css`, or `lecturedeck.js`
+are legacy overrides and require an explicit migration decision.
