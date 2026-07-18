@@ -1,0 +1,17 @@
+{
+  "deck": 1,
+  "meta": {
+    "title": "{{TITLE}}",
+    "section": "COURSE TITLE",
+    "opening": "OPENING"
+  },
+  "slides": [
+    {
+      "id": "opening-title",
+      "type": "title",
+      "title": "{{TITLE}}",
+      "claim": "Replace this scaffold slide in webdeck/deck.json.",
+      "accent": "red"
+    }
+  ]
+}

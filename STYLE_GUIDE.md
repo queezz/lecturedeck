@@ -24,11 +24,12 @@ Sections pass their accent to following slides until another section changes
 it. Use accents to mark structure or emphasis, not merely to decorate every
 object.
 
-```js
+```json
 {
-  type: "section",
-  title: "A new idea",
-  accent: "aqua"
+  "id": "new-idea",
+  "type": "section",
+  "title": "A new idea",
+  "accent": "aqua"
 }
 ```
 
@@ -41,10 +42,11 @@ Add one or more names to a slide's `className`.
 `style-gradient` adds a restrained accent glow over a palette-aware gradient.
 It works in dark and light modes because it uses viewer color variables.
 
-```js
+```json
 {
-  title: "A connected argument",
-  className: "style-gradient"
+  "id": "connected-argument",
+  "title": "A connected argument",
+  "className": "style-gradient"
 }
 ```
 
@@ -53,12 +55,13 @@ It works in dark and light modes because it uses viewer color variables.
 `style-title-rule` draws an accent-colored gradient rule beneath the title. On
 section slides the rule is centered with the title.
 
-```js
+```json
 {
-  type: "section",
-  title: "From plane to space",
-  className: "style-gradient style-title-rule",
-  accent: "gold"
+  "id": "plane-to-space",
+  "type": "section",
+  "title": "From plane to space",
+  "className": "style-gradient style-title-rule",
+  "accent": "gold"
 }
 ```
 

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
 
 RUNTIME_FILES = ("lecturedeck.css", "lecturedeck.js")
-CONTENT_FILES = ("deck.css", "slides.js")
+CONTENT_FILES = ("deck.css", "deck.json")
 
 # sha256 of every published runtime file (BOM stripped, CRLF normalized).
 # Append the new hashes whenever a release changes a runtime asset; a unit
@@ -27,6 +28,8 @@ PUBLISHED_RUNTIME_HASHES = frozenset(
         "87c4097f4962b7b3f065e957e88f4012b6dd37c3b5b2ce4e6f82aa13a80ec103",  # js v0.7.0
         "4cb7b8b73484cfef8c3a8edfe4864cece5c88cb4f63efbffab8520dbd5c7190a",  # css v0.9.0
         "a92ed82bb172eb1e923518e0bfffb45f16d36bafa60133ac989ccf79d546e54c",  # js v0.9.0
+        "f2c5f4702bbbf298bf4c70f65dfc3446cf4a1ea7e232f697b002737df87787f0",  # css v0.10.0
+        "f511cc9230d307fb5b2ea00560249312a79136ef8366debc6590e132871f25b7",  # js v0.10.0
     }
 )
 
@@ -43,8 +46,8 @@ def refresh_unit(unit_root: Path, force: bool = False) -> list[tuple[str, str]]:
     (the unit retained its own runtime filenames).
     """
     webdeck = unit_root / "webdeck"
-    if not (webdeck / "slides.js").is_file():
-        raise FileNotFoundError(f"web deck not found: {webdeck / 'slides.js'}")
+    if not any((webdeck / name).is_file() for name in ("deck.json", "slides.js")):
+        raise FileNotFoundError(f"web deck not found: {webdeck} has no deck.json or slides.js")
     asset_root = files("lecturedeck").joinpath("assets")
     results: list[tuple[str, str]] = []
     for name in RUNTIME_FILES:
@@ -76,8 +79,8 @@ def scaffold_unit(unit_root: Path, title: str) -> list[Path]:
         if target.exists():
             continue
         content = asset_root.joinpath(name).read_text(encoding="utf-8")
-        if name == "slides.js":
-            content = content.replace("{{TITLE}}", title)
+        if name == "deck.json":
+            content = content.replace("{{TITLE}}", json.dumps(title)[1:-1])
         target.write_text(content, encoding="utf-8", newline="\n")
         created.append(target)
     (webdeck / "assets").mkdir(exist_ok=True)

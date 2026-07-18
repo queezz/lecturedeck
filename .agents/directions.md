@@ -7,13 +7,8 @@ the items below lives in `design-viewer-authoring.md`.
 
 - Stabilize the presenter UI and add browser-level smoke coverage for
   navigation, rapid wheel input, overview, fullscreen, theme selection, local
-  video, and a keyboard/pointer/touch interactive iframe.
-- Fix validation of dependencies relative to nested interactive files; cover
-  nested HTML, CSS, and static ES-module references without weakening path or
-  external-runtime checks.
-- Replace executable `slides.js` as the target browser contract with a
-  versioned, schema-validated `deck.json` fetched over HTTP. Keep `slides.js`
-  as a supported legacy input throughout `1.x`; new scaffolds use JSON.
+  video, and a keyboard/pointer/touch interactive iframe, exercising both the
+  `deck.json` and legacy `slides.js` loading paths.
 - Make `slides.md` with TeX math the primary human authoring format, compiled
   to committed `deck.json` through an optional authoring extra. Detect stale
   generated data and prove the workflow on a reversible representative-unit

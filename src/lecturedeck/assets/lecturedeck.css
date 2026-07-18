@@ -52,6 +52,7 @@ button { font: inherit; }
 ::selection { background: color-mix(in srgb, var(--blue) 45%, transparent); color: var(--strong); }
 
 .deck { position: fixed; inset: 0; display: grid; place-items: center; }
+.deck-error { max-width: 640px; padding: 32px; border-left: 7px solid var(--red); background: var(--panel); color: var(--strong); font-size: 22px; line-height: 1.45; }
 .slide-frame {
   position: absolute; width: 1280px; height: 720px; overflow: hidden;
   transform-origin: center; background: var(--bg); padding: 28px 40px 24px;

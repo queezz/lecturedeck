@@ -2,6 +2,18 @@
 
 ## Shipped
 
+- **v0.10.0** — Make schema-validated `deck.json` the primary browser
+  contract. The viewer fetches it over HTTP, reports schema and data problems
+  on the slide surface, and falls back to legacy executable `slides.js`
+  automatically; new scaffolds emit JSON only. `check` validates the schema
+  version, viewer requirement, field types, enums, stable slide and figure
+  IDs, figure geometry ranges, and every declared local asset. Resolve
+  nested-interactive references relative to the file that declares them and
+  extend scanning to CSS `url()`/`@import` targets and static ES-module
+  imports, still rejecting path escapes and external runtime dependencies.
+  Redirect the slashless `/webdeck` root so relative deck URLs resolve, and
+  stop geometry-adjust keys from also paging the deck or opening the overview.
+
 - **v0.9.0** — Keep presentation controls clear of slide footers: the full
   toolbar uses spare space around the fitted slide, collapses to an accessible
   handle when it must overlay content, and hides in fullscreen. Add reusable

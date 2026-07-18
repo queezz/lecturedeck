@@ -1,6 +1,7 @@
 (() => {
   "use strict";
-  const spec = window.LECTUREDECK || { slides: [] };
+  // The runtime publishes the loaded deck (JSON or legacy) asynchronously.
+  const spec = () => window.LECTUREDECK || { slides: [] };
   const values = new Map();
   const step = 2;
   const fastStep = 10;
@@ -32,7 +33,7 @@
   }
 
   function figures() {
-    const slide = spec.slides[slideIndex()];
+    const slide = spec().slides[slideIndex()];
     if (!slide) return [];
     return slide.figures || (slide.figure ? [slide.figure] : []);
   }
@@ -104,18 +105,21 @@
     if (target && target.closest("input, textarea, select, [contenteditable]")) return;
     if (event.key.toLowerCase() === "g" && !event.metaKey && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
+      event.stopPropagation();
       toggle();
       return;
     }
     if (!active) return;
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       active = false;
       refresh();
       return;
     }
     if (event.key === "Tab") {
       event.preventDefault();
+      event.stopPropagation();
       selected = (selected + (event.shiftKey ? figures().length - 1 : 1)) % figures().length;
       refresh();
       return;
@@ -134,6 +138,8 @@
     const change = changes[event.key] || changes[event.key.toLowerCase()];
     if (!change) return;
     event.preventDefault();
+    // Adjustment consumes the key; the deck must not also page or exit.
+    event.stopPropagation();
     change();
     refresh();
   }, true);

@@ -50,10 +50,14 @@ document when a phase ships or the design changes.
 - A future soft check may let `meta.requires: ">=0.5"` warn when a deck expects
   a newer viewer; this was not required for the split itself.
 
-## 2. Declarative runtime data and Markdown authoring (required for `1.0.0`)
+## 2. Declarative runtime data and Markdown authoring (JSON shipped in v0.10.0)
 
 Markdown in, schema-validated JSON out. Authoring remains separate from the
 viewer, and course-owned deck data no longer executes in the parent page.
+Since `v0.10.0` the viewer fetches and validates schema-version-1 `deck.json`
+over HTTP, falls back to legacy `slides.js`, and new scaffolds emit JSON;
+`slides.md` compilation, the source digest, and `adjustments.json` are the
+remaining pieces.
 
 ### Unit files
 
@@ -245,10 +249,12 @@ names then enter the `1.x` compatibility promise.
 
 ## Suggested order
 
-1. §1 viewer/content split (shipped; ends snapshot drift).
-2. Fix nested-interactive dependency validation and establish browser-level
-   tests for the current contract before changing the data loader.
-3. §2 JSON schema and loader, with legacy `slides.js` compatibility.
+1. §1 viewer/content split (shipped in v0.5.0; ends snapshot drift).
+2. Nested-interactive dependency validation (shipped in v0.10.0).
+   Browser-level smoke tests for the presenter contract remain open and now
+   cover both loading paths.
+3. §2 JSON schema and loader, with legacy `slides.js` compatibility (shipped
+   in v0.10.0).
 4. §2 Markdown/TeX compiler targeting `deck.json`, including stale-source
    detection and a reversible representative-unit spike.
 5. §4 guarded write-back to `adjustments.json`, then §3 stage two for

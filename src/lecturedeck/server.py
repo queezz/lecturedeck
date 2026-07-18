@@ -17,13 +17,11 @@ from urllib.parse import unquote, urlsplit
 from . import __version__
 
 VIEWER_ROUTES = {
-    "/webdeck": "index.html",
-    "/webdeck/": "index.html",
-    "/webdeck/index.html": "index.html",
     "/webdeck/lecturedeck.css": "lecturedeck.css",
     "/webdeck/lecturedeck.js": "lecturedeck.js",
     "/webdeck/deck.css": "deck.css",
 }
+INDEX_ROUTES = {"/webdeck", "/webdeck/index.html"}
 ADJUST_ROUTE = "/__lecturedeck/adjust.js"
 
 
@@ -60,6 +58,18 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
     def normalized_route(self) -> str:
         """Decoded, dot-segment-free request path, mirroring translate_path."""
         return posixpath.normpath(unquote(urlsplit(self.path).path))
+
+    def needs_slash_redirect(self) -> bool:
+        """The slashless deck root would break every relative deck URL."""
+        return self.normalized_route() == "/webdeck" and not unquote(
+            urlsplit(self.path).path
+        ).endswith("/")
+
+    def send_slash_redirect(self) -> None:
+        self.send_response(302)
+        self.send_header("Location", "/webdeck/")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def packaged_asset(self, route: str):
         """Return a packaged viewer asset when the unit has no local override."""
@@ -116,16 +126,13 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        if route == "/":
-            self.send_response(302)
-            self.send_header("Location", "/webdeck/")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
+        if route == "/" or self.needs_slash_redirect():
+            self.send_slash_redirect()
             return
         if not self.serves(route):
             self.send_error(HTTPStatus.NOT_FOUND, "Only webdeck/ is served")
             return
-        if route in {"/webdeck", "/webdeck/", "/webdeck/index.html"}:
+        if route in INDEX_ROUTES:
             self.send_served_index(include_body=True)
             return
         packaged = self.packaged_asset(route)
@@ -140,10 +147,13 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
             asset = files("lecturedeck").joinpath("assets", "adjust.js")
             self.send_packaged(asset, include_body=False)
             return
+        if self.needs_slash_redirect():
+            self.send_slash_redirect()
+            return
         if not self.serves(route):
             self.send_error(HTTPStatus.NOT_FOUND, "Only webdeck/ is served")
             return
-        if route in {"/webdeck", "/webdeck/", "/webdeck/index.html"}:
+        if route in INDEX_ROUTES:
             self.send_served_index(include_body=False)
             return
         packaged = self.packaged_asset(route)

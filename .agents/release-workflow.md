@@ -79,7 +79,8 @@ repositories. For each consumer that should adopt the change:
    repository's policy.
 
 Never copy or submodule the package source into lecture repositories. New and
-migrated consumer units are content-only: `slides.js`, optional `deck.css`, and
-`assets/` belong to the unit, while the installed canonical package supplies
-the viewer. Course-local `index.html`, `lecturedeck.css`, or `lecturedeck.js`
-are legacy overrides and require an explicit migration decision.
+migrated consumer units are content-only: `deck.json` (or legacy `slides.js`),
+optional `deck.css`, and `assets/` belong to the unit, while the installed
+canonical package supplies the viewer. Course-local `index.html`,
+`lecturedeck.css`, or `lecturedeck.js` are legacy overrides and require an
+explicit migration decision.

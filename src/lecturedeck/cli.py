@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .scaffold import refresh_unit, scaffold_unit
 from .server import make_server
-from .validation import release_unit, validate_unit
+from .validation import deck_entry, release_unit, validate_unit
 
 DEFAULT_PORT = 4173
 PORT_SEARCH_ATTEMPTS = 100
@@ -147,9 +147,12 @@ def build_parser() -> argparse.ArgumentParser:
 def serve(args: argparse.Namespace) -> int:
     repo = args.repo.resolve() if args.repo else find_repo_root(Path.cwd())
     unit_root = repo / "Studio" / "work" / "presentations" / args.unit
-    slides = unit_root / "webdeck" / "slides.js"
-    if not slides.is_file():
-        print(f"ERROR: web deck not found: {slides}", file=sys.stderr)
+    if deck_entry(unit_root) is None:
+        webdeck = unit_root / "webdeck"
+        print(
+            f"ERROR: web deck not found: {webdeck} has no deck.json or slides.js",
+            file=sys.stderr,
+        )
         return 2
 
     bind_host = "0.0.0.0" if args.lan else args.host
