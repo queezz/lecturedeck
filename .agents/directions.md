@@ -5,10 +5,6 @@ the items below lives in `design-viewer-authoring.md`.
 
 ## Definition of `1.0.0`
 
-- Stabilize the presenter UI and add browser-level smoke coverage for
-  navigation, rapid wheel input, overview, fullscreen, theme selection, local
-  video, and a keyboard/pointer/touch interactive iframe, exercising both the
-  `deck.json` and legacy `slides.js` loading paths.
 - Make `slides.md` with TeX math the primary human authoring format, compiled
   to committed `deck.json` through an optional authoring extra. Detect stale
   generated data and prove the workflow on a reversible representative-unit

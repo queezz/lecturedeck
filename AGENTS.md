@@ -13,7 +13,9 @@ Use the project environment outside synchronized folders:
 
 Never create a virtual environment in this repository or in a Dropbox/OneDrive
 course tree. If the environment is missing, create it with the user's normal
-CPython and install `-e ".[dev]"`. Do not use an application-bundled Python.
+CPython and install `-e ".[dev]"`, then run `python -m playwright install
+chromium` once so the browser smoke suite can run (it skips itself when
+Playwright or Chromium is absent). Do not use an application-bundled Python.
 
 Before every commit, run:
 

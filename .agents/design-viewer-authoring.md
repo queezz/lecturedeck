@@ -250,9 +250,13 @@ names then enter the `1.x` compatibility promise.
 ## Suggested order
 
 1. §1 viewer/content split (shipped in v0.5.0; ends snapshot drift).
-2. Nested-interactive dependency validation (shipped in v0.10.0).
-   Browser-level smoke tests for the presenter contract remain open and now
-   cover both loading paths.
+2. Nested-interactive dependency validation (shipped in v0.10.0) and the
+   Chromium smoke suite (shipped in v0.11.0). The suite is deliberately
+   narrow: it asserts the mechanical presenter contract — loading paths,
+   navigation, wheel input, overview, fullscreen, theme, media attributes,
+   iframe interaction, adjust guards — in one headless Chromium. It cannot
+   judge whether a slide is dense, ugly, or pedagogically poor; visual
+   inspection of real decks stays a human release step.
 3. §2 JSON schema and loader, with legacy `slides.js` compatibility (shipped
    in v0.10.0).
 4. §2 Markdown/TeX compiler targeting `deck.json`, including stale-source

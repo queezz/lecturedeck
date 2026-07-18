@@ -312,5 +312,20 @@ history.
 & "$env:USERPROFILE\.venvs\lecturedeck\Scripts\python.exe" -m compileall -q src tests
 ```
 
+The test run includes a Chromium smoke suite for the presenter contract:
+both data-loading paths, navigation, wheel input, overview, fullscreen,
+theme, media attributes, iframe interaction, and the geometry-adjust guards.
+It requires the optional Playwright dev dependency plus a one-time browser
+download, and is skipped automatically when either is absent:
+
+```powershell
+& "$env:USERPROFILE\.venvs\lecturedeck\Scripts\python.exe" -m pip install -e ".[dev]"
+& "$env:USERPROFILE\.venvs\lecturedeck\Scripts\python.exe" -m playwright install chromium
+```
+
+The smoke suite asserts mechanical behavior only. Whether a slide is too
+dense or visually wrong remains a human judgment made by presenting real
+decks; the runtime itself stays Python-standard-library-only.
+
 See `AGENTS.md` and `.agents/commit-culture.md` for the public development,
 versioning, privacy, and release gates.

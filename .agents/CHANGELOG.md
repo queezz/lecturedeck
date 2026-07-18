@@ -2,6 +2,17 @@
 
 ## Shipped
 
+- **v0.11.0** — Add a Chromium smoke suite for the presenter contract as an
+  optional Playwright dev extra. Fifteen headless tests cover the `deck.json`
+  and legacy `slides.js` loading paths, keyboard navigation, discrete-wheel
+  and trackpad-glide input, overview, fullscreen with the Escape behavior,
+  theme persistence, video attributes and key guarding, pointer-driven
+  interactive iframes, touch swipe, declarative figure geometry, deck-error
+  reporting, the slashless-root redirect, and both geometry-adjust guards.
+  The suite skips itself when Playwright or Chromium is absent and asserts
+  mechanical behavior only; visual judgment of real decks remains a human
+  release step. The runtime keeps zero dependencies.
+
 - **v0.10.1** — Keep geometry adjustment off the overview: `G` is inert while
   the overview grid is open, opening the overview closes an active adjustment
   HUD, and a single `Escape` closes the overview again. Verified against real
