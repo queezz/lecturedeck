@@ -89,6 +89,11 @@ Serving is localhost-only by default. For a trusted local network:
 lecturedeck serve <unit> --lan --livereload
 ```
 
+Without `--port`, the first server uses port 4173. If that port is occupied,
+another deck automatically advances to 4174, then 4175, and so on; the printed
+URL and `--open` always use the selected port. Passing `--port PORT` is strict
+and reports an error when that exact port is unavailable.
+
 The server exposes only the unit's `webdeck/` tree (plus the live-reload
 endpoint). Adjacent unit files such as `script.md`, `brief.md`, and
 `workflow-state.yaml` are never reachable, and directory listings are off.

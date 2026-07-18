@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import posixpath
+import socket
 from functools import partial
 from hashlib import sha1
 from http import HTTPStatus
@@ -24,6 +25,17 @@ VIEWER_ROUTES = {
     "/webdeck/deck.css": "deck.css",
 }
 ADJUST_ROUTE = "/__lecturedeck/adjust.js"
+
+
+class DeckHTTPServer(ThreadingHTTPServer):
+    """Threaded server with exclusive Windows port ownership."""
+
+    allow_reuse_address = False
+
+    def server_bind(self) -> None:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 
 def content_version(root: Path) -> str:
@@ -150,8 +162,8 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
 
-def make_server(root: Path, host: str, port: int, livereload: bool) -> ThreadingHTTPServer:
+def make_server(root: Path, host: str, port: int, livereload: bool) -> DeckHTTPServer:
     handler = partial(DeckRequestHandler, directory=str(root), livereload=livereload)
-    server = ThreadingHTTPServer((host, port), handler)
+    server = DeckHTTPServer((host, port), handler)
     server.daemon_threads = True
     return server

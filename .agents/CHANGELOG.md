@@ -2,6 +2,10 @@
 
 ## Shipped
 
+- **v0.8.0** — Let concurrent `lecturedeck serve` processes coexist. Without an
+  explicit `--port`, each server advances from 4173 to the next available port
+  and prints or opens the selected URL; explicit ports remain strict.
+
 - **v0.7.0** — Add a persistent dark/light theme control (`T`) to the viewer.
   Native-fullscreen controls remain visible, and an Escape-driven exit now
   opens the overview; `F` exits full screen without opening it.

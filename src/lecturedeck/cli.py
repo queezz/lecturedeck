@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import socket
 import sys
 import webbrowser
@@ -11,6 +12,9 @@ from pathlib import Path
 from .scaffold import refresh_unit, scaffold_unit
 from .server import make_server
 from .validation import release_unit, validate_unit
+
+DEFAULT_PORT = 4173
+PORT_SEARCH_ATTEMPTS = 100
 
 
 def find_repo_root(start: Path) -> Path:
@@ -54,6 +58,36 @@ def lan_ipv4_addresses() -> list[str]:
     )
 
 
+def port_unavailable(exc: OSError) -> bool:
+    """Return whether automatic selection should try the next port."""
+    return exc.errno in {errno.EACCES, errno.EADDRINUSE, 10013, 10048} or getattr(
+        exc, "winerror", None
+    ) in {10013, 10048}
+
+
+def make_available_server(
+    unit_root: Path,
+    host: str,
+    port: int,
+    livereload: bool,
+    *,
+    auto_advance: bool,
+):
+    """Bind the requested port, optionally advancing past occupied ports."""
+    attempts = PORT_SEARCH_ATTEMPTS if auto_advance else 1
+    last_error: OSError | None = None
+    for candidate in range(port, min(port + attempts, 65536)):
+        try:
+            return make_server(unit_root, host, candidate, livereload), candidate
+        except OSError as exc:
+            if not auto_advance or not port_unavailable(exc):
+                raise
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise OSError(f"no valid port at or above {port}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lecturedeck")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -66,7 +100,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="listen on all IPv4 interfaces for access from the local network",
     )
-    serve.add_argument("--port", type=int, default=4173, help="port to listen on")
+    serve.add_argument(
+        "--port",
+        type=int,
+        help=(
+            f"port to listen on; without this option, start at {DEFAULT_PORT} "
+            "and advance past ports already in use"
+        ),
+    )
     serve.add_argument("--livereload", action="store_true", help="reload when deck files change")
     serve.add_argument(
         "--open",
@@ -112,29 +153,49 @@ def serve(args: argparse.Namespace) -> int:
         return 2
 
     bind_host = "0.0.0.0" if args.lan else args.host
+    requested_port = args.port if args.port is not None else DEFAULT_PORT
     try:
-        server = make_server(unit_root, bind_host, args.port, args.livereload)
+        server, selected_port = make_available_server(
+            unit_root,
+            bind_host,
+            requested_port,
+            args.livereload,
+            auto_advance=args.port is None,
+        )
     except OSError as exc:
-        print(f"ERROR: cannot listen on {bind_host}:{args.port} ({exc})", file=sys.stderr)
-        print("Another server may be running; pick a different --port.", file=sys.stderr)
+        print(f"ERROR: cannot listen on {bind_host}:{requested_port} ({exc})", file=sys.stderr)
+        if args.port is None:
+            last_port = requested_port + PORT_SEARCH_ATTEMPTS - 1
+            print(
+                f"No free port found in {requested_port}-{last_port}.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "Another server may be running; omit --port to choose automatically.",
+                file=sys.stderr,
+            )
         return 2
-    local_url = f"http://127.0.0.1:{args.port}/webdeck/"
+    selected_port = server.server_address[1]
+    local_url = f"http://127.0.0.1:{selected_port}/webdeck/"
     display_host = "127.0.0.1" if bind_host == "0.0.0.0" else bind_host
-    url = f"http://{display_host}:{args.port}/webdeck/"
+    url = f"http://{display_host}:{selected_port}/webdeck/"
     access = (
         "localhost only"
         if bind_host in {"127.0.0.1", "localhost", "::1"}
         else "LAN-visible, read-only files"
     )
     print(f"Serving {args.unit}  (Ctrl+C to stop)")
+    if args.port is None and selected_port != requested_port:
+        print(f"  Port {requested_port} is busy; using {selected_port}.")
     print(f"  Local: {local_url if args.lan else url}")
     if args.lan:
         addresses = lan_ipv4_addresses()
         if addresses:
             for address in addresses:
-                print(f"  LAN:   http://{address}:{args.port}/webdeck/")
+                print(f"  LAN:   http://{address}:{selected_port}/webdeck/")
         else:
-            print(f"  LAN:   http://<this-computer-ip>:{args.port}/webdeck/")
+            print(f"  LAN:   http://<this-computer-ip>:{selected_port}/webdeck/")
     print(f"  Access: {access}")
     print(f"  Source: {unit_root}")
     if args.livereload:

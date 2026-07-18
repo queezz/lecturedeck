@@ -9,7 +9,7 @@ from io import StringIO
 from pathlib import Path
 
 from lecturedeck import scaffold
-from lecturedeck.cli import build_parser
+from lecturedeck.cli import DEFAULT_PORT, build_parser, make_available_server
 from lecturedeck.scaffold import refresh_unit, runtime_hash, scaffold_unit
 from lecturedeck.server import make_server
 from lecturedeck.validation import release_unit, validate_unit
@@ -114,6 +114,53 @@ class LecturedeckTest(unittest.TestCase):
         args = build_parser().parse_args(["serve", "sample-unit", "--lan"])
         self.assertTrue(args.lan)
         self.assertEqual("127.0.0.1", args.host)
+
+    def test_serve_default_port_is_automatic(self):
+        args = build_parser().parse_args(["serve", "sample-unit"])
+        self.assertIsNone(args.port)
+        self.assertEqual(4173, DEFAULT_PORT)
+
+    def test_automatic_port_advances_when_first_port_is_busy(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "Port test")
+            first = make_server(unit, "127.0.0.1", 0, livereload=False)
+            occupied_port = first.server_address[1]
+            try:
+                second, selected_port = make_available_server(
+                    unit,
+                    "127.0.0.1",
+                    occupied_port,
+                    False,
+                    auto_advance=True,
+                )
+                try:
+                    self.assertGreater(selected_port, occupied_port)
+                    self.assertEqual(selected_port, second.server_address[1])
+                finally:
+                    second.server_close()
+            finally:
+                first.server_close()
+
+    def test_explicit_busy_port_remains_strict(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "unit"
+            unit.mkdir()
+            scaffold_unit(unit, "Strict port test")
+            first = make_server(unit, "127.0.0.1", 0, livereload=False)
+            occupied_port = first.server_address[1]
+            try:
+                with self.assertRaises(OSError):
+                    make_available_server(
+                        unit,
+                        "127.0.0.1",
+                        occupied_port,
+                        False,
+                        auto_advance=False,
+                    )
+            finally:
+                first.server_close()
 
     def test_serve_lan_and_host_are_mutually_exclusive(self):
         parser = build_parser()
