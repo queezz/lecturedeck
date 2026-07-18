@@ -26,10 +26,12 @@ caches, environments, generated releases, course content, or `.agents/log/`.
 
 ## Version canon
 
-The version lives in two files and must change together:
+The version lives in three files and must change together:
 
 - `pyproject.toml` → `[project] version`
 - `src/lecturedeck/__init__.py` → `__version__`
+- `src/lecturedeck/assets/lecturedeck.js` → `VIEWER_VERSION` (shown in the
+  viewer chrome; the test suite enforces the lockstep)
 
 Use pragmatic semantic versioning:
 
@@ -42,8 +44,8 @@ Use pragmatic semantic versioning:
 | compatible fix or polish | patch |
 | docs/refactor with no behavior change | no bump |
 
-Bump both files in the same commit as the behavior being marked and add the
-matching entry to `.agents/CHANGELOG.md`.
+Bump all three files in the same commit as the behavior being marked and add
+the matching entry to `.agents/CHANGELOG.md`.
 
 Git tags are rare and belong to the user. Agents do not create or suggest tags
 unless the user explicitly asks.

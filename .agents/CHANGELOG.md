@@ -2,6 +2,13 @@
 
 ## Shipped
 
+- **v0.12.0** — Show the viewer version in the presentation controls. The
+  expanded bottom-left strip carries a small `vX.Y.Z` label, so a served deck
+  reveals the installed viewer and a frozen release reveals the viewer it was
+  built with, including when deck data fails to load. The `VIEWER_VERSION`
+  constant joins the version canon; the test suite enforces lockstep with the
+  package version.
+
 - **v0.11.1** — Auto-fit oversized formulas. MathML does not wrap and math
   font metrics differ per browser, so an authored formula can exceed its
   stage; the viewer now measures real ink (scroll metrics, since client

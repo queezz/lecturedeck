@@ -179,6 +179,9 @@ endpoint). Adjacent unit files such as `script.md`, `brief.md`, and
   `Escape` leaves it).
 - **Theme:** `T` or the **Light theme**/**Dark theme** control; the selection
   stays on the same browser.
+- **Viewer version:** the expanded controls strip shows a small `vX.Y.Z`
+  label, so a served deck reveals the installed viewer and a frozen release
+  reveals the viewer it was built with.
 
 The presentation controls sit outside the fitted slide whenever the viewport
 has spare space. At tighter aspect ratios they collapse to a small **Controls**

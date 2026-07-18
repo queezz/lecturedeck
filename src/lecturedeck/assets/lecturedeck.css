@@ -231,6 +231,7 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 .deck-chrome button { cursor: pointer; }
 .deck-chrome button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 .controls-tools { max-width: 0; overflow: hidden; display: flex; align-items: center; gap: 8px; opacity: 0; pointer-events: none; transition: max-width .18s ease, opacity .12s ease; }
+.controls-tools .viewer-version { color: var(--faint); font-size: 12px; white-space: nowrap; }
 .deck-chrome.has-safe-space .controls-toggle { display: none; }
 .deck-chrome.has-safe-space .controls-tools, .deck-chrome.is-expanded .controls-tools { max-width: 520px; opacity: 1; pointer-events: auto; }
 :fullscreen .deck-chrome, :-webkit-full-screen .deck-chrome { display: none; }

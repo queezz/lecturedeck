@@ -57,7 +57,7 @@ Create a temporary sample course tree outside synchronized folders, run
 
 ## 5. Version and record
 
-Follow `commit-culture.md`. Keep the two version strings synchronized. Add the
+Follow `commit-culture.md`. Keep the three version strings synchronized. Add the
 user-visible change to `.agents/CHANGELOG.md`; keep unresolved work in
 `.agents/directions.md` and remove items when they ship.
 

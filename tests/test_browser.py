@@ -18,6 +18,7 @@ import unittest
 import zlib
 from pathlib import Path
 
+from lecturedeck import __version__
 from lecturedeck.server import make_server
 
 try:
@@ -216,6 +217,7 @@ class BrowserSmokeTest(unittest.TestCase):
         page.keyboard.press("Home")
         self.assertEqual(0, self.current_index(page))
         self.assertEqual("1 / 10", page.text_content("#counter"))
+        self.assertEqual(f"v{__version__}", page.text_content("#viewer-version"))
 
     def test_declarative_figure_geometry_renders(self):
         page = self.open_deck("json", "#/2")

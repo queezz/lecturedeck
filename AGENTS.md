@@ -56,5 +56,6 @@ must remain thin pointers and must not duplicate the recipes.
 - A checked release is self-contained and works offline.
 - External source links are allowed; external runtime scripts/styles are not.
 - `lecturedeck` reads and copies only a unit's `webdeck/` directory.
-- `pyproject.toml` and `src/lecturedeck/__init__.py` carry the same version.
+- `pyproject.toml`, `src/lecturedeck/__init__.py`, and the `VIEWER_VERSION`
+  constant in `src/lecturedeck/assets/lecturedeck.js` carry the same version.
 - Do not create git tags unless the user explicitly requests one.

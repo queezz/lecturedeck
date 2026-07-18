@@ -8,7 +8,7 @@ from importlib.resources import files
 from io import StringIO
 from pathlib import Path
 
-from lecturedeck import scaffold
+from lecturedeck import __version__, scaffold
 from lecturedeck.cli import DEFAULT_PORT, build_parser, make_available_server
 from lecturedeck.scaffold import refresh_unit, runtime_hash, scaffold_unit
 from lecturedeck.server import make_server
@@ -511,6 +511,8 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn('id="controls-toggle"', index)
         self.assertIn('id="controls-tools"', index)
         self.assertNotIn("slides.js", index)
+        self.assertIn('id="viewer-version"', index)
+        self.assertIn(f'const VIEWER_VERSION = "{__version__}"', script)
         self.assertIn('fetch("deck.json"', script)
         self.assertIn("loadLegacySpec", script)
         self.assertIn('script.src = "slides.js"', script)

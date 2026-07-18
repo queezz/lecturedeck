@@ -1,5 +1,7 @@
 (() => {
   "use strict";
+  // Kept in lockstep with the Python package version by the test suite.
+  const VIEWER_VERSION = "0.12.0";
   const DECK_SCHEMA_VERSION = 1;
   const deck = document.querySelector("#deck");
   const overview = document.querySelector("#overview");
@@ -43,6 +45,12 @@
     setTheme("dark");
   }
   themeButton?.addEventListener("click", toggleTheme);
+
+  const viewerVersion = document.querySelector("#viewer-version");
+  if (viewerVersion) {
+    viewerVersion.textContent = `v${VIEWER_VERSION}`;
+    viewerVersion.title = `lecturedeck viewer ${VIEWER_VERSION}`;
+  }
 
   function deckLoadError(message) {
     deck.innerHTML = `<div class="deck-error" role="alert">${message}</div>`;
