@@ -10,6 +10,7 @@ from . import __version__
 
 DECK_SCHEMA_VERSION = 1
 ACCENTS = frozenset({"red", "gold", "green", "aqua", "blue", "purple"})
+FAVICON_PRESETS = frozenset({"calculus", "complex", "plasma"})
 SLIDE_TYPES = frozenset({"title", "section", "content"})
 LAYOUTS = frozenset(
     {
@@ -28,7 +29,7 @@ LAYOUTS = frozenset(
 TRACK_KINDS = frozenset({"captions", "subtitles", "descriptions", "chapters", "metadata"})
 
 DECK_KEYS = frozenset({"deck", "requires", "meta", "slides"})
-META_KEYS = frozenset({"title", "section", "opening", "openingAccent"})
+META_KEYS = frozenset({"title", "section", "opening", "openingAccent", "favicon"})
 SLIDE_KEYS = frozenset(
     {
         "id",
@@ -163,6 +164,19 @@ def _validate_formula(errors: list[str], where: str, formula: object) -> None:
         or not all(isinstance(item, str) for item in formula["gloss"])
     ):
         errors.append(f"deck.json: {where}.gloss must be a list of strings")
+
+
+def _validate_favicon(errors: list[str], meta: dict) -> None:
+    if "favicon" not in meta:
+        return
+    favicon = meta["favicon"]
+    if not isinstance(favicon, str) or not favicon:
+        errors.append("deck.json: meta.favicon must be a non-empty string")
+    elif favicon not in FAVICON_PRESETS and not favicon.startswith("assets/"):
+        presets = ", ".join(sorted(FAVICON_PRESETS))
+        errors.append(
+            f"deck.json: meta.favicon must be a preset ({presets}) or a path under assets/"
+        )
 
 
 def _validate_cards(errors: list[str], where: str, cards: object) -> None:
@@ -317,6 +331,7 @@ def validate_deck(data: object) -> list[str]:
         for key in ("section", "opening"):
             _check_string(errors, "meta", meta, key)
         _check_enum(errors, "meta", meta, "openingAccent", ACCENTS)
+        _validate_favicon(errors, meta)
     slides = data.get("slides")
     if not isinstance(slides, list) or not slides:
         errors.append("deck.json: slides must be a non-empty list")
@@ -352,6 +367,12 @@ def deck_asset_references(data: dict) -> list[tuple[str, str]]:
     def add(where: str, container: object, key: str) -> None:
         if isinstance(container, dict) and isinstance(container.get(key), str):
             references.append((f"{where}.{key}", container[key]))
+
+    meta = data.get("meta")
+    if isinstance(meta, dict):
+        favicon = meta.get("favicon")
+        if isinstance(favicon, str) and favicon.startswith("assets/"):
+            references.append(("meta.favicon", favicon))
 
     slides = data.get("slides")
     if not isinstance(slides, list):

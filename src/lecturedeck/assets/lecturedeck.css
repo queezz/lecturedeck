@@ -155,8 +155,8 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 .interactive-frame { min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--border); background: var(--interactive-bg); }
 .interactive-frame iframe { width: 100%; height: 100%; border: 0; display: block; background: var(--interactive-bg); }
 .interactive-placeholder { height: 100%; display: grid; place-items: center; border: 2px dashed #504945; color: var(--muted); font-size: 28px; }
-.video-card { min-width: 0; min-height: 0; margin: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 7px; }
-.lecture-video { width: 100%; height: 100%; min-height: 0; object-fit: contain; display: block; background: #050708; }
+.video-card { width: fit-content; max-width: 100%; height: 100%; min-width: 0; min-height: 0; margin: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 7px; justify-self: center; }
+.lecture-video { width: auto; max-width: 100%; height: 100%; min-height: 0; object-fit: contain; display: block; background: #050708; }
 .video-card figcaption { min-height: 28px; display: flex; align-items: baseline; gap: 12px; padding: 5px 10px 6px; border-left: 3px solid var(--accent); background: var(--caption-bg); color: var(--ink); font-size: 16px; line-height: 1.15; }
 .video-card figcaption strong { color: var(--muted); font-size: 14px; font-weight: 600; }
 .video-original-link { margin-left: auto; color: var(--blue); font-weight: 700; text-underline-offset: 3px; }

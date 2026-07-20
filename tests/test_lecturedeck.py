@@ -187,6 +187,15 @@ class LecturedeckTest(unittest.TestCase):
             (base_deck(meta={"title": ""}), "meta.title must be a non-empty string"),
             (base_deck(meta={"title": "x", "banner": "y"}), "unknown field 'banner'"),
             (base_deck(meta={"title": "x", "openingAccent": "pink"}), "meta.openingAccent"),
+            (base_deck(meta={"title": "x", "favicon": ""}), "meta.favicon"),
+            (
+                base_deck(meta={"title": "x", "favicon": "geometry"}),
+                "must be a preset",
+            ),
+            (
+                base_deck(meta={"title": "x", "favicon": "images/favicon.svg"}),
+                "path under assets/",
+            ),
             (base_deck(slides=[]), "slides must be a non-empty list"),
             (base_deck(slides=[{"title": "no id"}]), "slides[0].id"),
             (base_deck(slides=[{"id": "Bad_ID"}]), "kebab-case"),
@@ -308,6 +317,23 @@ class LecturedeckTest(unittest.TestCase):
                         root, base_deck(slides=[{"id": "a", "figure": figure}])
                     )
                     self.assertHasError(validate_unit(unit), fragment)
+
+    def test_deck_json_favicon_presets_and_custom_asset_are_validated(self):
+        for preset in ("complex", "calculus", "plasma"):
+            with self.subTest(preset=preset), tempfile.TemporaryDirectory() as root:
+                deck = base_deck(meta={"title": "x", "favicon": preset})
+                self.assertEqual([], validate_unit(make_json_unit(root, deck)))
+
+        with tempfile.TemporaryDirectory() as root:
+            deck = base_deck(meta={"title": "x", "favicon": "assets/favicon.svg"})
+            unit = make_json_unit(root, deck)
+            self.assertHasError(validate_unit(unit), "meta.favicon is missing")
+            favicon = unit / "webdeck" / "assets" / "favicon.svg"
+            favicon.write_text("<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8")
+            self.assertEqual([], validate_unit(unit))
+            output = Path(root) / "release"
+            release_unit(unit, output)
+            self.assertTrue((output / "assets" / "favicon.svg").is_file())
 
     def test_deck_json_video_assets_are_validated(self):
         video_slide = {
@@ -545,6 +571,10 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn("webkitRequestFullscreen", script)
         self.assertIn("function setTheme", script)
         self.assertIn("function setPresentationStyle", script)
+        self.assertIn("function setFavicon", script)
+        self.assertIn("complex:", script)
+        self.assertIn("calculus:", script)
+        self.assertIn("plasma:", script)
         self.assertIn("lecturedeck-presentation-style", script)
         self.assertIn("function positionControls", script)
         self.assertIn("controlsTools.inert", script)
@@ -577,6 +607,8 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn("body.print-deck", styles)
         self.assertIn("@page", styles)
         self.assertIn(".layout-video", styles)
+        self.assertIn("width: fit-content", styles)
+        self.assertIn("justify-self: center", styles)
         self.assertIn(".body-copy table", styles)
         adjust = packaged_text("adjust.js")
         self.assertIn("const spec = () => window.LECTUREDECK", adjust)

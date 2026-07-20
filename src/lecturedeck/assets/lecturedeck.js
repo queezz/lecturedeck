@@ -1,8 +1,13 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.14.0";
+  const VIEWER_VERSION = "0.15.0";
   const DECK_SCHEMA_VERSION = 1;
+  const FAVICON_PRESETS = {
+    complex: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#071b2a"/><text x="7" y="49" fill="#fbf1c7" font-family="Cambria Math,serif" font-size="47" font-style="italic">e</text><text x="31" y="25" fill="#4dd9ff" font-family="Cambria Math,serif" font-size="21" font-style="italic">iθ</text></svg>`,
+    calculus: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#10241d"/><text x="7" y="53" fill="#fbf1c7" font-family="Cambria Math,serif" font-size="58">∫</text><text x="31" y="39" fill="#8ec07c" font-family="Cambria Math,serif" font-size="24" font-style="italic">f′</text></svg>`,
+    plasma: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#282828"/><path d="M32 2v9M32 53v9M2 32h9M53 32h9M10.5 10.5l6.5 6.5M47 47l6.5 6.5M53.5 10.5L47 17M17 47l-6.5 6.5" fill="none" stroke="#fb4934" stroke-width="4" stroke-linecap="round"/><circle cx="32" cy="32" r="20" fill="#68423a" stroke="#fe8019" stroke-width="3"/><circle cx="32" cy="32" r="13" fill="#934d2b"/><circle cx="32" cy="32" r="7" fill="#b5762e"/></svg>`,
+  };
   const query = new URLSearchParams(location.search);
   const printMode = query.get("print") === "1";
   const printTheme = query.get("theme") === "dark" ? "dark" : "light";
@@ -84,6 +89,24 @@
     deck.innerHTML = `<div class="deck-error" role="alert">${message}</div>`;
   }
 
+  function setFavicon(favicon) {
+    if (typeof favicon !== "string") return;
+    const preset = FAVICON_PRESETS[favicon];
+    const href = preset
+      ? `data:image/svg+xml,${encodeURIComponent(preset)}`
+      : favicon.startsWith("assets/") ? favicon : null;
+    if (!href) return;
+    let link = document.querySelector('link[rel~="icon"]');
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      document.head.append(link);
+    }
+    if (preset) link.type = "image/svg+xml";
+    else link.removeAttribute("type");
+    link.href = href;
+  }
+
   function loadLegacySpec() {
     // Legacy units carry executable slides.js that assigns window.LECTUREDECK.
     return new Promise(resolve => {
@@ -135,6 +158,7 @@
       meta: rawSpec.meta || {},
       slides: Array.isArray(rawSpec.slides) ? rawSpec.slides : [],
     };
+    setFavicon(spec.meta.favicon);
     window.LECTUREDECK = spec;
     let index = Math.max(0, Math.min(spec.slides.length - 1, Number(location.hash.replace("#/", "")) || 0));
     let nativeFullscreenWasActive = false;

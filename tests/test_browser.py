@@ -71,7 +71,12 @@ def build_json_unit(unit: Path) -> None:
     )
     deck = {
         "deck": 1,
-        "meta": {"title": "Smoke deck", "section": "SMOKE", "opening": "OPENING"},
+        "meta": {
+            "title": "Smoke deck",
+            "section": "SMOKE",
+            "opening": "OPENING",
+            "favicon": "complex",
+        },
         "slides": [
             {"id": "s-title", "type": "title", "title": "Smoke deck", "claim": "Slide one."},
             {"id": "s-a", "title": "Statement A", "claim": "Second slide."},
@@ -146,10 +151,17 @@ def build_json_unit(unit: Path) -> None:
 
 def build_legacy_unit(unit: Path) -> None:
     webdeck = unit / "webdeck"
-    (webdeck / "assets").mkdir(parents=True)
+    assets = webdeck / "assets"
+    assets.mkdir(parents=True)
+    (assets / "favicon.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+        '<circle cx="8" cy="8" r="7" fill="#fb4934"/></svg>',
+        encoding="utf-8",
+    )
     (webdeck / "slides.js").write_text(
         "window.LECTUREDECK = {\n"
-        '  meta: { title: "Legacy smoke", section: "SMOKE", opening: "OPENING" },\n'
+        '  meta: { title: "Legacy smoke", section: "SMOKE", opening: "OPENING", '
+        'favicon: "assets/favicon.svg" },\n'
         '  slides: [\n'
         '    { type: "title", title: "Legacy smoke", claim: "Fallback slide." },\n'
         '    { title: "Legacy two", claim: "Second legacy slide." }\n'
@@ -240,6 +252,18 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(0, self.current_index(page))
         self.assertEqual("1 / 11", page.text_content("#counter"))
         self.assertEqual(f"v{__version__}", page.text_content("#viewer-version"))
+
+    def test_deck_favicon_sets_browser_identity(self):
+        page = self.open_deck("json")
+        href = page.get_attribute('link[rel~="icon"]', "href")
+        self.assertTrue(href.startswith("data:image/svg+xml,%3Csvg"), href)
+        self.assertIn("i%CE%B8", href)
+
+        legacy = self.open_deck("legacy")
+        self.assertEqual(
+            "assets/favicon.svg",
+            legacy.get_attribute('link[rel~="icon"]', "href"),
+        )
 
     def test_print_mode_renders_one_pdf_page_per_slide(self):
         page = self.browser.new_page(viewport={"width": 1280, "height": 720})
@@ -379,6 +403,17 @@ class BrowserSmokeTest(unittest.TestCase):
         page.keyboard.press("ArrowRight")
         page.wait_for_timeout(80)
         self.assertEqual(3, self.current_index(page))
+
+        stage_box = page.locator(".layout-video").bounding_box()
+        video_box = video.bounding_box()
+        self.assertIsNotNone(stage_box)
+        self.assertIsNotNone(video_box)
+        self.assertLess(video_box["width"], stage_box["width"])
+        self.assertAlmostEqual(
+            video_box["x"] + video_box["width"] / 2,
+            stage_box["x"] + stage_box["width"] / 2,
+            delta=1,
+        )
 
     def test_interactive_iframe_pointer_navigates(self):
         page = self.open_deck("json", "#/4")

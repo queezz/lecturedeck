@@ -44,6 +44,26 @@ object.
 }
 ```
 
+## Browser identity
+
+Set `meta.favicon` once per deck so concurrent presentations remain easy to
+distinguish in tabs and browser sidebars. The viewer supplies three compact
+presets: `complex` (`e` with an `iθ` superscript), `calculus` (an integral with
+`f′`), and `plasma` (orange-red concentric sun rings). A unit may instead use
+its own image under `webdeck/assets/`.
+
+```json
+{
+  "meta": {
+    "title": "A recognizable deck",
+    "favicon": "calculus"
+  }
+}
+```
+
+For a custom icon, use a path such as `"favicon": "assets/favicon.svg"`.
+Favor a square, high-contrast design that stays legible at 16 pixels.
+
 ## Saved style options
 
 Add one or more names to a slide's `className`.

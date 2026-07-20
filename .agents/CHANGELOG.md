@@ -2,6 +2,16 @@
 
 ## Shipped
 
+- **v0.15.0** — Give concurrent decks distinct browser identities. Deck
+  metadata can select built-in complex-number, calculus, or plasma favicons,
+  or point to a validated custom image under `assets/`; the browser viewer
+  applies either form in served and frozen offline decks.
+
+- **v0.14.1** — Keep native video controls at the media's intrinsic aspect
+  ratio. Video slides now center the player within unusually wide stages
+  instead of stretching its element across the row and introducing black
+  pillar bars around ordinary widescreen media.
+
 - **v0.14.0** — Replace the binary theme toggle with an accessible Appearance
   dialog. Separate radio groups persist color mode and presentation style as
   browser preferences without changing deck data; the first curated presets

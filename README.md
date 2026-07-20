@@ -74,8 +74,13 @@ HTTP, with no functions or executable deck code. A minimal deck looks like:
 ```json
 {
   "deck": 1,
-  "requires": ">=0.10",
-  "meta": { "title": "Sample deck", "section": "COURSE TITLE", "opening": "OPENING" },
+  "requires": ">=0.15",
+  "meta": {
+    "title": "Sample deck",
+    "section": "COURSE TITLE",
+    "opening": "OPENING",
+    "favicon": "complex"
+  },
   "slides": [
     {
       "id": "opening-title",
@@ -94,6 +99,11 @@ HTTP, with no functions or executable deck code. A minimal deck looks like:
 - Every slide carries a stable kebab-case `id`, unique within the deck.
   Figures may carry ids too; the viewer stamps both into the DOM so future
   tooling can address them.
+- `meta.favicon` gives the deck a recognizable browser identity. Select the
+  built-in `complex`, `calculus`, or `plasma` icon, or name a deck-owned image
+  such as `assets/favicon.svg`. Custom favicon paths are validated and remain
+  self-contained in static releases. Omit the field to leave the browser's
+  default icon unchanged.
 - Slide fields mirror the rendering vocabulary: `type` (`title`, `section`,
   `content`), optional `layout`, `title`, `eyebrow`, `claim`, `body`, `quote`,
   `source`, `beat`, `accent`, `className`, `chrome`, `formula`, and one
