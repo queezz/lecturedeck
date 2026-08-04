@@ -46,6 +46,7 @@ must not be force-added.
 | State | `.agents/directions.md` | Open work only |
 | History | `.agents/CHANGELOG.md` | Shipped version history |
 | Codex trigger | `.codex/skills/lecturedeck-maintenance/` | Thin pointer to the workflow |
+| Fleet context | `../2026-08-04-repo-map` (`repomap`, github.com/queezz/repomap) | `RULES.md` house rules and `MAP.md` sibling map |
 
 Workflows in `.agents/` are the single source of truth. Tool-specific skills
 must remain thin pointers and must not duplicate the recipes.
