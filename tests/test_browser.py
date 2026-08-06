@@ -21,7 +21,7 @@ import zlib
 from pathlib import Path
 
 from lecturedeck import __version__
-from lecturedeck.server import make_server
+from lecturedeck.server import make_selector_server, make_server
 
 try:
     from playwright.sync_api import sync_playwright
@@ -197,6 +197,10 @@ class BrowserSmokeTest(unittest.TestCase):
             threading.Thread(target=server.serve_forever, daemon=True).start()
             cls.servers.append(server)
             cls.urls[name] = f"http://127.0.0.1:{server.server_address[1]}/webdeck/"
+        selector = make_selector_server(root, "127.0.0.1", 0, livereload=False)
+        threading.Thread(target=selector.serve_forever, daemon=True).start()
+        cls.servers.append(selector)
+        cls.selector_url = f"http://127.0.0.1:{selector.server_address[1]}/"
         original_cwd = Path.cwd()
         try:
             try:
@@ -234,6 +238,26 @@ class BrowserSmokeTest(unittest.TestCase):
         return page.evaluate(
             "Number(document.querySelector('.slide-frame')?.dataset.index)"
         )
+
+    def test_selector_filters_and_opens_a_deck(self):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.goto(self.selector_url)
+        self.assertEqual(3, page.locator("li[data-search]").count())
+        page.locator("#filter").fill("smoke deck")
+        self.assertEqual(1, page.locator("li[data-search]:visible").count())
+        page.get_by_role("link", name=re.compile("Smoke deck")).click()
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        self.assertIn("/decks/json/webdeck/", page.url)
+        self.assertIn("Smoke deck", page.title())
+        selector_link = page.locator("#deck-selector-link")
+        self.assertIsNone(selector_link.get_attribute("hidden"))
+        self.assertEqual("Back to deck selector", selector_link.get_attribute("aria-label"))
+        if page.locator("#controls-toggle").is_visible():
+            page.locator("#controls-toggle").click()
+        selector_link.click()
+        page.wait_for_url(self.selector_url)
+        self.assertEqual(3, page.locator("li[data-search]").count())
 
     def test_json_deck_loads_and_navigates(self):
         page = self.open_deck("json")
@@ -345,16 +369,98 @@ class BrowserSmokeTest(unittest.TestCase):
         page.keyboard.press("Escape")
         page.wait_for_function("document.querySelector('#overview').hidden")
 
-    def test_fullscreen_toggles_and_exits(self):
+    def test_laser_pointer_toggles_tracks_and_yields_to_overview(self):
         page = self.open_deck("json")
+        page.keyboard.press("l")
+        page.wait_for_selector(".laser-dot", state="attached")
+        self.assertTrue(page.evaluate("document.body.classList.contains('laser-active')"))
+        self.assertEqual("true", page.get_attribute("#laser-button", "aria-pressed"))
+        # The arrow is hidden over the slide but kept on the controls.
+        self.assertEqual(
+            "none",
+            page.evaluate("getComputedStyle(document.querySelector('.deck')).cursor"),
+        )
+        self.assertNotEqual(
+            "none",
+            page.evaluate("getComputedStyle(document.querySelector('#laser-button')).cursor"),
+        )
+
+        page.mouse.move(400, 300)
+        page.wait_for_function("!document.querySelector('.laser-dot').hidden")
+        centre = page.evaluate(
+            "() => { const r = document.querySelector('.laser-dot').getBoundingClientRect();"
+            " return {x: r.left + r.width / 2, y: r.top + r.height / 2}; }"
+        )
+        self.assertAlmostEqual(400, centre["x"], delta=2)
+        self.assertAlmostEqual(300, centre["y"], delta=2)
+        # The halo takes the accent of the slide being pointed at.
+        halo = (
+            "document.querySelector('.laser-dot').style"
+            ".getPropertyValue('--laser-accent').trim()"
+        )
+        self.assertTrue(page.evaluate(halo))
+        # And it is repainted on every slide change, so a laser left switched
+        # on while paging does not keep the accent it was lit under. The
+        # smoke deck's slides share one accent, so clear the property and
+        # assert that navigating restores it.
+        page.evaluate("document.querySelector('.laser-dot').style.removeProperty('--laser-accent')")
+        self.assertEqual("", page.evaluate(halo))
+        page.keyboard.press("ArrowRight")
+        page.wait_for_function(f"{halo}.length > 0")
+
+        # Opening the overview switches it off so the cards stay clickable.
+        page.keyboard.press("o")
+        page.wait_for_selector(".overview-card")
+        self.assertFalse(page.evaluate("document.body.classList.contains('laser-active')"))
+        self.assertTrue(page.evaluate("document.querySelector('.laser-dot').hidden"))
+        self.assertEqual("false", page.get_attribute("#laser-button", "aria-pressed"))
+        page.keyboard.press("Escape")
+        page.wait_for_function("document.querySelector('#overview').hidden")
+
+        # The control toggles it as well as the key. The strip is collapsed
+        # behind the gear until it is expanded, and is inert until then.
+        if page.locator("#controls-toggle").is_visible():
+            page.locator("#controls-toggle").click()
+        page.click("#laser-button")
+        self.assertEqual("true", page.get_attribute("#laser-button", "aria-pressed"))
+        page.click("#laser-button")
+        self.assertEqual("false", page.get_attribute("#laser-button", "aria-pressed"))
+        self.assertTrue(page.evaluate("document.querySelector('.laser-dot').hidden"))
+
+    def test_fullscreen_toggles_and_exits(self):
+        page = self.browser.new_page(viewport={"width": 1600, "height": 1000})
+        self.addCleanup(page.close)
+        page.goto(self.urls["json"] + "#/4")
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        windowed = page.locator(".slide-frame").bounding_box()
+        self.assertIsNotNone(windowed)
+        self.assertAlmostEqual(1600, windowed["width"], delta=1)
+        self.assertAlmostEqual(900, windowed["height"], delta=1)
+        self.assertAlmostEqual(50, windowed["y"], delta=1)
+
         page.keyboard.press("f")
         page.wait_for_function(
             "document.querySelector('#fullscreen-button').textContent === 'Exit full screen'"
         )
+        page.wait_for_function(
+            "() => Math.abs(document.querySelector('.slide-frame')"
+            ".getBoundingClientRect().height - innerHeight) < 1"
+        )
+        fullscreen = page.locator(".slide-frame").bounding_box()
+        self.assertIsNotNone(fullscreen)
+        self.assertAlmostEqual(1600, fullscreen["width"], delta=1)
+        self.assertAlmostEqual(1000, fullscreen["height"], delta=1)
+        self.assertAlmostEqual(0, fullscreen["x"], delta=1)
+        self.assertAlmostEqual(0, fullscreen["y"], delta=1)
+
         native = page.evaluate("Boolean(document.fullscreenElement)")
         page.keyboard.press("f")
         page.wait_for_function(
             "document.querySelector('#fullscreen-button').textContent === 'Full screen'"
+        )
+        page.wait_for_function(
+            "() => Math.abs(document.querySelector('.slide-frame')"
+            ".getBoundingClientRect().height - 900) < 1"
         )
         self.assertTrue(page.evaluate("document.querySelector('#overview').hidden"))
         if native:
@@ -487,13 +593,25 @@ class BrowserSmokeTest(unittest.TestCase):
             return page.evaluate(
                 "() => { const r = document.querySelector('#presentation-controls')"
                 ".getBoundingClientRect();"
-                " return {top: Math.round(r.top), height: Math.round(r.height)}; }"
+                " return {left: Math.round(r.left), top: Math.round(r.top),"
+                " height: Math.round(r.height)}; }"
             )
 
         first = strip()
+        self.assertGreaterEqual(first["left"], 24, first)
         self.assertLessEqual(first["height"], 40, first)
+        self.assertEqual("⚙️", page.text_content("#controls-toggle").strip())
+        self.assertEqual(
+            "Show presentation controls",
+            page.get_attribute("#controls-toggle", "aria-label"),
+        )
+        self.assertTrue(page.locator("#deck-selector-link").is_hidden())
         page.click("#controls-toggle")
         page.wait_for_timeout(250)
+        self.assertEqual(
+            "Hide presentation controls",
+            page.get_attribute("#controls-toggle", "aria-label"),
+        )
         page.keyboard.press("ArrowRight")
         page.wait_for_timeout(100)
         page.click("#controls-toggle")

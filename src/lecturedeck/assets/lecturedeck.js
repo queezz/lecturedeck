@@ -1,8 +1,10 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.15.0";
+  const VIEWER_VERSION = "0.17.1";
   const DECK_SCHEMA_VERSION = 1;
+  const SLIDE_WIDTH = 1280;
+  const SLIDE_HEIGHT = 720;
   const FAVICON_PRESETS = {
     complex: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#071b2a"/><text x="7" y="49" fill="#fbf1c7" font-family="Cambria Math,serif" font-size="47" font-style="italic">e</text><text x="31" y="25" fill="#4dd9ff" font-family="Cambria Math,serif" font-size="21" font-style="italic">iθ</text></svg>`,
     calculus: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#10241d"/><text x="7" y="53" fill="#fbf1c7" font-family="Cambria Math,serif" font-size="58">∫</text><text x="31" y="39" fill="#8ec07c" font-family="Cambria Math,serif" font-size="24" font-style="italic">f′</text></svg>`,
@@ -25,6 +27,7 @@
   const presentationControls = document.querySelector("#presentation-controls");
   const controlsToggle = document.querySelector("#controls-toggle");
   const controlsTools = document.querySelector("#controls-tools");
+  const deckSelectorLink = document.querySelector("#deck-selector-link");
   const fullscreenButtons = [
     document.querySelector("#fullscreen-button"),
     document.querySelector("#touch-fullscreen-button"),
@@ -83,6 +86,10 @@
   if (viewerVersion) {
     viewerVersion.textContent = `v${VIEWER_VERSION}`;
     viewerVersion.title = `lecturedeck viewer ${VIEWER_VERSION}`;
+  }
+  if (deckSelectorLink && /^\/decks\/[^/]+\/webdeck(?:\/|$)/.test(location.pathname)) {
+    deckSelectorLink.href = "/";
+    deckSelectorLink.hidden = false;
   }
 
   function deckLoadError(message) {
@@ -164,6 +171,11 @@
     let nativeFullscreenWasActive = false;
     let deliberateNativeFullscreenExit = false;
     let controlsExpanded = false;
+    // Laser pointer state. Declared here, before render() can run, so the
+    // renderer can repaint a lit dot without a temporal-dead-zone guard. The
+    // element itself is created only after the print-mode branch returns.
+    let laser = null;
+    let laserOn = false;
 
     const slideTitleText = (slide, i) => {
       const raw = slide.title || slide.interactive?.title || slide.video?.title || "";
@@ -294,11 +306,11 @@
       });
     }
 
-    function positionControls(scale) {
+    function positionControls(scale, frameWidth = SLIDE_WIDTH, frameHeight = SLIDE_HEIGHT) {
       if (!presentationControls || !controlsToggle || !controlsTools) return;
-      const frameLeft = (innerWidth - 1280 * scale) / 2;
-      const frameTop = (innerHeight - 720 * scale) / 2;
-      const frameBottom = frameTop + 720 * scale;
+      const frameLeft = (innerWidth - frameWidth * scale) / 2;
+      const frameTop = (innerHeight - frameHeight * scale) / 2;
+      const frameBottom = frameTop + frameHeight * scale;
       const gutter = 8;
       // Applying the state classes can change the measured height, so
       // measure again and reposition until the geometry matches the state.
@@ -307,7 +319,7 @@
         const hasRoomBelow = innerHeight - frameBottom >= controlsHeight + gutter * 2;
         const hasRoomAbove = frameTop >= controlsHeight + gutter * 2;
         const safe = hasRoomBelow || hasRoomAbove;
-        const left = Math.max(gutter, frameLeft + 12);
+        const left = Math.max(gutter, frameLeft + 24);
         const top = hasRoomBelow
           ? frameBottom + gutter
           : hasRoomAbove
@@ -319,6 +331,10 @@
         presentationControls.classList.toggle("is-expanded", !safe && controlsExpanded);
         const toolsVisible = safe || controlsExpanded;
         controlsToggle.setAttribute("aria-expanded", String(toolsVisible));
+        controlsToggle.setAttribute(
+          "aria-label",
+          `${toolsVisible ? "Hide" : "Show"} presentation controls`,
+        );
         controlsTools.setAttribute("aria-hidden", String(!toolsVisible));
         controlsTools.inert = !toolsVisible;
       }
@@ -327,9 +343,18 @@
     function scaleCurrent() {
       const frame = deck.querySelector(".slide-frame");
       if (!frame) return;
-      const scale = Math.min(innerWidth / 1280, innerHeight / 720);
+      const scale = Math.min(innerWidth / SLIDE_WIDTH, innerHeight / SLIDE_HEIGHT);
+      const fullscreen = isNativeFullscreen()
+        || document.body.classList.contains("pseudo-fullscreen");
+      // Windowed slides and exported pages keep the authored 16:9 canvas.
+      // In presentation mode, expand only the spare logical dimension so the
+      // slide reaches every viewport edge without stretching or cropping.
+      const frameWidth = fullscreen ? innerWidth / scale : SLIDE_WIDTH;
+      const frameHeight = fullscreen ? innerHeight / scale : SLIDE_HEIGHT;
+      frame.style.width = fullscreen ? `${frameWidth}px` : "";
+      frame.style.height = fullscreen ? `${frameHeight}px` : "";
       frame.style.transform = `scale(${scale})`;
-      positionControls(scale);
+      positionControls(scale, frameWidth, frameHeight);
     }
 
     function render() {
@@ -344,6 +369,8 @@
       history.replaceState(null, "", `#/${index}`);
       if (!overview.hidden) overview.querySelectorAll(".overview-card").forEach(card => card.setAttribute("aria-current", String(Number(card.dataset.index) === index)));
       scaleCurrent();
+      // Keep a lit laser on the accent of the slide it is now over.
+      if (laserOn) paintLaser();
     }
 
     async function renderPrintDeck() {
@@ -387,7 +414,7 @@
         button.textContent = active ? "Exit full screen" : "Full screen";
         button.setAttribute("aria-pressed", String(active));
       });
-      if (!active) requestAnimationFrame(scaleCurrent);
+      requestAnimationFrame(scaleCurrent);
       if (escapedNativeFullscreen && overview.hidden) toggleOverview(true);
     }
 
@@ -425,12 +452,17 @@
       if (overview.hidden) return;
       overview.querySelectorAll(".overview-thumb").forEach(thumb => {
         const frame = thumb.querySelector(".slide-frame");
-        if (frame && thumb.clientWidth) frame.style.transform = `scale(${thumb.clientWidth / 1280})`;
+        if (frame && thumb.clientWidth) {
+          frame.style.transform = `scale(${thumb.clientWidth / SLIDE_WIDTH})`;
+        }
       });
     }
 
     function toggleOverview(force) {
       const open = force ?? overview.hidden;
+      // A laser dot over a grid of thumbnails points at nothing useful, and
+      // the hidden cursor would make the cards hard to click.
+      if (open && laserOn) setLaser(false);
       overview.hidden = !open;
       deck.hidden = open;
       if (!open) { render(); return; }
@@ -444,6 +476,45 @@
       renderPrintDeck();
       return;
     }
+
+    // Laser pointer. `L`, or the Laser control, toggles a glowing dot that
+    // tracks the pointer and hides the ordinary cursor over the slide, so a
+    // presenter or a recording can point at part of a figure. It is off by
+    // default and is created after the print-mode return, so exported PDFs
+    // never contain the element at all.
+    const laserButton = document.querySelector("#laser-button");
+    laser = document.createElement("div");
+    laser.className = "laser-dot";
+    laser.hidden = true;
+    document.body.append(laser);
+
+    function paintLaser() {
+      // Follow the accent of the slide being pointed at. The dot keeps a
+      // white core so it stays legible against any figure.
+      const frame = deck.querySelector(".slide-frame");
+      const accent = frame ? getComputedStyle(frame).getPropertyValue("--accent").trim() : "";
+      if (accent && laser) laser.style.setProperty("--laser-accent", accent);
+    }
+
+    function setLaser(on) {
+      laserOn = on;
+      laser.hidden = !on;
+      document.body.classList.toggle("laser-active", on);
+      laserButton?.setAttribute("aria-pressed", String(on));
+      if (on) paintLaser();
+    }
+
+    addEventListener("pointermove", event => {
+      if (!laserOn) return;
+      laser.hidden = false;
+      laser.style.transform = `translate(${event.clientX}px, ${event.clientY}px)`;
+    });
+    // Pointer moves stop arriving once the cursor enters an interactive
+    // iframe or leaves the window, which would otherwise strand the dot at
+    // the last position it saw.
+    document.addEventListener("pointerleave", () => { if (laserOn) laser.hidden = true; });
+    addEventListener("blur", () => { if (laserOn) laser.hidden = true; });
+    laserButton?.addEventListener("click", () => setLaser(!laserOn));
 
     addEventListener("resize", () => { scaleCurrent(); scaleOverviewThumbs(); });
     addEventListener("hashchange", () => {
@@ -469,6 +540,7 @@
       else if (event.key === "Escape" && overview.hidden && document.body.classList.contains("pseudo-fullscreen")) toggleFullscreen();
       else if (event.key.toLowerCase() === "o" || event.key === "Escape") toggleOverview();
       else if (event.key.toLowerCase() === "f") toggleFullscreen();
+      else if (event.key.toLowerCase() === "l") setLaser(!laserOn);
       else if (event.key.toLowerCase() === "t") { event.preventDefault(); appearanceDialog?.showModal(); }
     });
     let wheelStreak = 0;
@@ -526,7 +598,7 @@
   let reloadTimer = null;
   async function pollLiveReload() {
     try {
-      const response = await fetch("/__lecturedeck/version", {cache: "no-store"});
+      const response = await fetch("../__lecturedeck/version", {cache: "no-store"});
       if (!response.ok) throw new Error(response.status);
       const state = await response.json();
       reloadFailures = 0;

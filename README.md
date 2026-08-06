@@ -169,7 +169,9 @@ Run from a course repository, or pass `--repo PATH` explicitly:
 lecturedeck init <unit> --title "Presentation title"
 lecturedeck refresh <unit>
 lecturedeck check <unit>
+lecturedeck serve
 lecturedeck serve <unit> --livereload
+lecturedeck serve --folder <presentations-directory>
 lecturedeck release <unit> --output <new-output-directory>
 lecturedeck pdf <unit> --output <new-file.pdf>
 ```
@@ -217,6 +219,19 @@ Serving is localhost-only by default. For a trusted local network:
 lecturedeck serve <unit> --lan --livereload
 ```
 
+Omit the unit to open a searchable selector for the current course's
+`Studio/work/presentations/` folder. The selector discovers only immediate
+child directories containing `webdeck/deck.json` or legacy
+`webdeck/slides.js`. JSON decks use `meta.title` and optional `meta.section`;
+legacy decks fall back to the unit directory name. To select from an arbitrary
+presentations folder instead, run `lecturedeck serve --folder PATH`. A unit may
+also be named with `--folder` to serve that one deck directly.
+
+The selector exposes every chosen unit at its own `/decks/<unit>/webdeck/`
+route. It reads selector labels only from `deck.json`, never executes deck data
+to build the list, and preserves the same boundary as single-deck serving:
+files beside `webdeck/` are not reachable.
+
 Without `--port`, the first server uses port 4173. If that port is occupied,
 another deck automatically advances to 4174, then 4175, and so on; the printed
 URL and `--open` always use the selected port. Passing `--port PORT` is strict
@@ -237,14 +252,25 @@ endpoint). Adjacent unit files such as `script.md`, `brief.md`, and
 - **Appearance:** `T` or the **Appearance** control opens separate color-mode
   and presentation-style choices. Both preferences stay in the same browser
   and do not change deck data.
+- **Laser pointer:** `L` or the **Laser** control toggles a glowing dot that
+  follows the pointer and hides the arrow over the slide. The dot takes the
+  current slide's accent colour and keeps a white core so it stays visible on
+  any figure. It switches off when the overview opens, disappears while the
+  pointer sits over an interactive iframe or outside the window, and never
+  appears in a PDF export.
+- **Deck selector:** the home button returns to the selector when the deck was
+  opened from one; it stays hidden for a directly served deck.
 - **Viewer version:** the expanded controls strip shows a small `vX.Y.Z`
   label, so a served deck reveals the installed viewer and a frozen release
   reveals the viewer it was built with.
 
 The presentation controls sit outside the fitted slide whenever the viewport
-has spare space. At tighter aspect ratios they collapse to a small **Controls**
-handle so they do not cover the footer. The desktop strip is hidden in full
-screen, where the keyboard shortcuts remain active.
+has spare space. At tighter aspect ratios they collapse to a small gear button
+so they do not cover the footer. The desktop strip is hidden in full screen,
+where the keyboard shortcuts remain active. Full screen also expands the live
+slide canvas into a display's spare dimension, so 16:10, 3:2, and ultrawide
+screens are filled without stretching or cropping authored content. Windowed
+slides, overview thumbnails, and PDF pages remain 16:9.
 
 Browsers reserve `Escape` while using native full screen, so it cannot open the
 overview directly. `O` and the always-visible fullscreen control bar still open

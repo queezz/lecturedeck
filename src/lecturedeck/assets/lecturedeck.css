@@ -240,17 +240,31 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 .kind-title .slide-title { font-size: 68px; }
 .kind-title .claim { font-size: 31px; color: var(--muted); }
 
-.deck-chrome { position: fixed; z-index: 20; top: 12px; left: 12px; display: flex; align-items: center; gap: 6px; opacity: .42; transition: opacity .15s; }
+/* Laser pointer. A solid core in the current slide's accent, set from script,
+   inside a white contrast ring: the core carries on a white source figure and
+   the ring carries on a dark slide, so the dot survives both. The element
+   never exists in print output, but the guard below also covers a browser
+   printing a live page mid-presentation. */
+.laser-dot { position: fixed; z-index: 120; top: 0; left: 0; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; background: radial-gradient(circle, var(--laser-accent, var(--red)) 0 32%, rgba(255, 255, 255, .92) 38% 46%, color-mix(in srgb, var(--laser-accent, var(--red)) 70%, transparent) 52%, transparent 74%); box-shadow: 0 0 20px 6px color-mix(in srgb, var(--laser-accent, var(--red)) 42%, transparent); pointer-events: none; }
+.laser-dot[hidden] { display: none; }
+/* Hide the arrow only over the slide: the controls stay clickable. */
+body.laser-active .deck, body.laser-active .deck * { cursor: none; }
+@media print { .laser-dot { display: none; } }
+.deck-chrome { position: fixed; z-index: 20; top: 12px; left: 24px; display: flex; align-items: center; gap: 6px; opacity: .42; transition: opacity .15s; }
 .deck-chrome:hover, .deck-chrome:focus-within, .deck-chrome.has-safe-space { opacity: 1; }
-.deck-chrome button, .deck-chrome #counter { border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; background: var(--chrome-bg); color: var(--muted); font-size: 14px; }
-.deck-chrome button { cursor: pointer; }
-.deck-chrome button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+.deck-chrome button, .deck-chrome .control-link, .deck-chrome #counter { border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; background: var(--chrome-bg); color: var(--muted); font-size: 14px; }
+.deck-chrome button, .deck-chrome .control-link { cursor: pointer; }
+.deck-chrome .control-link { display: inline-grid; place-items: center; box-sizing: border-box; min-width: 36px; text-decoration: none; }
+.deck-chrome .control-link[hidden] { display: none; }
+.deck-chrome .selector-link { font-size: 18px; line-height: 1; }
+.deck-chrome .controls-toggle { width: 40px; height: 36px; padding: 0; font-size: 18px; line-height: 1; }
+.deck-chrome button:focus-visible, .deck-chrome .control-link:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 .controls-tools { max-width: 0; overflow: hidden; display: flex; align-items: center; gap: 8px; opacity: 0; pointer-events: none; transition: max-width .18s ease, opacity .12s ease; }
 /* Collapsing clips the tools; items must not shrink and wrap into taller rows. */
 .controls-tools > * { flex: none; white-space: nowrap; }
 .controls-tools .viewer-version { color: var(--faint); font-size: 12px; white-space: nowrap; }
 .deck-chrome.has-safe-space .controls-toggle { display: none; }
-.deck-chrome.has-safe-space .controls-tools, .deck-chrome.is-expanded .controls-tools { max-width: 520px; opacity: 1; pointer-events: auto; }
+.deck-chrome.has-safe-space .controls-tools, .deck-chrome.is-expanded .controls-tools { max-width: 580px; opacity: 1; pointer-events: auto; }
 :fullscreen .deck-chrome, :-webkit-full-screen .deck-chrome { display: none; }
 
 .appearance-dialog {

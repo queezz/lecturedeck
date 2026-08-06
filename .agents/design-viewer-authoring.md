@@ -257,6 +257,31 @@ PDF is a deterministic export of the viewer, not a second rendering system.
 - Output is a new `.pdf` file written atomically. Existing files are never
   overwritten, and the temporary server exposes no files beside `webdeck/`.
 
+## 8. Folder deck selector (shipped in v0.16.0)
+
+Selection is a serve-time index over deck content, not a course-content
+catalog or a new release format.
+
+- `lecturedeck serve` without a unit selects from the auto-detected course's
+  presentations folder. `--folder PATH` selects from an explicit folder whose
+  immediate child directories are presentation units.
+- Discovery is deliberately shallow. A child is listed only when it contains
+  `webdeck/deck.json` or legacy `webdeck/slides.js`; unrelated files, deeper
+  trees, and presentation-adjacent unit files are not read.
+- JSON labels come from `meta.title` and optional `meta.section`. Legacy or
+  unreadable JSON data falls back to the unit directory name; discovery does
+  not execute JavaScript or hide a broken deck that needs inspection.
+- Each selected unit retains an isolated `webdeck/` route, packaged-viewer
+  fallback, live reload, and serve-only adjustment script. Selector routes do
+  not expose files beside `webdeck/` and do not affect frozen releases.
+- Decks opened from the selector reveal a compact return action in the viewer
+  controls. Directly served decks and frozen releases do not show a misleading
+  selector link.
+- A later multi-course selector can aggregate several explicitly configured
+  presentation folders while reusing this discovery and routing boundary. It
+  must not recursively scan arbitrary course trees or move course identity
+  into this public runtime.
+
 ## Boundaries that hold across all phases
 
 - Offline and CDN-free; releases are self-contained static directories served

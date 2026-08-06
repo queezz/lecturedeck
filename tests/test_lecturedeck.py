@@ -12,7 +12,7 @@ from lecturedeck import __version__, scaffold
 from lecturedeck.cli import DEFAULT_PORT, build_parser, make_available_server
 from lecturedeck.pdf import export_pdf
 from lecturedeck.scaffold import refresh_unit, runtime_hash, scaffold_unit
-from lecturedeck.server import make_server
+from lecturedeck.server import discover_decks, make_selector_server, make_server
 from lecturedeck.validation import deck_entry, release_unit, validate_unit
 
 LEGACY_SLIDES = """window.LECTUREDECK = {
@@ -479,6 +479,17 @@ class LecturedeckTest(unittest.TestCase):
         self.assertTrue(args.lan)
         self.assertEqual("127.0.0.1", args.host)
 
+    def test_serve_without_unit_selects_a_folder(self):
+        args = build_parser().parse_args(["serve", "--folder", "presentations"])
+        self.assertIsNone(args.unit)
+        self.assertEqual(Path("presentations"), args.folder)
+
+    def test_serve_repo_and_folder_are_mutually_exclusive(self):
+        parser = build_parser()
+        with redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit):
+                parser.parse_args(["serve", "--repo", "course", "--folder", "decks"])
+
     def test_pdf_cli_defaults_to_light_theme(self):
         args = build_parser().parse_args(
             ["pdf", "sample-unit", "--output", "sample.pdf"]
@@ -559,10 +570,15 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn('name="presentation-style"', index)
         self.assertIn('id="controls-toggle"', index)
         self.assertIn('id="controls-tools"', index)
+        self.assertIn('aria-label="Show presentation controls"', index)
+        self.assertIn("&#9881;&#65039;", index)
+        self.assertIn('id="deck-selector-link"', index)
+        self.assertIn('aria-label="Back to deck selector"', index)
         self.assertNotIn("slides.js", index)
         self.assertIn('id="viewer-version"', index)
         self.assertIn(f'const VIEWER_VERSION = "{__version__}"', script)
         self.assertIn('fetch("deck.json"', script)
+        self.assertIn('fetch("../__lecturedeck/version"', script)
         self.assertIn("loadLegacySpec", script)
         self.assertIn('script.src = "slides.js"', script)
         self.assertIn("window.LECTUREDECK = spec", script)
@@ -599,6 +615,8 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn(".deck-error", styles)
         self.assertIn(".formula-gloss > span", styles)
         self.assertIn(".controls-tools > *", styles)
+        self.assertIn(".deck-chrome .controls-toggle", styles)
+        self.assertIn(".deck-chrome .control-link[hidden]", styles)
         self.assertIn('mtable[columnalign="right left"]', styles)
         self.assertIn(".slide-frame.style-gradient", styles)
         self.assertIn(".style-title-rule,", styles)
@@ -749,6 +767,79 @@ class LecturedeckTest(unittest.TestCase):
                 response = connection.getresponse()
                 self.assertEqual(local, response.read())
                 connection.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_selector_discovers_only_immediate_child_webdecks(self):
+        with tempfile.TemporaryDirectory() as root:
+            folder = Path(root) / "presentations"
+            folder.mkdir()
+            alpha = folder / "alpha"
+            alpha.mkdir()
+            scaffold_unit(alpha, "Alpha deck")
+            deck = base_deck()
+            deck["meta"]["title"] = "Zeta title"
+            deck["meta"]["section"] = "Example section"
+            write_deck(alpha, deck)
+
+            legacy = folder / "legacy"
+            legacy.mkdir()
+            webdeck = legacy / "webdeck"
+            webdeck.mkdir()
+            (webdeck / "slides.js").write_text(LEGACY_SLIDES, encoding="utf-8")
+
+            nested = folder / "group" / "nested"
+            nested.mkdir(parents=True)
+            scaffold_unit(nested, "Nested deck")
+            (folder / "notes.txt").write_text("not a deck", encoding="utf-8")
+
+            decks = discover_decks(folder)
+            self.assertEqual(["legacy", "alpha"], [deck.name for deck in decks])
+            self.assertEqual("legacy", decks[0].title)
+            self.assertEqual("Zeta title", decks[1].title)
+            self.assertEqual("Example section", decks[1].section)
+
+    def test_selector_serves_chosen_webdeck_and_nothing_adjacent(self):
+        with tempfile.TemporaryDirectory() as root:
+            folder = Path(root) / "presentations"
+            folder.mkdir()
+            unit = folder / "unit one"
+            unit.mkdir()
+            scaffold_unit(unit, "Unsafe <title>")
+            (unit / "private.md").write_text("private notes", encoding="utf-8")
+            server = make_selector_server(folder, "127.0.0.1", 0, livereload=True)
+            port = server.server_address[1]
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                def request(path, method="GET"):
+                    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                    try:
+                        connection.request(method, path)
+                        response = connection.getresponse()
+                        return (
+                            response.status,
+                            response.read(),
+                            response.getheader("Location"),
+                        )
+                    finally:
+                        connection.close()
+
+                status, body, _ = request("/")
+                self.assertEqual(200, status)
+                self.assertIn(b"Unsafe &lt;title&gt;", body)
+                self.assertIn(b'/decks/unit%20one/webdeck/', body)
+                self.assertEqual(200, request("/decks/unit%20one/webdeck/")[0])
+                self.assertEqual(200, request("/decks/unit%20one/webdeck/deck.json")[0])
+                status, body, _ = request("/decks/unit%20one/__lecturedeck/version")
+                self.assertEqual(200, status)
+                self.assertTrue(json.loads(body)["livereload"])
+                status, _, location = request("/decks/unit%20one/webdeck")
+                self.assertEqual(302, status)
+                self.assertEqual("/decks/unit%20one/webdeck/", location)
+                self.assertEqual(404, request("/decks/unit%20one/private.md")[0])
+                self.assertEqual(404, request("/decks/unit%20one/webdeck/../private.md")[0])
+                self.assertEqual(404, request("/decks/missing/webdeck/")[0])
             finally:
                 server.shutdown()
                 server.server_close()

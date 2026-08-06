@@ -2,6 +2,31 @@
 
 ## Shipped
 
+- **v0.17.1** — Fill non-16:9 displays in full screen without stretching or
+  cropping. Presentation mode now expands the fixed slide canvas into the
+  viewport's spare dimension, while windowed slides, overview thumbnails, and
+  PDF output keep their authored 16:9 frame.
+
+- **v0.17.0** — Point at the slide with a laser pointer. `L` or the new
+  **Laser** control toggles a glowing dot that tracks the pointer and hides
+  the arrow over the slide, for presenting and for screen-recorded lectures.
+  The dot carries the current slide's accent colour over a white core, turns
+  itself off when the overview opens, and hides while the pointer is over an
+  interactive iframe or outside the window. It is created after the
+  print-mode branch returns, so PDF export never contains the element.
+
+- **v0.16.1** — Polish selector navigation and compact presentation controls.
+  Decks opened through the selector now show a home action back to its root;
+  directly served decks keep it hidden. The cramped `Controls` handle becomes
+  an accessible gear button and sits slightly farther from the slide edge.
+
+- **v0.16.0** — Select and serve decks from one presentations folder. Running
+  `lecturedeck serve` without a unit opens a searchable selector for the
+  auto-detected course, while `--folder PATH` selects an explicit parent
+  folder. Discovery stays shallow, uses declarative deck titles when
+  available, supports legacy units by folder name, and gives each deck an
+  isolated route that still exposes only its `webdeck/` tree.
+
 - **v0.15.0** — Give concurrent decks distinct browser identities. Deck
   metadata can select built-in complex-number, calculus, or plasma favicons,
   or point to a validated custom image under `assets/`; the browser viewer

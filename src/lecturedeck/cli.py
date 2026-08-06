@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .pdf import PDFExportError, export_pdf
 from .scaffold import refresh_unit, scaffold_unit
-from .server import make_server
+from .server import make_selector_server, make_server
 from .validation import deck_entry, release_unit, validate_unit
 
 DEFAULT_PORT = 4173
@@ -67,19 +67,21 @@ def port_unavailable(exc: OSError) -> bool:
 
 
 def make_available_server(
-    unit_root: Path,
+    root: Path,
     host: str,
     port: int,
     livereload: bool,
     *,
     auto_advance: bool,
+    selector: bool = False,
 ):
     """Bind the requested port, optionally advancing past occupied ports."""
     attempts = PORT_SEARCH_ATTEMPTS if auto_advance else 1
     last_error: OSError | None = None
+    server_factory = make_selector_server if selector else make_server
     for candidate in range(port, min(port + attempts, 65536)):
         try:
-            return make_server(unit_root, host, candidate, livereload), candidate
+            return server_factory(root, host, candidate, livereload), candidate
         except OSError as exc:
             if not auto_advance or not port_unavailable(exc):
                 raise
@@ -92,8 +94,13 @@ def make_available_server(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lecturedeck")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    serve = subparsers.add_parser("serve", help="serve a live presentation unit")
-    serve.add_argument("unit", type=clean_unit)
+    serve = subparsers.add_parser("serve", help="serve a deck or a deck selector")
+    serve.add_argument(
+        "unit",
+        nargs="?",
+        type=clean_unit,
+        help="unit to serve; omit to show a deck selector",
+    )
     network = serve.add_mutually_exclusive_group()
     network.add_argument("--host", default="127.0.0.1", help="interface to bind")
     network.add_argument(
@@ -116,7 +123,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="open_browser",
         help="open the deck in the default browser",
     )
-    serve.add_argument("--repo", type=Path, help="repository root; normally auto-detected")
+    location = serve.add_mutually_exclusive_group()
+    location.add_argument("--repo", type=Path, help="repository root; normally auto-detected")
+    location.add_argument(
+        "--folder",
+        type=Path,
+        help="folder whose immediate children are presentation units",
+    )
 
     init = subparsers.add_parser("init", help="create a reusable webdeck scaffold")
     init.add_argument("unit", type=clean_unit)
@@ -157,10 +170,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def serve(args: argparse.Namespace) -> int:
-    repo = args.repo.resolve() if args.repo else find_repo_root(Path.cwd())
-    unit_root = repo / "Studio" / "work" / "presentations" / args.unit
-    if deck_entry(unit_root) is None:
-        webdeck = unit_root / "webdeck"
+    if args.folder:
+        folder = args.folder.resolve()
+    else:
+        repo = args.repo.resolve() if args.repo else find_repo_root(Path.cwd())
+        folder = repo / "Studio" / "work" / "presentations"
+    selector = args.unit is None
+    root = folder if selector else folder / args.unit
+    if selector:
+        if not folder.is_dir():
+            print(f"ERROR: deck folder does not exist: {folder}", file=sys.stderr)
+            return 2
+    elif deck_entry(root) is None:
+        webdeck = root / "webdeck"
         print(
             f"ERROR: web deck not found: {webdeck} has no deck.json or slides.js",
             file=sys.stderr,
@@ -171,11 +193,12 @@ def serve(args: argparse.Namespace) -> int:
     requested_port = args.port if args.port is not None else DEFAULT_PORT
     try:
         server, selected_port = make_available_server(
-            unit_root,
+            root,
             bind_host,
             requested_port,
             args.livereload,
             auto_advance=args.port is None,
+            selector=selector,
         )
     except OSError as exc:
         print(f"ERROR: cannot listen on {bind_host}:{requested_port} ({exc})", file=sys.stderr)
@@ -192,15 +215,17 @@ def serve(args: argparse.Namespace) -> int:
             )
         return 2
     selected_port = server.server_address[1]
-    local_url = f"http://127.0.0.1:{selected_port}/webdeck/"
+    start_path = "/" if selector else "/webdeck/"
+    local_url = f"http://127.0.0.1:{selected_port}{start_path}"
     display_host = "127.0.0.1" if bind_host == "0.0.0.0" else bind_host
-    url = f"http://{display_host}:{selected_port}/webdeck/"
+    url = f"http://{display_host}:{selected_port}{start_path}"
     access = (
         "localhost only"
         if bind_host in {"127.0.0.1", "localhost", "::1"}
         else "LAN-visible, read-only files"
     )
-    print(f"Serving {args.unit}  (Ctrl+C to stop)")
+    label = f"deck selector for {folder}" if selector else args.unit
+    print(f"Serving {label}  (Ctrl+C to stop)")
     if args.port is None and selected_port != requested_port:
         print(f"  Port {requested_port} is busy; using {selected_port}.")
     print(f"  Local: {local_url if args.lan else url}")
@@ -208,11 +233,11 @@ def serve(args: argparse.Namespace) -> int:
         addresses = lan_ipv4_addresses()
         if addresses:
             for address in addresses:
-                print(f"  LAN:   http://{address}:{selected_port}/webdeck/")
+                print(f"  LAN:   http://{address}:{selected_port}{start_path}")
         else:
-            print(f"  LAN:   http://<this-computer-ip>:{selected_port}/webdeck/")
+            print(f"  LAN:   http://<this-computer-ip>:{selected_port}{start_path}")
     print(f"  Access: {access}")
-    print(f"  Source: {unit_root}")
+    print(f"  Source: {root}")
     if args.livereload:
         print("  Live reload: on")
     if args.open_browser:

@@ -15,13 +15,22 @@
     <div id="overview" class="overview" hidden></div>
     <nav id="presentation-controls" class="deck-chrome" aria-label="Presentation controls">
       <button id="controls-toggle" class="controls-toggle" type="button"
-              aria-controls="controls-tools" aria-expanded="false">Controls</button>
+              aria-label="Show presentation controls" title="Presentation controls"
+              aria-controls="controls-tools" aria-expanded="false">
+        <span aria-hidden="true">&#9881;&#65039;</span>
+      </button>
       <span id="controls-tools" class="controls-tools" aria-hidden="true" inert>
         <button id="overview-button" type="button" title="Overview (O)">Overview</button>
         <span id="counter" aria-label="Slide number"></span>
         <button id="appearance-button" type="button" aria-haspopup="dialog"
                 title="Appearance (T)">Appearance</button>
         <button id="fullscreen-button" type="button" title="Fullscreen (F)">Fullscreen</button>
+        <button id="laser-button" type="button" aria-pressed="false"
+                title="Laser pointer (L)">Laser</button>
+        <a id="deck-selector-link" class="control-link selector-link" href="#deck-selector" hidden
+           aria-label="Back to deck selector" title="Deck selector">
+          <span aria-hidden="true">&#8962;</span>
+        </a>
         <span id="viewer-version" class="viewer-version"></span>
       </span>
     </nav>
