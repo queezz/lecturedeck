@@ -27,6 +27,13 @@ Global presets layer over authored classes rather than removing them. PDF
 export deliberately uses **Deck default** so a saved browser preference cannot
 make the same export command produce different output.
 
+## Audience labels
+
+Every visible label should mean something to the audience. Internal beat
+codes and scene identifiers belong in author metadata; `beat` is never
+rendered. Set a slide's `eyebrow` to a useful label such as "Practice" when
+the inherited part label does not describe that slide.
+
 ## Accents
 
 Set `accent` on a slide or section to choose its semantic highlight color. The

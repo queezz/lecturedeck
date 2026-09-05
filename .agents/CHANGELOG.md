@@ -2,6 +2,11 @@
 
 ## Shipped
 
+- **v0.17.2** — Centre native display formulas, honor per-slide eyebrow
+  labels, and keep beat codes in author metadata instead of the footer.
+  Flush the serving address to redirected logs before accepting requests.
+  Clarify managed preview entry points and MathML fraction grouping.
+
 - **v0.17.1** — Fill non-16:9 displays in full screen without stretching or
   cropping. Presentation mode now expands the fixed slide canvas into the
   viewport's spare dimension, while windowed slides, overview thumbnails, and

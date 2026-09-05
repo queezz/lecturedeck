@@ -188,7 +188,7 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 .body-copy th:last-child, .body-copy td:last-child { padding-right: 0; }
 .formula { align-self: stretch; max-width: 100%; padding: 22px 0; border-top: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); border-bottom: 2px solid color-mix(in srgb, var(--accent) 28%, transparent); color: var(--strong); font-family: Cambria Math, STIX Two Math, Cambria, serif; font-size: 44px; line-height: 1.08; }
 .formula-math { width: 100%; overflow: visible; }
-.formula math { display: block; max-width: 100%; font-size: 1em; color: inherit; }
+.formula math { display: block math; max-width: 100%; font-size: 1em; color: inherit; }
 /* MathML Core dropped columnalign; honor the declared derivation form.
    Chromium needs -webkit-right to align block-level math cell content. */
 .formula-math mtable[columnalign="right left"] > mtr > mtd:first-child { text-align: right; text-align: -webkit-right; }
@@ -227,7 +227,6 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 .slide-foot .source { max-width: 1000px; }
 .footer-nav { flex: 0 0 auto; display: flex; align-items: baseline; gap: 12px; }
 .course-name { color: var(--faint); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
-.slide-foot .beat { color: #665c54; font-size: 12px; font-weight: 700; letter-spacing: .06em; }
 .page-number { color: var(--ink); font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
 .slide-frame.kind-section { place-items: center; padding: 70px 100px; text-align: center; }

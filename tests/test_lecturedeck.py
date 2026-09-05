@@ -5,11 +5,12 @@ import threading
 import unittest
 from contextlib import redirect_stderr
 from importlib.resources import files
-from io import StringIO
+from io import BytesIO, StringIO, TextIOWrapper
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from lecturedeck import __version__, scaffold
-from lecturedeck.cli import DEFAULT_PORT, build_parser, make_available_server
+from lecturedeck.cli import DEFAULT_PORT, build_parser, make_available_server, serve
 from lecturedeck.pdf import export_pdf
 from lecturedeck.scaffold import refresh_unit, runtime_hash, scaffold_unit
 from lecturedeck.server import discover_decks, make_selector_server, make_server
@@ -478,6 +479,30 @@ class LecturedeckTest(unittest.TestCase):
         args = build_parser().parse_args(["serve", "sample-unit", "--lan"])
         self.assertTrue(args.lan)
         self.assertEqual("127.0.0.1", args.host)
+
+    def test_serve_flushes_banner_before_entering_loop(self):
+        for reload_args in ([], ["--livereload"]):
+            with self.subTest(reload=bool(reload_args)), tempfile.TemporaryDirectory() as root:
+                make_json_unit(root)
+                args = build_parser().parse_args(["serve", "--folder", root, *reload_args])
+                raw = BytesIO()
+                output = TextIOWrapper(raw, encoding="utf-8")
+                server = Mock(server_address=("127.0.0.1", 48943))
+
+                def check_banner():
+                    self.assertIn(b"http://127.0.0.1:48943/", raw.getvalue())
+                    if reload_args:
+                        self.assertIn(b"Live reload: on", raw.getvalue())
+                    raise KeyboardInterrupt
+
+                server.serve_forever.side_effect = check_banner
+                with (
+                    patch("lecturedeck.cli.make_available_server", return_value=(server, 48943)),
+                    patch("lecturedeck.cli.sys.stdout", output),
+                ):
+                    self.assertEqual(0, serve(args))
+                server.server_close.assert_called_once()
+                output.close()
 
     def test_serve_without_unit_selects_a_folder(self):
         args = build_parser().parse_args(["serve", "--folder", "presentations"])

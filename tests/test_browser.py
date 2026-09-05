@@ -112,6 +112,8 @@ def build_json_unit(unit: Path) -> None:
             {
                 "id": "s-formula",
                 "title": "Modest formula",
+                "eyebrow": "Practice",
+                "beat": "INTERNAL-S14",
                 "layout": "equation",
                 "formula": {
                     "mathml": "<math xmlns='http://www.w3.org/1998/Math/MathML' "
@@ -569,6 +571,25 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(72, page.evaluate(
             "parseFloat(getComputedStyle(document.querySelector('.formula')).fontSize)"
         ))
+
+    def test_formula_is_centred_and_author_labels_are_respected(self):
+        page = self.open_deck("json", "#/8")
+        for height in (700, 1000):
+            page.set_viewport_size({"width": 1280, "height": height})
+            page.wait_for_selector(".formula-math math")
+            offset = page.evaluate("""() => {
+                const math = document.querySelector('.formula math');
+                const tokens = [...math.querySelectorAll('mi')];
+                const first = tokens[0].getBoundingClientRect();
+                const last = tokens.at(-1).getBoundingClientRect();
+                const box = math.getBoundingClientRect();
+                return (first.left + last.right - box.left - box.right) / 2;
+            }""")
+            self.assertLess(abs(offset), 2)
+            self.assertEqual("PRACTICE", page.locator(".slide-head .eyebrow").inner_text())
+            self.assertNotIn("INTERNAL-S14", page.locator("body").inner_text())
+        page.goto(self.urls["json"] + "#/1")
+        self.assertEqual("OPENING", page.locator(".slide-head .eyebrow").inner_text())
 
     def test_derivation_rows_align_on_the_relation_column(self):
         page = self.open_deck("json", "#/10")

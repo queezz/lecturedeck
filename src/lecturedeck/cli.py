@@ -240,6 +240,8 @@ def serve(args: argparse.Namespace) -> int:
     print(f"  Source: {root}")
     if args.livereload:
         print("  Live reload: on")
+    # Redirected stdout is buffered; publish the address before serving forever.
+    sys.stdout.flush()
     if args.open_browser:
         webbrowser.open(local_url if args.lan else url)
     try:

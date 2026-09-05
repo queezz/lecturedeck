@@ -106,10 +106,13 @@ HTTP, with no functions or executable deck code. A minimal deck looks like:
   default icon unchanged.
 - Slide fields mirror the rendering vocabulary: `type` (`title`, `section`,
   `content`), optional `layout`, `title`, `eyebrow`, `claim`, `body`, `quote`,
-  `source`, `beat`, `accent`, `className`, `chrome`, `formula`, and one
+  `source`, `accent`, `className`, `chrome`, `formula`, and one
   content block among `figure`/`figures`, `cards`, `interactive`, or `video`.
   `body`, `quote`, and captions hold compiled HTML; `formula.mathml` holds
   native MathML.
+- `eyebrow` overrides the current part label on that slide. Omit it or leave
+  it empty to use the part label. Optional `beat` is author metadata only;
+  it is accepted in source data but never shown to the audience.
 - `check` validates field types, enum values, ids, figure geometry ranges, and
   every declared asset reference before serving or releasing. Unknown fields
   are rejected, so typos surface immediately. Declared media and interactive
@@ -133,6 +136,10 @@ objects:
 - MathML trims ASCII whitespace at the edges of token elements. Write
   `<mtext>if&#160;</mtext>` when a visible trailing space is needed inside
   `mtext`.
+- Group a fraction and its parentheses in the same `mrow`, then apply a
+  power to that entire group with `msup`. Check the result in the target
+  browser: parentheses outside the fraction's group may stay small. An
+  inline slash such as `(a/b)²` is a readable alternative for a short factor.
 - A derivation broken across lines is a two-column
   `<mtable columnalign="right left">`: the left-hand side (right-aligned) in
   the first cell, and each relation with its expression
@@ -231,6 +238,14 @@ The selector exposes every chosen unit at its own `/decks/<unit>/webdeck/`
 route. It reads selector labels only from `deck.json`, never executes deck data
 to build the list, and preserves the same boundary as single-deck serving:
 files beside `webdeck/` are not reachable.
+
+The commands above describe foreground CLI use. Agent entry points and
+background previews should use the local service manager (for Fleet, the
+course's `lab` alias). Test with scratch `LAB_CONFIG`, `LAB_RUNTIME_ROOT`, and
+`LAB_LOG_ROOT`, a disposable sample deck, and an explicit free `--port`.
+Stop through `lab stop` and verify the listening port is free; on Windows,
+stopping only a launcher PID can leave its Python child serving. `init`
+creates deck content, not a course `AGENTS.md` or service entry point.
 
 Without `--port`, the first server uses port 4173. If that port is occupied,
 another deck automatically advances to 4174, then 4175, and so on; the printed
