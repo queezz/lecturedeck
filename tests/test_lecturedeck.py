@@ -197,6 +197,8 @@ class LecturedeckTest(unittest.TestCase):
                 base_deck(meta={"title": "x", "favicon": "images/favicon.svg"}),
                 "path under assets/",
             ),
+            (base_deck(meta={"title": "x", "selectorGroup": ""}), "meta.selectorGroup"),
+            (base_deck(meta={"title": "x", "selectorHero": "hero.png"}), "meta.selectorHero"),
             (base_deck(slides=[]), "slides must be a non-empty list"),
             (base_deck(slides=[{"title": "no id"}]), "slides[0].id"),
             (base_deck(slides=[{"id": "Bad_ID"}]), "kebab-case"),
@@ -646,7 +648,7 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn(".slide-frame.style-gradient", styles)
         self.assertIn(".style-title-rule,", styles)
         self.assertIn(".deck-chrome.has-safe-space", styles)
-        self.assertIn(":fullscreen .deck-chrome", styles)
+        self.assertIn(":fullscreen body.immersive-slide .deck-chrome", styles)
         self.assertIn("body.print-deck", styles)
         self.assertIn("@page", styles)
         self.assertIn(".layout-video", styles)
@@ -758,6 +760,11 @@ class LecturedeckTest(unittest.TestCase):
                 self.assertEqual(200, status)
                 self.assertIn(b"Geometry adjust", body)
                 self.assertEqual("text/javascript", content_type)
+                status, body, content_type, _ = request("/favicon.svg")
+                self.assertEqual(200, status)
+                self.assertIn(b"<svg", body)
+                self.assertEqual("image/svg+xml", content_type)
+                self.assertEqual(200, request("/favicon.svg", "HEAD")[0])
                 self.assertEqual(custom_css.encode(), request("/webdeck/deck.css")[1])
                 status, body, _, _ = request("/webdeck/deck.json")
                 self.assertEqual(200, status)
@@ -806,6 +813,9 @@ class LecturedeckTest(unittest.TestCase):
             deck = base_deck()
             deck["meta"]["title"] = "Zeta title"
             deck["meta"]["section"] = "Example section"
+            deck["meta"]["selectorGroup"] = "Seminars"
+            deck["meta"]["selectorHero"] = "assets/hero.png"
+            (alpha / "webdeck" / "assets" / "hero.png").write_bytes(b"hero")
             write_deck(alpha, deck)
 
             legacy = folder / "legacy"
@@ -824,6 +834,8 @@ class LecturedeckTest(unittest.TestCase):
             self.assertEqual("legacy", decks[0].title)
             self.assertEqual("Zeta title", decks[1].title)
             self.assertEqual("Example section", decks[1].section)
+            self.assertEqual("Seminars", decks[1].group)
+            self.assertEqual("assets/hero.png", decks[1].hero)
 
     def test_selector_serves_chosen_webdeck_and_nothing_adjacent(self):
         with tempfile.TemporaryDirectory() as root:
@@ -854,6 +866,10 @@ class LecturedeckTest(unittest.TestCase):
                 self.assertEqual(200, status)
                 self.assertIn(b"Unsafe &lt;title&gt;", body)
                 self.assertIn(b'/decks/unit%20one/webdeck/', body)
+                self.assertIn(b'data-group-filter="Lectures"', body)
+                self.assertNotIn(b"Select a deck to present", body)
+                self.assertIn(b'<link rel="icon" href="/favicon.svg"', body)
+                self.assertIn(b"<svg", request("/favicon.svg")[1])
                 self.assertEqual(200, request("/decks/unit%20one/webdeck/")[0])
                 self.assertEqual(200, request("/decks/unit%20one/webdeck/deck.json")[0])
                 status, body, _ = request("/decks/unit%20one/__lecturedeck/version")

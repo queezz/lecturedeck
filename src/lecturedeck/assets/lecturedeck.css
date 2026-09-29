@@ -110,7 +110,6 @@ body.immersive-slide .touch-nav {
 .touch-nav button:disabled { opacity: .35; cursor: default; }
 .touch-nav #touch-fullscreen-button { min-width: 132px; font-size: 17px; }
 body.pseudo-fullscreen { position: fixed; inset: 0; width: 100vw; height: 100dvh; }
-body.pseudo-fullscreen .deck-chrome { display: none; }
 body.pseudo-fullscreen .touch-nav { display: flex; }
 
 .slide-head { min-width: 0; }
@@ -264,7 +263,9 @@ body.laser-active .deck, body.laser-active .deck * { cursor: none; }
 .controls-tools .viewer-version { color: var(--faint); font-size: 12px; white-space: nowrap; }
 .deck-chrome.has-safe-space .controls-toggle { display: none; }
 .deck-chrome.has-safe-space .controls-tools, .deck-chrome.is-expanded .controls-tools { max-width: 580px; opacity: 1; pointer-events: auto; }
-:fullscreen .deck-chrome, :-webkit-full-screen .deck-chrome { display: none; }
+body.immersive-slide.pseudo-fullscreen .deck-chrome,
+:fullscreen body.immersive-slide .deck-chrome,
+:-webkit-full-screen body.immersive-slide .deck-chrome { display: flex; }
 
 .appearance-dialog {
   width: min(440px, calc(100vw - 32px));

@@ -29,7 +29,17 @@ LAYOUTS = frozenset(
 TRACK_KINDS = frozenset({"captions", "subtitles", "descriptions", "chapters", "metadata"})
 
 DECK_KEYS = frozenset({"deck", "requires", "meta", "slides"})
-META_KEYS = frozenset({"title", "section", "opening", "openingAccent", "favicon"})
+META_KEYS = frozenset(
+    {
+        "title",
+        "section",
+        "opening",
+        "openingAccent",
+        "favicon",
+        "selectorGroup",
+        "selectorHero",
+    }
+)
 SLIDE_KEYS = frozenset(
     {
         "id",
@@ -177,6 +187,19 @@ def _validate_favicon(errors: list[str], meta: dict) -> None:
         errors.append(
             f"deck.json: meta.favicon must be a preset ({presets}) or a path under assets/"
         )
+
+
+def _validate_selector_metadata(errors: list[str], meta: dict) -> None:
+    if "selectorGroup" in meta and (
+        not isinstance(meta["selectorGroup"], str) or not meta["selectorGroup"].strip()
+    ):
+        errors.append("deck.json: meta.selectorGroup must be a non-empty string")
+    if "selectorHero" in meta:
+        hero = meta["selectorHero"]
+        if not isinstance(hero, str) or not hero:
+            errors.append("deck.json: meta.selectorHero must be a non-empty string")
+        elif not hero.startswith("assets/"):
+            errors.append("deck.json: meta.selectorHero must be a path under assets/")
 
 
 def _validate_cards(errors: list[str], where: str, cards: object) -> None:
@@ -332,6 +355,7 @@ def validate_deck(data: object) -> list[str]:
             _check_string(errors, "meta", meta, key)
         _check_enum(errors, "meta", meta, "openingAccent", ACCENTS)
         _validate_favicon(errors, meta)
+        _validate_selector_metadata(errors, meta)
     slides = data.get("slides")
     if not isinstance(slides, list) or not slides:
         errors.append("deck.json: slides must be a non-empty list")
@@ -373,6 +397,9 @@ def deck_asset_references(data: dict) -> list[tuple[str, str]]:
         favicon = meta.get("favicon")
         if isinstance(favicon, str) and favicon.startswith("assets/"):
             references.append(("meta.favicon", favicon))
+        selector_hero = meta.get("selectorHero")
+        if isinstance(selector_hero, str) and selector_hero.startswith("assets/"):
+            references.append(("meta.selectorHero", selector_hero))
 
     slides = data.get("slides")
     if not isinstance(slides, list):

@@ -268,9 +268,12 @@ catalog or a new release format.
 - Discovery is deliberately shallow. A child is listed only when it contains
   `webdeck/deck.json` or legacy `webdeck/slides.js`; unrelated files, deeper
   trees, and presentation-adjacent unit files are not read.
-- JSON labels come from `meta.title` and optional `meta.section`. Legacy or
-  unreadable JSON data falls back to the unit directory name; discovery does
-  not execute JavaScript or hide a broken deck that needs inspection.
+- JSON labels come from `meta.title` and optional `meta.section`. The selector
+  infers its common Lectures, Homeworks, and Extras groups, while
+  `meta.selectorGroup` can override the label and `meta.selectorHero` can point
+  to a card image under `webdeck/assets/`. Legacy or unreadable JSON data falls
+  back to the unit directory name; discovery does not execute JavaScript or
+  hide a broken deck that needs inspection.
 - Each selected unit retains an isolated `webdeck/` route, packaged-viewer
   fallback, live reload, and serve-only adjustment script. Selector routes do
   not expose files beside `webdeck/` and do not affect frozen releases.

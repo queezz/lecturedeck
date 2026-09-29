@@ -76,6 +76,8 @@ def build_json_unit(unit: Path) -> None:
             "section": "SMOKE",
             "opening": "OPENING",
             "favicon": "complex",
+            "selectorGroup": "Lectures",
+            "selectorHero": "assets/figure.png",
         },
         "slides": [
             {"id": "s-title", "type": "title", "title": "Smoke deck", "claim": "Slide one."},
@@ -246,6 +248,24 @@ class BrowserSmokeTest(unittest.TestCase):
         self.addCleanup(page.close)
         page.goto(self.selector_url)
         self.assertEqual(3, page.locator("li[data-search]").count())
+        self.assertTrue(page.locator(".topbar").is_visible())
+        self.assertEqual(
+            "sticky", page.locator(".topbar").evaluate("el => getComputedStyle(el).position")
+        )
+        self.assertEqual(1, page.locator("img.hero").count())
+        rail_top = page.locator(".rail").evaluate("el => el.getBoundingClientRect().top")
+        page.evaluate("scrollTo(0, 600)")
+        self.assertAlmostEqual(
+            rail_top,
+            page.locator(".rail").evaluate("el => el.getBoundingClientRect().top"),
+            delta=1,
+        )
+        self.assertEqual(
+            0, page.locator(".topbar").evaluate("el => el.getBoundingClientRect().top")
+        )
+        page.evaluate("scrollTo(0, 0)")
+        page.get_by_role("button", name=re.compile("Lectures")).click()
+        self.assertEqual(3, page.locator("li[data-search]:visible").count())
         page.locator("#filter").fill("smoke deck")
         self.assertEqual(1, page.locator("li[data-search]:visible").count())
         page.get_by_role("link", name=re.compile("Smoke deck")).click()
@@ -454,6 +474,16 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertAlmostEqual(1000, fullscreen["height"], delta=1)
         self.assertAlmostEqual(0, fullscreen["x"], delta=1)
         self.assertAlmostEqual(0, fullscreen["y"], delta=1)
+        controls_toggle = page.locator("#controls-toggle")
+        self.assertTrue(controls_toggle.is_visible())
+        controls_box = controls_toggle.bounding_box()
+        self.assertIsNotNone(controls_box)
+        self.assertGreaterEqual(controls_box["x"], 0)
+        self.assertLessEqual(controls_box["x"] + controls_box["width"], 1600)
+        self.assertGreaterEqual(controls_box["y"], 0)
+        self.assertLessEqual(controls_box["y"] + controls_box["height"], 1000)
+        controls_toggle.click()
+        self.assertEqual("true", controls_toggle.get_attribute("aria-expanded"))
 
         native = page.evaluate("Boolean(document.fullscreenElement)")
         page.keyboard.press("f")

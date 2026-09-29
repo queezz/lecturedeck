@@ -2,6 +2,15 @@
 
 ## Shipped
 
+- **v0.17.3** — Give the shared server and searchable deck selector a generic
+  Lecturedeck favicon. The stable `/favicon.svg` endpoint also lets service
+  launchers show a recognizable icon for every discovered course. Keep the
+  presentation-controls gear available in full screen so the overview,
+  appearance, laser, and exit controls remain reachable while presenting.
+  Quiet the selector into the shared WebUI top-bar and sticky-rail vocabulary,
+  keep search available while scrolling, group lectures, homeworks, and extras,
+  and let `meta.selectorHero` add an optional image to a deck card.
+
 - **v0.17.2** — Centre native display formulas, honor per-slide eyebrow
   labels, and keep beat codes in author metadata instead of the footer.
   Flush the serving address to redirected logs before accepting requests.

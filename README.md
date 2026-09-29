@@ -229,10 +229,12 @@ lecturedeck serve <unit> --lan --livereload
 Omit the unit to open a searchable selector for the current course's
 `Studio/work/presentations/` folder. The selector discovers only immediate
 child directories containing `webdeck/deck.json` or legacy
-`webdeck/slides.js`. JSON decks use `meta.title` and optional `meta.section`;
-legacy decks fall back to the unit directory name. To select from an arbitrary
-presentations folder instead, run `lecturedeck serve --folder PATH`. A unit may
-also be named with `--folder` to serve that one deck directly.
+`webdeck/slides.js`. JSON decks use `meta.title` and optional `meta.section`.
+Use `meta.selectorGroup` to override the inferred Lectures, Homeworks, or Extras
+group, and `meta.selectorHero` with a path under `assets/` to add a scannable
+card image. Legacy decks fall back to the unit directory name. To select from
+an arbitrary presentations folder instead, run `lecturedeck serve --folder
+PATH`. A unit may also be named with `--folder` to serve that one deck directly.
 
 The selector exposes every chosen unit at its own `/decks/<unit>/webdeck/`
 route. It reads selector labels only from `deck.json`, never executes deck data
