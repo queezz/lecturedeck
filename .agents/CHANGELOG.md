@@ -2,6 +2,12 @@
 
 ## Shipped
 
+- **v0.17.4** — Keep overview jumps in browser history so Back returns to
+  the screen a reader left and Forward restores the selected destination.
+  Ordinary next/previous paging still updates the current location without
+  creating a history entry for every slide. Re-selecting the current slide
+  closes overview without adding a duplicate entry.
+
 - **v0.17.3** — Give the shared server and searchable deck selector a generic
   Lecturedeck favicon. The stable `/favicon.svg` endpoint also lets service
   launchers show a recognizable icon for every discovered course. Keep the

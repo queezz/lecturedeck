@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.17.3";
+  const VIEWER_VERSION = "0.17.4";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -578,7 +578,16 @@
     let touchX = null;
     addEventListener("touchstart", e => { touchX = e.target instanceof Element && e.target.closest("video") ? null : e.changedTouches[0].clientX; }, {passive:true});
     addEventListener("touchend", e => { if (touchX === null) return; const dx = e.changedTouches[0].clientX - touchX; if (Math.abs(dx) > 55) go(index + (dx < 0 ? 1 : -1)); touchX = null; }, {passive:true});
-    overview.addEventListener("click", event => { const card = event.target.closest("[data-index]"); if (!card) return; index = Number(card.dataset.index); toggleOverview(false); });
+    overview.addEventListener("click", event => {
+      const card = event.target.closest("[data-index]");
+      if (!card) return;
+      const next = Number(card.dataset.index);
+      // Overview jumps are bookmarks, unlike ordinary next/previous paging.
+      // Preserve the departure screen so Back can return to it.
+      if (next !== index) history.pushState(null, "", `#/${next}`);
+      index = next;
+      toggleOverview(false);
+    });
     document.querySelector("#overview-button").addEventListener("click", () => toggleOverview());
     controlsToggle?.addEventListener("click", () => {
       controlsExpanded = !controlsExpanded;
