@@ -10,7 +10,13 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from lecturedeck import __version__, scaffold
-from lecturedeck.cli import DEFAULT_PORT, build_parser, make_available_server, serve
+from lecturedeck.cli import (
+    DEFAULT_PORT,
+    build_parser,
+    make_available_server,
+    selector_folder,
+    serve,
+)
 from lecturedeck.pdf import export_pdf
 from lecturedeck.scaffold import refresh_unit, runtime_hash, scaffold_unit
 from lecturedeck.server import discover_decks, make_selector_server, make_server
@@ -505,6 +511,20 @@ class LecturedeckTest(unittest.TestCase):
                     self.assertEqual(0, serve(args))
                 server.server_close.assert_called_once()
                 output.close()
+
+    def test_repository_selector_folder_is_persistent_and_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            self.assertEqual(repo / "Studio/work/presentations", selector_folder(repo))
+            config = repo / "lecturedeck.toml"
+            config.write_text('[selector]\nfolder = "release/teaching"\n')
+            self.assertEqual((repo / "release/teaching").resolve(), selector_folder(repo))
+            config.write_text('[selector]\nfolder = "../outside"\n')
+            with self.assertRaises(RuntimeError):
+                selector_folder(repo)
+            config.write_text('[selector]\nfolder = 42\n')
+            with self.assertRaises(RuntimeError):
+                selector_folder(repo)
 
     def test_serve_without_unit_selects_a_folder(self):
         args = build_parser().parse_args(["serve", "--folder", "presentations"])

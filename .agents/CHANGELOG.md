@@ -2,6 +2,10 @@
 
 ## Shipped
 
+- **v0.17.6** — Let a repository choose its default teaching selector folder
+  in lecturedeck.toml. Plain serve and managed restarts use that selection;
+  explicit --folder and named-unit commands retain their existing behavior.
+
 - **v0.17.5** — Measure the expanded controls consistently so opening tools
   cannot oscillate safe-space placement. Prevent legacy span styling from
   drawing a second gear border or enlarging the tools wrapper.

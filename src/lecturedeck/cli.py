@@ -6,6 +6,7 @@ import argparse
 import errno
 import socket
 import sys
+import tomllib
 import webbrowser
 from pathlib import Path
 
@@ -31,6 +32,26 @@ def find_repo_root(start: Path) -> Path:
         "Could not find a lecture repository. Run the command inside "
         "the repository or pass --repo PATH."
     )
+
+
+def selector_folder(repo: Path) -> Path:
+    """Resolve an optional repository selector setting without escaping it."""
+    config = repo / "lecturedeck.toml"
+    if not config.is_file():
+        return repo / "Studio" / "work" / "presentations"
+    try:
+        data = tomllib.loads(config.read_text(encoding="utf-8"))
+        section = data.get("selector", {})
+        value = section.get("folder") if isinstance(section, dict) else None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("[selector].folder must be a nonempty relative path")
+        relative = Path(value)
+        folder = (repo / relative).resolve()
+        if relative.is_absolute() or not folder.is_relative_to(repo.resolve()):
+            raise ValueError("[selector].folder must stay inside the repository")
+        return folder
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"Invalid lecturedeck.toml: {error}") from error
 
 
 def clean_unit(value: str) -> str:
@@ -174,7 +195,14 @@ def serve(args: argparse.Namespace) -> int:
         folder = args.folder.resolve()
     else:
         repo = args.repo.resolve() if args.repo else find_repo_root(Path.cwd())
-        folder = repo / "Studio" / "work" / "presentations"
+        try:
+            folder = (
+                selector_folder(repo) if args.unit is None
+                else repo / "Studio" / "work" / "presentations"
+            )
+        except RuntimeError as error:
+            print(f"ERROR: {error}", file=sys.stderr)
+            return 2
     selector = args.unit is None
     root = folder if selector else folder / args.unit
     if selector:

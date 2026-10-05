@@ -433,3 +433,16 @@ decks; the runtime itself stays Python-standard-library-only.
 
 See `AGENTS.md` and `.agents/commit-culture.md` for the public development,
 versioning, privacy, and release gates.
+
+### Repository selector default
+
+To select a teaching collection for plain `lecturedeck serve` and managed
+restarts, add `lecturedeck.toml` at the repository root:
+
+```toml
+[selector]
+folder = "Studio/release/teaching-selector"
+```
+
+The path must stay inside the repository. Explicit `--folder` takes precedence;
+named-unit commands continue to use `Studio/work/presentations`.
