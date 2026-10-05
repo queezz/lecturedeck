@@ -668,6 +668,35 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(2, len(lefts))
         self.assertLess(abs(lefts[0] - lefts[1]), 6, lefts)
 
+    def test_legacy_span_controls_do_not_duplicate_or_oscillate(self):
+        page = self.open_deck("json")
+        page.add_style_tag(content=".deck-chrome span { border:1px solid gray; padding:7px 10px; }")
+        page.set_viewport_size({"width": 1280, "height": 720})
+        toggle = page.locator("#controls-toggle")
+        heights = {"true": [], "false": []}
+        for _ in range(20):
+            toggle.click()
+            state = toggle.get_attribute("aria-expanded")
+            height = page.locator("#presentation-controls").evaluate("e => e.offsetHeight")
+            heights[state].append(height)
+            self.assertEqual(1, toggle.count())
+            border = toggle.locator("span").evaluate("e => getComputedStyle(e).borderWidth")
+            self.assertEqual("0px", border)
+        for values in heights.values():
+            self.assertEqual(1, len(set(values)))
+        # Near the expanded-height boundary, repeated layout must agree.
+        page.set_viewport_size({"width": 1280, "height": 830})
+        classes = []
+        for _ in range(6):
+            page.evaluate("dispatchEvent(new Event('resize'))")
+            classes.append(page.locator("#presentation-controls").get_attribute("class"))
+        self.assertEqual(1, len(set(classes)))
+        if toggle.is_visible():
+            toggle.click()
+            self.assertEqual("true", toggle.get_attribute("aria-expanded"))
+        else:
+            self.assertTrue(page.locator("#overview-button").is_visible())
+
     def test_controls_strip_is_single_row_and_stable(self):
         page = self.browser.new_page(viewport={"width": 1280, "height": 760})
         self.addCleanup(page.close)

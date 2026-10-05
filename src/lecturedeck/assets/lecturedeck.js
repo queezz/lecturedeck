@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.17.4";
+  const VIEWER_VERSION = "0.17.5";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -312,10 +312,14 @@
       const frameTop = (innerHeight - frameHeight * scale) / 2;
       const frameBottom = frameTop + frameHeight * scale;
       const gutter = 8;
-      // Applying the state classes can change the measured height, so
-      // measure again and reposition until the geometry matches the state.
+      // Reserve the expanded height even while tools are collapsed. Measuring
+      // the current state makes safe-space detection oscillate at the boundary.
+      const previousDisplay = controlsTools.style.display;
+      controlsTools.style.display = "flex";
+      const expandedHeight = Math.max(controlsToggle.offsetHeight, controlsTools.offsetHeight, 38);
+      controlsTools.style.display = previousDisplay;
       for (let pass = 0; pass < 2; pass += 1) {
-        const controlsHeight = presentationControls.offsetHeight || 38;
+        const controlsHeight = expandedHeight;
         const hasRoomBelow = innerHeight - frameBottom >= controlsHeight + gutter * 2;
         const hasRoomAbove = frameTop >= controlsHeight + gutter * 2;
         const safe = hasRoomBelow || hasRoomAbove;

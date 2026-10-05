@@ -335,3 +335,9 @@ body.print-deck .overview { display: none; }
   .deck-chrome { display: none; }
   .overview { grid-template-columns: 1fr; padding: 14px; }
 }
+
+/* Controls compatibility: legacy span rules must not style the gear icon. */
+.deck-chrome .controls-toggle { padding:0; display:grid; place-items:center; box-sizing:border-box; }
+.deck-chrome .controls-toggle > span { border:0; padding:0; background:none; font-size:inherit; line-height:1; }
+.deck-chrome .controls-tools { padding:0; border:0; background:none; box-sizing:border-box; }
+.deck-chrome.has-safe-space .controls-toggle { display:none; }

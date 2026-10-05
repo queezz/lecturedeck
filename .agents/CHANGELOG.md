@@ -2,6 +2,10 @@
 
 ## Shipped
 
+- **v0.17.5** — Measure the expanded controls consistently so opening tools
+  cannot oscillate safe-space placement. Prevent legacy span styling from
+  drawing a second gear border or enlarging the tools wrapper.
+
 - **v0.17.4** — Keep overview jumps in browser history so Back returns to
   the screen a reader left and Forward restores the selected destination.
   Ordinary next/previous paging still updates the current location without
