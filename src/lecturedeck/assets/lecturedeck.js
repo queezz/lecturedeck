@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.17.6";
+  const VIEWER_VERSION = "0.18.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -369,7 +369,9 @@
       counter.textContent = `${index + 1} / ${spec.slides.length}`;
       previousButton.disabled = index === 0;
       nextButton.disabled = index === spec.slides.length - 1;
-      document.title = `${slideTitleText(spec.slides[index], index)} · ${spec.meta.title || "Lecturedeck"}`;
+      document.title = typeof spec.meta.tabTitle === "string" && spec.meta.tabTitle.trim()
+        ? spec.meta.tabTitle.trim()
+        : `${slideTitleText(spec.slides[index], index)} · ${spec.meta.title || "Lecturedeck"}`;
       history.replaceState(null, "", `#/${index}`);
       if (!overview.hidden) overview.querySelectorAll(".overview-card").forEach(card => card.setAttribute("aria-current", String(Number(card.dataset.index) === index)));
       scaleCurrent();
@@ -380,7 +382,7 @@
     async function renderPrintDeck() {
       document.body.classList.add("print-deck");
       deck.innerHTML = spec.slides.map((slide, i) => slideMarkup(slide, i, true)).join("");
-      document.title = spec.meta.title || "Lecturedeck";
+      document.title = spec.meta.tabTitle?.trim() || spec.meta.title || "Lecturedeck";
       const images = [...deck.querySelectorAll("img")];
       await Promise.all(images.map(image => image.complete
         ? Promise.resolve()

@@ -1,5 +1,12 @@
 # Changelog — shipped version history
 
+## 0.18.0
+
+- Add optional stable tab titles and declarative selector title/icon identity.
+  Keep existing slide-title tabs and generic selectors as defaults; conflicting
+  selector identities fall back to generic branding. Validate local icon assets
+  and preserve their offline release copying.
+
 ## Shipped
 
 - **v0.17.6** — Let a repository choose its default teaching selector folder

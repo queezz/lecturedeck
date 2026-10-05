@@ -38,6 +38,8 @@ class DeckSummary:
     section: str | None = None
     group: str = "Lectures"
     hero: str | None = None
+    selector_title: str | None = None
+    selector_favicon: str | None = None
 
 
 def _selector_group(name: str, title: str, explicit: object) -> str:
@@ -72,6 +74,8 @@ def discover_decks(folder: Path) -> list[DeckSummary]:
         section = None
         group = "Lectures"
         hero = None
+        selector_title = None
+        selector_favicon = None
         if deck_json.is_file():
             try:
                 data = json.loads(deck_json.read_text(encoding="utf-8"))
@@ -82,6 +86,18 @@ def discover_decks(folder: Path) -> list[DeckSummary]:
                     if isinstance(meta.get("section"), str) and meta["section"].strip():
                         section = meta["section"].strip()
                     group = _selector_group(candidate.name, title, meta.get("selectorGroup"))
+                    if isinstance(meta.get("selectorTitle"), str) and meta["selectorTitle"].strip():
+                        selector_title = meta["selectorTitle"].strip()
+                    candidate_icon = meta.get("selectorFavicon")
+                    if (
+                        isinstance(candidate_icon, str)
+                        and candidate_icon.startswith("assets/")
+                        and "\\" not in candidate_icon
+                        and ".." not in candidate_icon.split("/")
+                        and (webdeck / candidate_icon).is_file()
+                        and webdeck.resolve() in (webdeck / candidate_icon).resolve().parents
+                    ):
+                        selector_favicon = candidate_icon
                     candidate_hero = meta.get("selectorHero")
                     if (
                         isinstance(candidate_hero, str)
@@ -93,12 +109,27 @@ def discover_decks(folder: Path) -> list[DeckSummary]:
                         hero = candidate_hero
             except (OSError, UnicodeError, json.JSONDecodeError):
                 pass
-        decks.append(DeckSummary(candidate.name, root, title, section, group, hero))
+        decks.append(DeckSummary(
+            candidate.name, root, title, section, group, hero,
+            selector_title, selector_favicon,
+        ))
     return sorted(decks, key=lambda deck: (deck.title.casefold(), deck.name.casefold()))
 
 
 def selector_page(decks: list[DeckSummary]) -> bytes:
     """Render the self-contained deck selector."""
+    identities = {deck.selector_title for deck in decks if deck.selector_title}
+    selector_title = next(iter(identities)) if len(identities) == 1 else "Lecture decks"
+    selector_icon = FAVICON_ROUTE
+    # Course identity is declarative and opt-in. Unbranded decks may share
+    # the selector; conflicting named courses retain the generic identity.
+    branded = [deck for deck in decks if deck.selector_title == selector_title
+               and deck.selector_favicon]
+    if len(identities) == 1 and branded:
+        icon_deck = sorted(branded, key=lambda deck: deck.name)[0]
+        selector_icon = f"/decks/{quote(icon_deck.name, safe='')}/webdeck/" + "/".join(
+            quote(part, safe="") for part in icon_deck.selector_favicon.split("/")
+        )
     grouped: dict[str, list[str]] = {}
     for deck in decks:
         base = f"/decks/{quote(deck.name, safe='')}/webdeck/"
@@ -133,8 +164,8 @@ def selector_page(decks: list[DeckSummary]) -> bytes:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" href="{FAVICON_ROUTE}" type="image/svg+xml">
-  <title>Lecture decks</title>
+  <link rel="icon" href="{escape(selector_icon, quote=True)}">
+  <title>{escape(selector_title)}</title>
   <style>
     :root {{ color-scheme: dark; font-family: Aptos, Calibri, system-ui, sans-serif;
       --bar: 58px; --page-pad: 28px; }}
@@ -198,7 +229,7 @@ def selector_page(decks: list[DeckSummary]) -> bytes:
   </style>
 </head>
 <body>
-  <header class="topbar"><h1>Lecture decks</h1>
+  <header class="topbar"><h1>{escape(selector_title)}</h1>
     <input id="filter" type="search" placeholder="Filter decks" aria-label="Filter decks">
   </header>
   <main><div class="layout">

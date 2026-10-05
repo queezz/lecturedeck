@@ -38,6 +38,9 @@ META_KEYS = frozenset(
         "favicon",
         "selectorGroup",
         "selectorHero",
+        "tabTitle",
+        "selectorTitle",
+        "selectorFavicon",
     }
 )
 SLIDE_KEYS = frozenset(
@@ -194,6 +197,12 @@ def _validate_selector_metadata(errors: list[str], meta: dict) -> None:
         not isinstance(meta["selectorGroup"], str) or not meta["selectorGroup"].strip()
     ):
         errors.append("deck.json: meta.selectorGroup must be a non-empty string")
+    if "selectorFavicon" in meta:
+        icon = meta["selectorFavicon"]
+        if not isinstance(icon, str) or not icon:
+            errors.append("deck.json: meta.selectorFavicon must be a non-empty string")
+        elif not icon.startswith("assets/") or "\\" in icon or ".." in icon.split("/"):
+            errors.append("deck.json: meta.selectorFavicon must be a path under assets/")
     if "selectorHero" in meta:
         hero = meta["selectorHero"]
         if not isinstance(hero, str) or not hero:
@@ -351,7 +360,7 @@ def validate_deck(data: object) -> list[str]:
     else:
         _unknown_keys(errors, "meta", meta, META_KEYS)
         _check_required_string(errors, "meta", meta, "title")
-        for key in ("section", "opening"):
+        for key in ("section", "opening", "tabTitle", "selectorTitle"):
             _check_string(errors, "meta", meta, key)
         _check_enum(errors, "meta", meta, "openingAccent", ACCENTS)
         _validate_favicon(errors, meta)
@@ -397,6 +406,9 @@ def deck_asset_references(data: dict) -> list[tuple[str, str]]:
         favicon = meta.get("favicon")
         if isinstance(favicon, str) and favicon.startswith("assets/"):
             references.append(("meta.favicon", favicon))
+        selector_icon = meta.get("selectorFavicon")
+        if isinstance(selector_icon, str) and selector_icon.startswith("assets/"):
+            references.append(("meta.selectorFavicon", selector_icon))
         selector_hero = meta.get("selectorHero")
         if isinstance(selector_hero, str) and selector_hero.startswith("assets/"):
             references.append(("meta.selectorHero", selector_hero))

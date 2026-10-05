@@ -19,7 +19,7 @@ from lecturedeck.cli import (
 )
 from lecturedeck.pdf import export_pdf
 from lecturedeck.scaffold import refresh_unit, runtime_hash, scaffold_unit
-from lecturedeck.server import discover_decks, make_selector_server, make_server
+from lecturedeck.server import discover_decks, make_selector_server, make_server, selector_page
 from lecturedeck.validation import deck_entry, release_unit, validate_unit
 
 LEGACY_SLIDES = """window.LECTUREDECK = {
@@ -79,6 +79,36 @@ def base_deck(**overrides) -> dict:
 class LecturedeckTest(unittest.TestCase):
     def assertHasError(self, errors, fragment):  # noqa: N802 - unittest style
         self.assertTrue(any(fragment in error for error in errors), errors)
+
+    def test_stable_tab_and_selector_metadata(self):
+        with tempfile.TemporaryDirectory() as root:
+            deck = base_deck(meta={"title": "One", "tabTitle": "Subject · 1",
+                                  "selectorTitle": "Subject & lectures",
+                                  "selectorFavicon": "assets/identity.svg"})
+            unit = make_json_unit(root, deck)
+            self.assertHasError(validate_unit(unit), "meta.selectorFavicon is missing")
+            icon = unit / "webdeck/assets/identity.svg"
+            icon.write_text("<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8")
+            self.assertEqual([], validate_unit(unit))
+            output = Path(root) / "release"
+            release_unit(unit, output)
+            self.assertTrue((output / "assets/identity.svg").is_file())
+            page = selector_page(discover_decks(Path(root)))
+            self.assertIn(b"<title>Subject &amp; lectures</title>", page)
+            self.assertIn(b"/decks/unit/webdeck/assets/identity.svg", page)
+            deck["meta"]["selectorFavicon"] = "assets/../private.svg"
+            write_deck(unit, deck)
+            self.assertHasError(validate_unit(unit), "path under assets/")
+            self.assertIsNone(discover_decks(Path(root))[0].selector_favicon)
+
+    def test_conflicting_selector_identity_is_generic(self):
+        from lecturedeck.server import DeckSummary
+
+        decks = [DeckSummary("one", Path("one"), "One", selector_title="First"),
+                 DeckSummary("two", Path("two"), "Two", selector_title="Second")]
+        page = selector_page(decks)
+        self.assertIn(b"<title>Lecture decks</title>", page)
+        self.assertIn(b'<link rel="icon" href="/favicon.svg"', page)
 
     def test_scaffold_is_content_only(self):
         with tempfile.TemporaryDirectory() as root:

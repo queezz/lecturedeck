@@ -73,6 +73,7 @@ def build_json_unit(unit: Path) -> None:
         "deck": 1,
         "meta": {
             "title": "Smoke deck",
+            "tabTitle": "Smoke deck · 1",
             "section": "SMOKE",
             "opening": "OPENING",
             "favicon": "complex",
@@ -298,6 +299,16 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(0, self.current_index(page))
         self.assertEqual("1 / 11", page.text_content("#counter"))
         self.assertEqual(f"v{__version__}", page.text_content("#viewer-version"))
+
+    def test_stable_tab_title_survives_navigation_and_reload(self):
+        page = self.open_deck("json")
+        self.assertEqual("Smoke deck · 1", page.title())
+        page.keyboard.press("ArrowRight")
+        self.assertEqual("Smoke deck · 1", page.title())
+        page.reload()
+        self.assertEqual("Smoke deck · 1", page.title())
+        legacy = self.open_deck("legacy")
+        self.assertNotEqual("Smoke deck · 1", legacy.title())
 
     def test_deck_favicon_sets_browser_identity(self):
         page = self.open_deck("json")

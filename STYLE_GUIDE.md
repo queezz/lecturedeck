@@ -113,3 +113,15 @@ copy the entire viewer stylesheet into a course.
 Promote a treatment into `lecturedeck` only when it is reusable, works in both
 color modes, preserves overview and fullscreen behavior, and can be named
 without referring to a particular course.
+
+### Stable tab and selector identity
+
+`meta.tabTitle` optionally supplies a short stable browser-tab label, preserved
+while navigating, reloading and printing. Without it, slide-title tabs retain
+their existing behavior. `meta.title` still names the deck in the selector.
+
+One unit may declare `meta.selectorTitle` and `meta.selectorFavicon` to brand
+its course home. The icon is a local path under that unit's `assets/`. Other
+units may omit these fields. A selector containing conflicting declared titles
+keeps the generic title/icon instead of arbitrarily choosing one course.
+The home page heading and browser title use the same declared label.
