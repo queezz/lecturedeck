@@ -451,3 +451,29 @@ folder = "Studio/release/teaching-selector"
 
 The path must stay inside the repository. Explicit `--folder` takes precedence;
 named-unit commands continue to use `Studio/work/presentations`.
+
+
+### Scheduled presenter clock
+
+Add `presentation-time.json` to a unit's `webdeck/` to show the current time
+and remaining scheduled minutes in the top-right corner:
+
+```json
+{"start": "09:00", "end": "10:30", "timeZone": "Europe/London"}
+```
+
+The clock uses today's wall-clock session in that timezone, rather than a
+stopwatch started when the deck opens. Before the start it shows the start
+time; after the end it shows minutes overdue. Clock in the controls menu
+hides/shows it and remembers the preference in this browser. It remains visible
+in fullscreen and interactive slides, is hidden in overview and print, and
+requires no network service. Omit the file to keep the clock disabled.
+
+
+Add an optional `dates` array of ISO teaching dates to that file to enable
+automatic slide pacing, for example `"dates": ["2026-01-01"]`. Only the
+configured dates and start–end slot are recorded. Pacing in the menu shows
+per-slide totals/visits and exports JSON with the ordered visit timeline.
+Records stay in local browser storage, scoped to the unit and date. Overview,
+the report, hidden tabs and long suspension gaps are excluded. Reloads preserve
+saved visits; no closed-tab time or past lecture time is reconstructed.

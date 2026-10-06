@@ -1,5 +1,13 @@
 # Changelog — shipped version history
 
+## 0.20.0
+
+- Add an opt-in presenter clock with scheduled time remaining, last-five-minute
+  and overdue states, a menu toggle, timezone support and wake/reload recovery.
+  Configure with webdeck/presentation-time.json; static releases retain it.
+- Optionally record per-slide dwell during configured teaching dates/slots,
+  preserving visits locally across reloads with a pacing report/JSON export.
+
 ## 0.19.0
 
 - Tap the small gear or swipe up to open phone/touch controls without a

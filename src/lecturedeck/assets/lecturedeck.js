@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.19.0";
+  const VIEWER_VERSION = "0.20.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -162,6 +162,182 @@
     if (legacy) return legacy;
     deckLoadError("No deck data: expected webdeck/deck.json (or legacy webdeck/slides.js).");
     return null;
+  }
+
+
+  async function loadPresentationTime() {
+    if (printMode) return null;
+    try {
+      const response = await fetch("presentation-time.json", {cache: "no-store"});
+      return response.ok ? await response.json() : null;
+    } catch (_) { return null; }
+  }
+
+  function setupLectureClock(timing) {
+    if (!timing || printMode) return;
+    const parse = value => {
+      if (typeof value !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) return NaN;
+      const [hour, minute] = value.split(":").map(Number);
+      return hour * 3600 + minute * 60;
+    };
+    const start = parse(timing.start), end = parse(timing.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+    let formatter;
+    try {
+      formatter = new Intl.DateTimeFormat("en-GB", {
+        timeZone: timing.timeZone, hour: "2-digit", minute: "2-digit",
+        second: "2-digit", hourCycle: "h23",
+      });
+    } catch (_) { return; }
+    const clock = document.createElement("div");
+    clock.id = "lecture-clock";
+    clock.className = "lecture-clock";
+    clock.setAttribute("role", "timer");
+    // Avoid announcements every second while a screen reader reads the slide.
+    clock.setAttribute("aria-live", "off");
+    clock.title = `${timing.start}–${timing.end} · ${timing.timeZone || "local time"}`;
+    document.body.append(clock);
+    const toggle = document.createElement("button");
+    toggle.id = "clock-button";
+    toggle.type = "button";
+    toggle.textContent = "Clock";
+    toggle.setAttribute("aria-controls", "lecture-clock");
+    const key = `lecturedeck-clock-hidden:${timing.start}:${timing.end}:${timing.timeZone || "local"}`;
+    let hidden = false;
+    try { hidden = localStorage.getItem(key) === "true"; } catch (_) { /* optional */ }
+    const apply = () => {
+      clock.hidden = hidden;
+      toggle.setAttribute("aria-pressed", String(!hidden));
+      toggle.setAttribute("aria-label", hidden ? "Show lecture clock" : "Hide lecture clock");
+    };
+    toggle.addEventListener("click", () => {
+      hidden = !hidden;
+      try { localStorage.setItem(key, String(hidden)); } catch (_) { /* optional */ }
+      apply();
+    });
+    controlsTools?.append(toggle);
+    apply();
+    const update = () => {
+      const parts = Object.fromEntries(formatter.formatToParts(new Date()).map(p => [p.type, p.value]));
+      const seconds = +parts.hour * 3600 + +parts.minute * 60 + +parts.second;
+      let label = `${Math.ceil((end - seconds) / 60)} min left`;
+      let state = "running";
+      if (seconds < start) { label = `starts ${timing.start}`; state = "before"; }
+      else if (seconds >= end) { label = seconds === end ? "time's up" : `+${Math.ceil((seconds - end) / 60)} min over`; state = "over"; }
+      else if (end - seconds <= 300) state = "last-five";
+      clock.dataset.state = state;
+      clock.textContent = `${parts.hour}:${parts.minute} · ${label}`;
+      clock.setAttribute("aria-label", `Current time ${parts.hour}:${parts.minute}; ${label}`);
+    };
+    update();
+    setInterval(update, 1000);
+    document.addEventListener("visibilitychange", update);
+    window.addEventListener("focus", update);
+  }
+
+
+  function setupLecturePacer(timing, spec) {
+    if (printMode || !Array.isArray(timing?.dates) || !document.querySelector("#lecture-clock")) return;
+    const dates = new Set(timing.dates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)));
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timing.timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+    });
+    const toSeconds = value => { const [h, m] = value.split(":").map(Number); return h * 3600 + m * 60; };
+    const start = toSeconds(timing.start), end = toSeconds(timing.end);
+    const prefix = `lecturedeck-pacing:${location.pathname}:`;
+    let previous = null, record = null, recordKey = "", lastKey = "", storageAvailable = true;
+    const read = key => {
+      try { return JSON.parse(localStorage.getItem(key)); } catch (_) { return null; }
+    };
+    try { lastKey = localStorage.getItem(prefix + "latest") || ""; } catch (_) { storageAvailable = false; }
+    const button = document.createElement("button");
+    button.id = "pacing-button"; button.type = "button"; button.textContent = "Pacing";
+    button.setAttribute("aria-haspopup", "dialog");
+    controlsTools?.append(button);
+    const dialog = document.createElement("dialog");
+    dialog.id = "pacing-dialog"; dialog.className = "appearance-dialog pacing-dialog";
+    dialog.setAttribute("aria-label", "Lecture pacing report");
+    document.body.append(dialog);
+    const save = () => {
+      if (!record) return;
+      try { localStorage.setItem(recordKey, JSON.stringify(record)); localStorage.setItem(prefix + "latest", recordKey); lastKey = recordKey; }
+      catch (_) { storageAvailable = false; }
+    };
+    const sample = () => {
+      const now = Date.now();
+      const parts = Object.fromEntries(formatter.formatToParts(new Date(now)).map(p => [p.type, p.value]));
+      const date = `${parts.year}-${parts.month}-${parts.day}`;
+      const seconds = +parts.hour * 3600 + +parts.minute * 60 + +parts.second;
+      const frame = document.querySelector("#deck .slide-frame");
+      const index = Number(frame?.dataset.index);
+      const active = dates.has(date) && seconds >= start && seconds < end
+        && document.visibilityState === "visible" && !document.body.classList.contains("overview-open")
+        && !dialog.open && Boolean(frame);
+      // Clamp the last interval to the scheduled finish; never count sleep/closed-tab gaps.
+      if (previous && record) {
+        const elapsed = Math.max(0, Math.min(now, previous.finish) - previous.at);
+        // A suspended browser should not silently count a whole sleep interval.
+        if (elapsed <= 10000) record.visits[previous.visit].durationMs += elapsed;
+        save();
+      }
+      const changed = !previous || previous.id !== frame?.dataset.slideId || previous.date !== date;
+      if (active) {
+        const key = prefix + date;
+        if (recordKey !== key) {
+          recordKey = key;
+          record = read(key) || {schema: 1, date, timeZone: timing.timeZone,
+            start: timing.start, end: timing.end, deck: spec.meta.tabTitle || spec.meta.title || "Lecture",
+            path: location.pathname, visits: []};
+        }
+        let visit = previous?.visit;
+        if (changed) {
+          let section = "Opening";
+          for (let i = 0; i <= index; i++) if (spec.slides[i]?.type === "section") section = spec.slides[i].title;
+          const slide = spec.slides[index] || {};
+          visit = record.visits.length;
+          record.visits.push({slideId: frame.dataset.slideId || `slide-${index + 1}`,
+            number: index + 1, title: frame.querySelector("h1")?.textContent || slide.title || "Slide",
+            section: String(section).replace(/<[^>]*>/g, ""), startedAt: new Date(now).toISOString(), durationMs: 0});
+        }
+        previous = {at: now, finish: now + (end - seconds) * 1000 - (now % 1000),
+          id: frame.dataset.slideId, date, visit};
+        save();
+      } else previous = null;
+      button.dataset.recording = String(active);
+      button.title = active ? "Recording slide time locally" : "Review recorded slide time";
+    };
+    const duration = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
+    const show = () => {
+      sample();
+      const data = record || read(lastKey);
+      const totals = new Map();
+      for (const visit of data?.visits || []) {
+        const old = totals.get(visit.slideId) || {...visit, durationMs: 0, visits: 0};
+        old.durationMs += visit.durationMs; old.visits++; totals.set(visit.slideId, old);
+      }
+      const total = [...totals.values()].reduce((n, v) => n + v.durationMs, 0);
+      dialog.innerHTML = `<div class="appearance-head"><h2>Pacing</h2><button id="pacing-close" class="appearance-close" type="button">Close</button></div>
+        <p>${data ? `${escapeHtml(data.date)} · ${escapeHtml(data.start)}–${escapeHtml(data.end)} · ${duration(total)} on slides` : "No recorded lecture yet."}</p>
+        <p class="appearance-note">Automatic on scheduled teaching dates. Pauses in overview, this report and hidden tabs. Saved only in this browser${storageAvailable ? "." : "; storage unavailable — export before closing."}</p>
+        <table><thead><tr><th>Slide</th><th>Section / title</th><th>Time</th><th>Visits</th></tr></thead><tbody>${[...totals.values()].map(v => `<tr><td>${v.number}</td><td>${escapeHtml(v.section)}<br>${escapeHtml(v.title)}</td><td>${duration(v.durationMs)}</td><td>${v.visits}</td></tr>`).join("")}</tbody></table>
+        <button id="pacing-export" class="appearance-close" type="button" ${data ? "" : "disabled"}>Export JSON</button>`;
+      dialog.querySelector("#pacing-close").addEventListener("click", () => dialog.close());
+      dialog.querySelector("#pacing-export").addEventListener("click", () => {
+        const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}));
+        const a = document.createElement("a"); a.href = url; a.download = `lecture-pacing-${data.date}.json`; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
+      dialog.showModal(); sample();
+    };
+    button.addEventListener("click", show);
+    dialog.addEventListener("close", () => { sample(); button.focus(); });
+    const observer = new MutationObserver(sample);
+    observer.observe(deck, {childList: true});
+    observer.observe(document.body, {attributes: true, attributeFilter: ["class"]});
+    document.addEventListener("visibilitychange", sample);
+    window.addEventListener("pagehide", () => { sample(); previous = null; save(); });
+    sample(); setInterval(sample, 1000);
   }
 
   function boot(rawSpec) {
@@ -698,7 +874,7 @@
   pollLiveReload();
 
   (async () => {
-    const spec = await loadSpec();
-    if (spec) boot(spec);
+    const [spec, timing] = await Promise.all([loadSpec(), loadPresentationTime()]);
+    if (spec) { boot(spec); setupLectureClock(timing); setupLecturePacer(timing, spec); }
   })();
 })();

@@ -18,6 +18,7 @@ import tempfile
 import threading
 import unittest
 import zlib
+from datetime import datetime, timezone
 from pathlib import Path
 
 from lecturedeck import __version__
@@ -238,6 +239,130 @@ class BrowserSmokeTest(unittest.TestCase):
         page.goto(self.urls[name] + fragment)
         page.wait_for_function("Boolean(window.LECTUREDECK)")
         return page
+
+    def test_scheduled_clock_uses_wall_time_and_recovers_after_reload(self):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.route("**/presentation-time.json", lambda route: route.fulfill(
+            json={"start": "09:00", "end": "10:30", "timeZone": "UTC"}
+        ))
+        page.clock.install(time=datetime(2026, 1, 1, 8, 59, tzinfo=timezone.utc))
+        page.goto(self.urls["json"])
+        clock = page.locator("#lecture-clock")
+        clock.wait_for()
+        self.assertEqual(clock.inner_text(), "08:59 · starts 09:00")
+        page.clock.fast_forward(61 * 60 * 1000)
+        self.assertEqual(clock.inner_text(), "10:00 · 30 min left")
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(clock.inner_text(), "10:00 · 30 min left")
+        page.reload()
+        clock.wait_for()
+        self.assertEqual(clock.inner_text(), "10:00 · 30 min left")
+        page.clock.fast_forward(25 * 60 * 1000)
+        self.assertEqual(clock.get_attribute("data-state"), "last-five")
+        page.clock.fast_forward(5 * 60 * 1000)
+        self.assertEqual(clock.inner_text(), "10:30 · time's up")
+        page.clock.fast_forward(90 * 1000)
+        self.assertEqual(clock.inner_text(), "10:31 · +2 min over")
+        page.locator("#controls-toggle").click()
+        page.locator("#clock-button").click()
+        self.assertFalse(clock.is_visible())
+        page.reload()
+        page.wait_for_function("Boolean(document.querySelector('#lecture-clock'))")
+        self.assertFalse(clock.is_visible())
+        page.locator("#controls-toggle").click()
+        page.locator("#clock-button").click()
+        self.assertTrue(clock.is_visible())
+        page.keyboard.press("o")
+        self.assertFalse(clock.is_visible())
+        page.keyboard.press("Escape")
+        self.assertTrue(clock.is_visible())
+
+    def test_clock_timezone_invalid_config_and_print(self):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        timing = {"start": "09:00", "end": "10:30", "timeZone": "Asia/Tokyo"}
+        page.route("**/presentation-time.json", lambda route: route.fulfill(json=timing))
+        page.clock.install(time=datetime(2026, 1, 1, 0, 15, tzinfo=timezone.utc))
+        page.goto(self.urls["json"])
+        clock = page.locator("#lecture-clock")
+        clock.wait_for()
+        self.assertEqual(clock.inner_text(), "09:15 · 75 min left")
+        timing["timeZone"] = "invalid/timezone"
+        page.reload()
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        self.assertEqual(clock.count(), 0)
+        timing["timeZone"] = "UTC"
+        timing["end"] = "25:00"
+        page.reload()
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        self.assertEqual(clock.count(), 0)
+        timing["end"] = "10:30"
+        page.goto(self.urls["json"] + "?print=1")
+        page.wait_for_function("Boolean(window.LECTUREDECK_PRINT_READY)")
+        self.assertEqual(clock.count(), 0)
+
+    def test_pacer_records_visits_only_in_slot_and_pauses_in_overview(self):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        timing = {"start": "09:00", "end": "09:01", "timeZone": "UTC",
+                  "dates": ["2026-01-01"]}
+        page.route("**/presentation-time.json", lambda route: route.fulfill(json=timing))
+        page.clock.install(time=datetime(2026, 1, 1, 8, 59, 58, tzinfo=timezone.utc))
+        page.goto(self.urls["json"])
+        page.wait_for_selector("#pacing-button")
+        page.clock.run_for(2000)
+        page.clock.run_for(5000)
+        page.keyboard.press("ArrowRight")
+        page.clock.run_for(3000)
+        page.keyboard.press("o")
+        page.clock.run_for(2000)
+        page.keyboard.press("Escape")
+        page.clock.run_for(2000)
+        page.evaluate("Object.defineProperty(document, 'visibilityState', "
+                      "{configurable:true, value:'hidden'}); "
+                      "document.dispatchEvent(new Event('visibilitychange'));")
+        page.clock.run_for(3000)
+        self.assertEqual(page.locator("#pacing-button").get_attribute("data-recording"), "false")
+        page.evaluate("Object.defineProperty(document, 'visibilityState', "
+                      "{configurable:true, value:'visible'}); "
+                      "document.dispatchEvent(new Event('visibilitychange'));")
+        page.reload()
+        page.wait_for_selector("#pacing-button")
+        page.clock.run_for(4000)
+        page.locator("#controls-toggle").click()
+        page.locator("#pacing-button").click()
+        self.assertTrue(page.locator("#pacing-dialog").is_visible())
+        with page.expect_download() as download:
+            page.locator("#pacing-export").click()
+        data = json.loads(Path(download.value.path()).read_text())
+        total = sum(v["durationMs"] for v in data["visits"])
+        self.assertGreaterEqual(total, 14000)
+        self.assertLess(total, 15000)
+        self.assertEqual([v["number"] for v in data["visits"]
+                          if v["durationMs"] >= 1000], [1, 2, 2, 2])
+        page.clock.run_for(5000)
+        page.locator("#pacing-close").click()
+        page.clock.set_fixed_time(datetime(2026, 1, 1, 9, 1, tzinfo=timezone.utc))
+        page.clock.run_for(2000)
+        self.assertEqual(page.locator("#pacing-button").get_attribute("data-recording"), "false")
+
+    def test_pacer_does_not_record_non_teaching_date(self):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.route("**/presentation-time.json", lambda route: route.fulfill(
+            json={"start": "09:00", "end": "10:30", "timeZone": "UTC",
+                  "dates": ["2026-01-02"]}
+        ))
+        page.clock.install(time=datetime(2026, 1, 1, 9, 15, tzinfo=timezone.utc))
+        page.goto(self.urls["json"])
+        page.wait_for_selector("#pacing-button")
+        page.clock.run_for(5000)
+        self.assertEqual(page.locator("#pacing-button").get_attribute("data-recording"), "false")
+        page.locator("#controls-toggle").click()
+        page.locator("#pacing-button").click()
+        self.assertIn("No recorded lecture yet", page.locator("#pacing-dialog").inner_text())
+        self.assertTrue(page.locator("#pacing-export").is_disabled())
 
     def current_index(self, page) -> int:
         return page.evaluate(

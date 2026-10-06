@@ -262,7 +262,7 @@ body.laser-active .deck, body.laser-active .deck * { cursor: none; }
 .controls-tools > * { flex: none; white-space: nowrap; }
 .controls-tools .viewer-version { color: var(--faint); font-size: 12px; white-space: nowrap; }
 .deck-chrome.has-safe-space .controls-toggle { display: none; }
-.deck-chrome.has-safe-space .controls-tools, .deck-chrome.is-expanded .controls-tools { max-width: 580px; opacity: 1; pointer-events: auto; }
+.deck-chrome.has-safe-space .controls-tools, .deck-chrome.is-expanded .controls-tools { max-width: min(780px, calc(100vw - 90px)); opacity: 1; pointer-events: auto; }
 body.immersive-slide.pseudo-fullscreen .deck-chrome,
 :fullscreen body.immersive-slide .deck-chrome,
 :-webkit-full-screen body.immersive-slide .deck-chrome { display: flex; }
@@ -387,3 +387,27 @@ body.touch-review .mobile-menu-toggle:focus-visible { opacity: 1; outline: 3px s
 body.touch-review.mobile-controls-open .mobile-menu-toggle,
 body.touch-review.overview-open .mobile-menu-toggle,
 body.print-deck .mobile-menu-toggle { display: none; }
+
+
+/* Presenter timing sits outside slide layout, including immersive demos. */
+.lecture-clock {
+  position: fixed; top: max(8px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right)); z-index: 60;
+  padding: 5px 9px; border-radius: 6px; background: var(--chrome-bg);
+  color: var(--muted); font-size: 18px; font-variant-numeric: tabular-nums;
+  line-height: 1.2; pointer-events: none; white-space: nowrap;
+}
+.lecture-clock[hidden] { display: none; }
+.lecture-clock[data-state="last-five"] { color: var(--gold); }
+.lecture-clock[data-state="over"] { color: var(--red); }
+body.overview-open .lecture-clock { display: none; }
+@media (max-width: 700px) {
+  .lecture-clock { font-size: 15px; top: max(4px, env(safe-area-inset-top)); padding: 3px 6px; }
+}
+@media print { .lecture-clock { display: none !important; } }
+
+.pacing-dialog { padding: 22px; width: min(700px, 94vw); max-height: 85dvh; overflow: auto; }
+.pacing-dialog table { width: 100%; border-collapse: collapse; font-size: 16px; }
+.pacing-dialog th, .pacing-dialog td { padding: 8px; text-align: left; border-bottom: 1px solid var(--border); }
+.pacing-dialog td:nth-child(3) { white-space: nowrap; font-variant-numeric: tabular-nums; }
+#pacing-button[data-recording="true"]::after { content: " ●"; color: var(--green); }
