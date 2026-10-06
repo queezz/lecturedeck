@@ -34,9 +34,15 @@
         <span id="viewer-version" class="viewer-version"></span>
       </span>
     </nav>
+    <button id="mobile-menu-button" class="mobile-menu-toggle" type="button"
+            aria-label="Show presentation controls" aria-controls="controls-tools" aria-expanded="false">
+      <span aria-hidden="true">&#9881;&#65039;</span>
+    </button>
     <nav id="touch-nav" class="touch-nav" aria-label="Slide navigation">
       <button id="previous-button" type="button" aria-label="Previous slide" title="Previous slide">‹</button>
+      <button id="touch-overview-button" type="button" aria-expanded="false" aria-controls="overview">Overview</button>
       <button id="touch-fullscreen-button" type="button" title="Full screen">Full screen</button>
+      <button id="touch-controls-button" type="button" aria-label="Show presentation controls" aria-controls="controls-tools" aria-expanded="false">Close menu</button>
       <button id="next-button" type="button" aria-label="Next slide" title="Next slide">›</button>
     </nav>
     <dialog id="appearance-dialog" class="appearance-dialog"

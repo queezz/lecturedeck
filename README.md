@@ -262,6 +262,11 @@ endpoint). Adjacent unit files such as `script.md`, `brief.md`, and
 
 - **Next / previous:** arrow keys, `PageDown`/`PageUp`, `Space`, mouse wheel
   or trackpad scroll, and horizontal swipe on touch screens.
+- **Mobile review:** tap the small gear or swipe up on a slide to open the
+  touch menu. Overview, fullscreen and the remaining controls are available
+  there; Close menu or a downward swipe dismisses it. Horizontal swipes page
+  slides. Overview scrolling, pinch zoom, media and interactive controls do
+  not page the deck. Overview keeps a Close overview button within reach.
 - **First / last slide:** `Home` / `End`.
 - **Overview grid:** `O` or `Escape`; click a thumbnail to jump.
 - **Full screen:** `F` (falls back to a pseudo-fullscreen on iPad Safari;
@@ -283,8 +288,8 @@ endpoint). Adjacent unit files such as `script.md`, `brief.md`, and
 
 The presentation controls sit outside the fitted slide whenever the viewport
 has spare space. At tighter aspect ratios they collapse to a small gear button
-so they do not cover the footer. The desktop strip is hidden in full screen,
-where the keyboard shortcuts remain active. Full screen also expands the live
+so they do not cover the footer. The gear remains available in full screen,
+where keyboard shortcuts also remain active. Full screen also expands the live
 slide canvas into a display's spare dimension, so 16:10, 3:2, and ultrawide
 screens are filled without stretching or cropping authored content. Windowed
 slides, overview thumbnails, and PDF pages remain 16:9.

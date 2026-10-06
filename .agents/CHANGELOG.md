@@ -1,5 +1,16 @@
 # Changelog — shipped version history
 
+## 0.19.0
+
+- Tap the small gear or swipe up to open phone/touch controls without a
+  persistent toolbar covering slides.
+  Overview, previous/next, fullscreen, appearance, laser and selector remain
+  reachable; swipe down or Close menu dismisses the menu. Overview has an
+  always-reachable close control while scrolling.
+- Restrict paging swipes to horizontal single-finger gestures outside overview,
+  settings, media and interactive controls. Pinch gestures retain their own
+  behavior; vertical gestures on the slide open/close the touch menu.
+
 ## 0.18.1
 
 - Preserve the current slide when leaving native video fullscreen. Only an

@@ -646,6 +646,115 @@ class BrowserSmokeTest(unittest.TestCase):
         )
         self.assertEqual(1, self.current_index(page))
 
+    def swipe(self, page, start, end, target=".slide-frame", multi=False, cancel=False):
+        page.evaluate(
+            """({start, end, target, multi, cancel}) => {
+              const element = document.querySelector(target);
+              const finger = (point, id = 1) => new Touch({identifier: id,
+                target: element, clientX: point[0], clientY: point[1]});
+              const first = finger(start);
+              element.dispatchEvent(new TouchEvent("touchstart", {
+                touches: multi ? [first, finger(start, 2)] : [first],
+                changedTouches: [first], bubbles: true,
+              }));
+              element.dispatchEvent(new TouchEvent(cancel ? "touchcancel" : "touchend", {
+                touches: [], changedTouches: [finger(end)], bubbles: true,
+              }));
+            }""",
+            dict(start=start, end=end, target=target, multi=multi, cancel=cancel),
+        )
+
+    def test_mobile_gear_overview_and_controls_fit(self):
+        for width, height in [(320, 480), (390, 844), (844, 390)]:
+            with self.subTest(width=width, height=height):
+                page = self.open_deck("json")
+                page.set_viewport_size(dict(width=width, height=height))
+                gear = page.locator("#mobile-menu-button")
+                gear.wait_for(state="visible")
+                self.assertTrue(page.locator("#touch-nav").is_hidden())
+                gear.click()
+                for selector in ["#touch-overview-button", "#previous-button",
+                                 "#next-button", "#touch-fullscreen-button",
+                                 "#touch-controls-button", "#appearance-button", "#laser-button"]:
+                    button = page.locator(selector)
+                    self.assertTrue(button.is_visible(), selector)
+                    box = button.bounding_box()
+                    self.assertGreaterEqual(box["x"], 0, selector)
+                    self.assertLessEqual(box["x"] + box["width"], width + 1, selector)
+                    self.assertGreaterEqual(box["y"], 0, selector)
+                    self.assertLessEqual(box["y"] + box["height"], height + 1, selector)
+                    self.assertGreaterEqual(box["width"], 44, selector)
+                    self.assertGreaterEqual(box["height"], 44, selector)
+                page.locator("#next-button").click()
+                self.assertEqual(1, self.current_index(page))
+                page.locator("#touch-overview-button").click()
+                self.assertEqual(11, page.locator(".overview-card").count())
+                self.assertTrue(page.locator("#touch-controls-button").is_hidden())
+                self.assertEqual(
+                    "Close overview", page.locator("#touch-overview-button").inner_text()
+                )
+                self.swipe(page, [200, 300], [60, 300], "#overview")
+                self.assertEqual(1, self.current_index(page))
+                page.locator("#overview").evaluate("e => {e.scrollTop = e.scrollHeight}")
+                self.assertTrue(page.locator("#touch-overview-button").is_visible())
+                page.locator("#touch-overview-button").click()
+                self.assertEqual(1, self.current_index(page))
+                self.assertTrue(page.locator("#touch-nav").is_hidden())
+                gear.click()
+                page.locator("#touch-overview-button").click()
+                page.locator(".overview-card[data-index='5']").click()
+                self.assertEqual(5, self.current_index(page))
+                page.reload()
+                gear.wait_for(state="visible")
+                self.assertEqual(5, self.current_index(page))
+                self.assertTrue(page.locator("#touch-nav").is_hidden())
+
+    def test_mobile_swipes_menu_and_protected_gestures(self):
+        page = self.open_deck("json")
+        page.set_viewport_size(dict(width=390, height=844))
+        page.locator("#mobile-menu-button").wait_for(state="visible")
+        self.swipe(page, [200, 500], [210, 350])
+        self.assertTrue(page.locator("#touch-nav").is_visible())
+        self.assertEqual(0, self.current_index(page))
+        self.swipe(page, [200, 350], [210, 500])
+        self.assertTrue(page.locator("#touch-nav").is_hidden())
+        self.swipe(page, [300, 400], [100, 410])
+        self.assertEqual(1, self.current_index(page))
+        self.swipe(page, [100, 400], [300, 410])
+        self.assertEqual(0, self.current_index(page))
+        for options in [dict(multi=True), dict(cancel=True)]:
+            self.swipe(page, [300, 400], [100, 400], **options)
+            self.assertEqual(0, self.current_index(page))
+        page.locator("#mobile-menu-button").click()
+        self.swipe(page, [300, 400], [100, 400], "#touch-overview-button")
+        self.assertEqual(0, self.current_index(page))
+        page.locator("#appearance-button").click()
+        self.swipe(page, [300, 400], [100, 400], "#appearance-dialog")
+        self.assertEqual(0, self.current_index(page))
+        page.locator("#appearance-close").click()
+        page.locator("#touch-controls-button").click()
+        page.keyboard.press("End")
+        self.swipe(page, [200, 500], [200, 350])
+        self.assertTrue(page.locator("#next-button").is_disabled())
+
+    def test_mobile_fullscreen_fallback_and_immersive_menu(self):
+        page = self.open_deck("json", "#/4")
+        page.set_viewport_size(dict(width=390, height=844))
+        page.locator("#mobile-menu-button").wait_for(state="visible")
+        self.assertTrue(page.locator("#touch-nav").is_hidden())
+        page.evaluate("() => { document.documentElement.requestFullscreen = () => "
+                      "Promise.reject(new Error('unavailable')); }")
+        page.locator("#mobile-menu-button").click()
+        page.locator("#touch-fullscreen-button").click()
+        page.wait_for_function("document.body.classList.contains('pseudo-fullscreen')")
+        self.assertTrue(page.locator("#touch-nav").is_hidden())
+        page.locator("#mobile-menu-button").click()
+        self.assertEqual("Exit full screen", page.locator("#touch-fullscreen-button").inner_text())
+        page.locator("#touch-fullscreen-button").click()
+        self.assertFalse(page.evaluate("document.body.classList.contains('pseudo-fullscreen')"))
+        self.assertEqual(4, self.current_index(page))
+        self.assertTrue(page.evaluate("document.querySelector('#overview').hidden"))
+
     def test_oversized_formula_shrinks_to_fit(self):
         page = self.open_deck("json", "#/9")
         page.wait_for_selector(".formula-math math")

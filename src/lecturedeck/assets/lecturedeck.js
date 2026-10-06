@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.18.1";
+  const VIEWER_VERSION = "0.19.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -18,6 +18,10 @@
   const counter = document.querySelector("#counter");
   const previousButton = document.querySelector("#previous-button");
   const nextButton = document.querySelector("#next-button");
+  const mobileMenuButton = document.querySelector("#mobile-menu-button");
+  const touchOverviewButton = document.querySelector("#touch-overview-button");
+  const touchControlsButton = document.querySelector("#touch-controls-button");
+  const touchReview = matchMedia("(max-width: 700px), (pointer: coarse), (max-height: 500px) and (max-width: 1000px)");
   const appearanceButton = document.querySelector("#appearance-button");
   const appearanceDialog = document.querySelector("#appearance-dialog");
   const colorModeInputs = [...document.querySelectorAll('input[name="color-mode"]')];
@@ -308,6 +312,18 @@
 
     function positionControls(scale, frameWidth = SLIDE_WIDTH, frameHeight = SLIDE_HEIGHT) {
       if (!presentationControls || !controlsToggle || !controlsTools) return;
+      if (touchReview.matches) {
+        presentationControls.style.left = "";
+        presentationControls.style.top = "";
+        presentationControls.classList.remove("has-safe-space");
+        presentationControls.classList.toggle("is-expanded", controlsExpanded);
+        controlsTools.setAttribute("aria-hidden", String(!controlsExpanded));
+        controlsTools.inert = !controlsExpanded;
+        mobileMenuButton?.setAttribute("aria-expanded", String(controlsExpanded));
+        touchControlsButton?.setAttribute("aria-expanded", String(controlsExpanded));
+        touchControlsButton?.setAttribute("aria-label", `${controlsExpanded ? "Hide" : "Show"} presentation controls`);
+        return;
+      }
       const frameLeft = (innerWidth - frameWidth * scale) / 2;
       const frameTop = (innerHeight - frameHeight * scale) / 2;
       const frameBottom = frameTop + frameHeight * scale;
@@ -347,6 +363,8 @@
     function scaleCurrent() {
       const frame = deck.querySelector(".slide-frame");
       if (!frame) return;
+      document.body.classList.toggle("touch-review", touchReview.matches);
+      document.body.classList.toggle("mobile-controls-open", touchReview.matches && controlsExpanded);
       const scale = Math.min(innerWidth / SLIDE_WIDTH, innerHeight / SLIDE_HEIGHT);
       const fullscreen = isNativeFullscreen()
         || document.body.classList.contains("pseudo-fullscreen");
@@ -427,6 +445,10 @@
     }
 
     async function toggleFullscreen() {
+      if (touchReview.matches) {
+        controlsExpanded = false;
+        scaleCurrent();
+      }
       if (isNativeFullscreen()) {
         const exit = document.exitFullscreen || document.webkitExitFullscreen;
         if (exit) {
@@ -472,6 +494,17 @@
       // the hidden cursor would make the cards hard to click.
       if (open && laserOn) setLaser(false);
       overview.hidden = !open;
+      document.body.classList.toggle("overview-open", open);
+      if (touchReview.matches) {
+        controlsExpanded = false;
+        scaleCurrent();
+      }
+      if (touchOverviewButton) {
+        touchOverviewButton.textContent = open ? "Close overview" : "Overview";
+        touchOverviewButton.setAttribute("aria-expanded", String(open));
+      }
+      previousButton.disabled = open || index === 0;
+      nextButton.disabled = open || index === spec.slides.length - 1;
       deck.hidden = open;
       if (!open) { render(); return; }
       overview.innerHTML = spec.slides.map((slide, i) => `<button class="overview-card" type="button" data-index="${i}" aria-current="${i === index}"><div class="overview-thumb">${slideMarkup(slide, i, true)}</div><span class="overview-label">${i + 1}. ${slideTitleText(slide, i)}</span></button>`).join("");
@@ -583,9 +616,33 @@
       wheelHoldUntil = now + 150;
       go(index + direction);
     }, {passive: true});
-    let touchX = null;
-    addEventListener("touchstart", e => { touchX = e.target instanceof Element && e.target.closest("video") ? null : e.changedTouches[0].clientX; }, {passive:true});
-    addEventListener("touchend", e => { if (touchX === null) return; const dx = e.changedTouches[0].clientX - touchX; if (Math.abs(dx) > 55) go(index + (dx < 0 ? 1 : -1)); touchX = null; }, {passive:true});
+    let swipe = null;
+    addEventListener("touchstart", event => {
+      swipe = null;
+      if (!overview.hidden || appearanceDialog?.open || event.touches.length > 1) return;
+      if (event.target instanceof Element && event.target.closest(
+        "video, audio, iframe, button, a, input, select, textarea, .deck-chrome, .touch-nav, .interactive-frame",
+      )) return;
+      const touch = event.changedTouches[0];
+      if (touch) swipe = {id: touch.identifier, x: touch.clientX, y: touch.clientY};
+    }, {passive: true});
+    addEventListener("touchend", event => {
+      const start = swipe;
+      swipe = null;
+      if (!start || !overview.hidden || appearanceDialog?.open) return;
+      const touch = [...event.changedTouches].find(t => t.identifier === start.id);
+      if (!touch) return;
+      const dx = touch.clientX - start.x;
+      const dy = touch.clientY - start.y;
+      if (touchReview.matches && Math.abs(dy) > 55 && Math.abs(dy) > Math.abs(dx) * 1.3) {
+        controlsExpanded = dy < 0;
+        scaleCurrent();
+      } else if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.3) {
+        if (touchReview.matches) controlsExpanded = false;
+        go(index + (dx < 0 ? 1 : -1));
+      }
+    }, {passive: true});
+    addEventListener("touchcancel", () => { swipe = null; }, {passive: true});
     overview.addEventListener("click", event => {
       const card = event.target.closest("[data-index]");
       if (!card) return;
@@ -597,6 +654,15 @@
       toggleOverview(false);
     });
     document.querySelector("#overview-button").addEventListener("click", () => toggleOverview());
+    mobileMenuButton?.addEventListener("click", () => {
+      controlsExpanded = !controlsExpanded;
+      scaleCurrent();
+    });
+    touchOverviewButton?.addEventListener("click", () => toggleOverview());
+    touchControlsButton?.addEventListener("click", () => {
+      controlsExpanded = !controlsExpanded;
+      scaleCurrent();
+    });
     controlsToggle?.addEventListener("click", () => {
       controlsExpanded = !controlsExpanded;
       scaleCurrent();

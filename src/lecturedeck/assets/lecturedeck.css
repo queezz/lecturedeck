@@ -332,7 +332,6 @@ body.print-deck .overview { display: none; }
 }
 
 @media (max-width: 700px) {
-  .deck-chrome { display: none; }
   .overview { grid-template-columns: 1fr; padding: 14px; }
 }
 
@@ -341,3 +340,50 @@ body.print-deck .overview { display: none; }
 .deck-chrome .controls-toggle > span { border:0; padding:0; background:none; font-size:inherit; line-height:1; }
 .deck-chrome .controls-tools { padding:0; border:0; background:none; box-sizing:border-box; }
 .deck-chrome.has-safe-space .controls-toggle { display:none; }
+
+/* Swipe up opens touch controls; reading leaves the entire slide unobstructed. */
+.touch-nav #touch-controls-button { display: none; }
+@media (max-width: 700px), (pointer: coarse), (max-height: 500px) and (max-width: 1000px) {
+  body.touch-review .touch-nav { display: none; }
+  body.touch-review.mobile-controls-open .touch-nav,
+  body.touch-review.overview-open .touch-nav {
+    position: fixed; z-index: 80; display: flex; justify-content: center;
+    left: 0; right: 0; bottom: 0; gap: 4px;
+    padding: 6px max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
+    border-radius: 0; border-width: 1px 0 0; background: var(--chrome-bg);
+  }
+  .touch-nav button { min-width: 44px; min-height: 44px; padding: 6px; font-size: 14px; }
+  .touch-nav #touch-overview-button { flex: 1; max-width: 140px; }
+  .touch-nav #touch-fullscreen-button { min-width: 84px; max-width: 98px; font-size: 14px; }
+  .touch-nav #touch-controls-button { display: block; }
+  body.touch-review .deck-chrome, body.touch-review.immersive-slide .deck-chrome {
+    display: none; z-index: 81; left: max(6px, env(safe-area-inset-left)); right: max(6px, env(safe-area-inset-right));
+    top: auto; bottom: calc(64px + env(safe-area-inset-bottom)); opacity: 1;
+    max-height: calc(100dvh - 90px); overflow: auto;
+  }
+  body.touch-review .deck-chrome.is-expanded, body.touch-review.immersive-slide .deck-chrome.is-expanded { display: flex; }
+  .deck-chrome .controls-toggle { display: none; }
+  .deck-chrome .controls-tools {
+    display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; opacity: 1; pointer-events: auto;
+    padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--chrome-bg);
+  }
+  .deck-chrome button, .deck-chrome .control-link { min-width: 44px; min-height: 44px; }
+  .deck-chrome #overview-button, .deck-chrome #fullscreen-button { display: none; }
+  body.touch-review.overview-open .touch-nav button,
+  body.touch-review.overview-open #touch-controls-button { display: none; }
+  body.touch-review.overview-open .touch-nav #touch-overview-button { display: block; }
+  .overview { padding: 14px 14px calc(80px + env(safe-area-inset-bottom)); }
+}
+
+.mobile-menu-toggle { display: none; }
+body.touch-review .mobile-menu-toggle {
+  position: fixed; z-index: 82; right: max(8px, env(safe-area-inset-right));
+  bottom: max(8px, env(safe-area-inset-bottom)); display: grid; place-items: center;
+  width: 44px; height: 44px; padding: 0; border: 1px solid var(--border); border-radius: 10px;
+  color: var(--ink); background: var(--chrome-bg); font-size: 20px; opacity: .65;
+  cursor: pointer; touch-action: manipulation;
+}
+body.touch-review .mobile-menu-toggle:focus-visible { opacity: 1; outline: 3px solid var(--blue); }
+body.touch-review.mobile-controls-open .mobile-menu-toggle,
+body.touch-review.overview-open .mobile-menu-toggle,
+body.print-deck .mobile-menu-toggle { display: none; }
