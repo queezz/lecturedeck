@@ -1,5 +1,11 @@
 # Changelog — shipped version history
 
+## 0.18.1
+
+- Preserve the current slide when leaving native video fullscreen. Only an
+  unexpected exit from deck-root fullscreen opens the overview. Add a browser
+  regression for the player return-to-normal path.
+
 ## 0.18.0
 
 - Add optional stable tab titles and declarative selector title/icon identity.

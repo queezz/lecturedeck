@@ -577,6 +577,28 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertFalse(page.evaluate("document.body.classList.contains('light-theme')"))
         self.assertEqual("default", page.evaluate("document.body.dataset.presentationStyle"))
 
+    def test_video_fullscreen_exit_stays_on_slide(self):
+        page = self.open_deck("json", "#/3")
+        page.evaluate("""() => {
+            const button = document.createElement('button');
+            button.id = 'video-fullscreen-test';
+            button.textContent = 'Fullscreen video';
+            button.style.cssText = 'position:fixed;top:0;left:0;z-index:99999';
+            button.onclick = () => document.querySelector('video').requestFullscreen();
+            document.body.append(button);
+        }""")
+        page.click("#video-fullscreen-test")
+        page.wait_for_function("document.fullscreenElement === document.querySelector('video')")
+        # The native player's return-to-normal control calls this same browser API.
+        page.evaluate("document.exitFullscreen()")
+        page.wait_for_function("!document.fullscreenElement")
+        page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame("
+            "() => requestAnimationFrame(resolve)))"
+        )
+        self.assertTrue(page.evaluate("document.querySelector('#overview').hidden"))
+        self.assertEqual(3, self.current_index(page))
+
     def test_video_slide_attributes_and_key_guard(self):
         page = self.open_deck("json", "#/3")
         video = page.locator("video")

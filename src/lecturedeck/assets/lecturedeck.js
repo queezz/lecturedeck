@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.18.0";
+  const VIEWER_VERSION = "0.18.1";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -168,7 +168,7 @@
     setFavicon(spec.meta.favicon);
     window.LECTUREDECK = spec;
     let index = Math.max(0, Math.min(spec.slides.length - 1, Number(location.hash.replace("#/", "")) || 0));
-    let nativeFullscreenWasActive = false;
+    let deckFullscreenWasActive = false;
     let deliberateNativeFullscreenExit = false;
     let controlsExpanded = false;
     // Laser pointer state. Declared here, before render() can run, so the
@@ -409,11 +409,13 @@
     }
 
     function updateFullscreenButtons() {
-      const nativeActive = isNativeFullscreen();
+      const nativeElement = document.fullscreenElement || document.webkitFullscreenElement;
+      const nativeActive = Boolean(nativeElement);
       const escapedNativeFullscreen = (
-        nativeFullscreenWasActive && !nativeActive && !deliberateNativeFullscreenExit
+        deckFullscreenWasActive && !nativeActive && !deliberateNativeFullscreenExit
       );
-      nativeFullscreenWasActive = nativeActive;
+      // Video fullscreen belongs to its player; exiting it must preserve the slide.
+      deckFullscreenWasActive = nativeElement === document.documentElement;
       if (!nativeActive) deliberateNativeFullscreenExit = false;
       const active = nativeActive || document.body.classList.contains("pseudo-fullscreen");
       fullscreenButtons.forEach(button => {
