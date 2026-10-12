@@ -106,13 +106,21 @@ HTTP, with no functions or executable deck code. A minimal deck looks like:
   default icon unchanged.
 - Slide fields mirror the rendering vocabulary: `type` (`title`, `section`,
   `content`), optional `layout`, `title`, `eyebrow`, `claim`, `body`, `quote`,
-  `source`, `accent`, `className`, `chrome`, `formula`, and one
+  `source`, `accent`, `className`, `chrome`, `appendix`, `formula`, and one
   content block among `figure`/`figures`, `cards`, `interactive`, or `video`.
   `body`, `quote`, and captions hold compiled HTML; `formula.mathml` holds
   native MathML.
 - `eyebrow` overrides the current part label on that slide. Omit it or leave
   it empty to use the part label. Optional `beat` is author metadata only;
   it is accepted in source data but never shown to the audience.
+- `appendix: true` on one slide marks where backup material starts. Slides
+  before it count against the main total (`21 / 46` in the counter and
+  footer); that slide and every later one read `B1`, `B2`, … in the counter,
+  footer, overview, screen-reader labels and pacing report. Navigation and
+  `#/N` deep links keep the raw zero-based position. Appendix frames carry
+  `data-appendix="true"` and the body gains `in-appendix` while one is shown,
+  so `deck.css` can style them. `check` requires a boolean and rejects more
+  than one `appendix: true`; without it, numbering stays plain `i / N`.
 - `check` validates field types, enum values, ids, figure geometry ranges, and
   every declared asset reference before serving or releasing. Unknown fields
   are rejected, so typos surface immediately. Declared media and interactive
@@ -474,6 +482,7 @@ Add an optional `dates` array of ISO teaching dates to that file to enable
 automatic slide pacing, for example `"dates": ["2026-01-01"]`. Only the
 configured dates and start–end slot are recorded. Pacing in the menu shows
 per-slide totals/visits and exports JSON with the ordered visit timeline.
-Records stay in local browser storage, scoped to the unit and date. Overview,
+Each visit keeps its raw `number`; in a deck with an appendix it also carries
+the audience `label` (`B1`, …) shown in the report. Records stay in local browser storage, scoped to the unit and date. Overview,
 the report, hidden tabs and long suspension gaps are excluded. Reloads preserve
 saved visits; no closed-tab time or past lecture time is reconstructed.

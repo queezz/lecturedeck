@@ -324,6 +324,39 @@ class LecturedeckTest(unittest.TestCase):
                     unit = make_json_unit(root, deck)
                     self.assertHasError(validate_unit(unit), fragment)
 
+    def test_deck_json_appendix_marks_one_boundary(self):
+        slides = [
+            {"id": "opening", "type": "title", "title": "Main"},
+            {"id": "main-two", "title": "Main two", "appendix": False},
+            {"id": "backup", "type": "section", "title": "Backup", "appendix": True},
+            {"id": "backup-two", "title": "Backup two"},
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            unit = make_json_unit(root, base_deck(slides=slides))
+            self.assertEqual([], validate_unit(unit))
+        cases = [
+            (
+                [{"id": "a", "appendix": "yes"}],
+                "slides[0].appendix must be true or false",
+            ),
+            ([{"id": "a", "appendix": 1}], "slides[0].appendix must be true or false"),
+            (
+                [
+                    {"id": "a"},
+                    {"id": "b", "appendix": True},
+                    {"id": "c", "appendix": False},
+                    {"id": "d", "appendix": True},
+                ],
+                "only one slide may set appendix to true; it marks where the appendix "
+                "starts (found slides[1], slides[3])",
+            ),
+        ]
+        for deck_slides, fragment in cases:
+            with self.subTest(fragment=fragment):
+                with tempfile.TemporaryDirectory() as root:
+                    unit = make_json_unit(root, base_deck(slides=deck_slides))
+                    self.assertHasError(validate_unit(unit), fragment)
+
     def test_deck_json_requires_viewer_version(self):
         with tempfile.TemporaryDirectory() as root:
             unit = make_json_unit(root, base_deck(requires=">=99.0"))
@@ -661,6 +694,9 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn("window.LECTUREDECK = spec", script)
         self.assertIn("deckLoadError", script)
         self.assertIn("data-slide-id", script)
+        self.assertIn("function slideNumbering", script)
+        self.assertIn("data-appendix", script)
+        self.assertIn('"in-appendix"', script)
         self.assertIn("webkitRequestFullscreen", script)
         self.assertIn("function setTheme", script)
         self.assertIn("function setPresentationStyle", script)

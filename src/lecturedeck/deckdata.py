@@ -58,6 +58,7 @@ SLIDE_KEYS = frozenset(
         "accent",
         "className",
         "chrome",
+        "appendix",
         "formula",
         "cards",
         "figure",
@@ -305,6 +306,7 @@ def _validate_slide(errors: list[str], where: str, slide: object, seen_ids: set[
     ):
         errors.append(f"deck.json: {where}.className must be space-separated class names")
     _check_bool(errors, where, slide, "chrome")
+    _check_bool(errors, where, slide, "appendix")
     if "formula" in slide:
         _validate_formula(errors, f"{where}.formula", slide["formula"])
     if "cards" in slide:
@@ -337,6 +339,21 @@ def _validate_slide(errors: list[str], where: str, slide: object, seen_ids: set[
         _validate_interactive(errors, f"{where}.interactive", slide["interactive"])
     if "video" in slide:
         _validate_video(errors, f"{where}.video", slide["video"])
+
+
+def _validate_appendix(errors: list[str], slides: list) -> None:
+    # The appendix slide starts the backup material; a second marker would
+    # be ambiguous, so a deck declares at most one boundary.
+    starts = [
+        f"slides[{position}]"
+        for position, slide in enumerate(slides)
+        if isinstance(slide, dict) and slide.get("appendix") is True
+    ]
+    if len(starts) > 1:
+        errors.append(
+            "deck.json: only one slide may set appendix to true; "
+            f"it marks where the appendix starts (found {', '.join(starts)})"
+        )
 
 
 def validate_deck(data: object) -> list[str]:
@@ -372,6 +389,7 @@ def validate_deck(data: object) -> list[str]:
         seen_ids: set[str] = set()
         for position, slide in enumerate(slides):
             _validate_slide(errors, f"slides[{position}]", slide, seen_ids)
+        _validate_appendix(errors, slides)
     return errors
 
 

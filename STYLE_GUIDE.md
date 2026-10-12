@@ -34,6 +34,36 @@ codes and scene identifiers belong in author metadata; `beat` is never
 rendered. Set a slide's `eyebrow` to a useful label such as "Practice" when
 the inherited part label does not describe that slide.
 
+## Appendix numbering
+
+Backup material placed after the main lecture should not inflate the visible
+slide count. Set `"appendix": true` on the first backup slide, usually a
+section slide:
+
+```json
+{
+  "id": "backup",
+  "type": "section",
+  "title": "Backup",
+  "appendix": true
+}
+```
+
+Main slides then read `21 / 46`, counting only the slides before the
+appendix, and backup slides read `B1`, `B2`, … in the counter, footer, and
+overview. Only one slide may set the field. Navigation is unchanged:
+next/previous, `Home`/`End`, and `#/N` deep links still walk the whole deck
+by raw position, so a link from the main thread to a backup slide and back
+keeps working.
+
+The viewer adds no special colour. A unit that wants backup slides to look
+distinct can style the hooks from `deck.css`:
+
+```css
+.slide-frame[data-appendix="true"] .page-number { color: var(--muted); }
+body.in-appendix #counter { font-style: italic; }
+```
+
 ## Accents
 
 Set `accent` on a slide or section to choose its semantic highlight color. The

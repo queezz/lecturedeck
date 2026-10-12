@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.20.0";
+  const VIEWER_VERSION = "0.21.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -165,6 +165,26 @@
   }
 
 
+  // The first slide with `appendix: true` starts backup material. Main slides
+  // count against the main total; appendix slides read B1, B2, … instead. A
+  // deck without the marker keeps plain "i / N" numbering.
+  function slideNumbering(slides) {
+    const start = slides.findIndex(slide => slide?.appendix === true);
+    const hasAppendix = start >= 0;
+    const mainTotal = hasAppendix ? start : slides.length;
+    const inAppendix = i => hasAppendix && i >= start;
+    const label = i => inAppendix(i) ? `B${i - start + 1}` : String(i + 1);
+    return {
+      hasAppendix,
+      inAppendix,
+      label,
+      position: i => inAppendix(i) ? label(i) : `${i + 1} / ${mainTotal}`,
+      ariaLabel: (i, title) => !hasAppendix ? `Slide ${i + 1}: ${title}`
+        : inAppendix(i) ? `Backup slide ${label(i)}: ${title}`
+          : `Slide ${i + 1} of ${mainTotal}: ${title}`,
+    };
+  }
+
   async function loadPresentationTime() {
     if (printMode) return null;
     try {
@@ -245,6 +265,7 @@
     });
     const toSeconds = value => { const [h, m] = value.split(":").map(Number); return h * 3600 + m * 60; };
     const start = toSeconds(timing.start), end = toSeconds(timing.end);
+    const numbering = slideNumbering(Array.isArray(spec.slides) ? spec.slides : []);
     const prefix = `lecturedeck-pacing:${location.pathname}:`;
     let previous = null, record = null, recordKey = "", lastKey = "", storageAvailable = true;
     const read = key => {
@@ -296,8 +317,11 @@
           for (let i = 0; i <= index; i++) if (spec.slides[i]?.type === "section") section = spec.slides[i].title;
           const slide = spec.slides[index] || {};
           visit = record.visits.length;
+          // `number` stays the raw position for older readers; `label` adds
+          // the audience-facing name (B1, …) when the deck has an appendix.
           record.visits.push({slideId: frame.dataset.slideId || `slide-${index + 1}`,
-            number: index + 1, title: frame.querySelector("h1")?.textContent || slide.title || "Slide",
+            number: index + 1, ...(numbering.hasAppendix ? {label: numbering.label(index)} : {}),
+            title: frame.querySelector("h1")?.textContent || slide.title || "Slide",
             section: String(section).replace(/<[^>]*>/g, ""), startedAt: new Date(now).toISOString(), durationMs: 0});
         }
         previous = {at: now, finish: now + (end - seconds) * 1000 - (now % 1000),
@@ -320,7 +344,7 @@
       dialog.innerHTML = `<div class="appearance-head"><h2>Pacing</h2><button id="pacing-close" class="appearance-close" type="button">Close</button></div>
         <p>${data ? `${escapeHtml(data.date)} · ${escapeHtml(data.start)}–${escapeHtml(data.end)} · ${duration(total)} on slides` : "No recorded lecture yet."}</p>
         <p class="appearance-note">Automatic on scheduled teaching dates. Pauses in overview, this report and hidden tabs. Saved only in this browser${storageAvailable ? "." : "; storage unavailable — export before closing."}</p>
-        <table><thead><tr><th>Slide</th><th>Section / title</th><th>Time</th><th>Visits</th></tr></thead><tbody>${[...totals.values()].map(v => `<tr><td>${v.number}</td><td>${escapeHtml(v.section)}<br>${escapeHtml(v.title)}</td><td>${duration(v.durationMs)}</td><td>${v.visits}</td></tr>`).join("")}</tbody></table>
+        <table><thead><tr><th>Slide</th><th>Section / title</th><th>Time</th><th>Visits</th></tr></thead><tbody>${[...totals.values()].map(v => `<tr><td>${escapeHtml(String(v.label ?? v.number))}</td><td>${escapeHtml(v.section)}<br>${escapeHtml(v.title)}</td><td>${duration(v.durationMs)}</td><td>${v.visits}</td></tr>`).join("")}</tbody></table>
         <button id="pacing-export" class="appearance-close" type="button" ${data ? "" : "disabled"}>Export JSON</button>`;
       dialog.querySelector("#pacing-close").addEventListener("click", () => dialog.close());
       dialog.querySelector("#pacing-export").addEventListener("click", () => {
@@ -345,6 +369,7 @@
       meta: rawSpec.meta || {},
       slides: Array.isArray(rawSpec.slides) ? rawSpec.slides : [],
     };
+    const numbering = slideNumbering(spec.slides);
     setFavicon(spec.meta.favicon);
     window.LECTUREDECK = spec;
     let index = Math.max(0, Math.min(spec.slides.length - 1, Number(location.hash.replace("#/", "")) || 0));
@@ -449,9 +474,10 @@
       const copy = `<div class="copy">${slide.claim ? `<p class="claim">${slide.claim}</p>` : ""}${formulaMarkup(slide.formula)}${slide.body ? `<div class="body-copy">${slide.body}</div>` : ""}${slide.quote ? `<div class="quote">${slide.quote}</div>` : ""}</div>`;
       const body = ["figure", "figure-dominant", "figure-stage", "title", "figures"].includes(layout) ? `${copy}${figureBlock}` : layout === "cards" ? `${copy}${cardBlock}` : layout === "interactive" ? `${copy}${interactiveBlock}` : layout === "video" ? `${copy}${videoBlock}` : copy;
       const header = chromeFree ? "" : `<header class="slide-head"><p class="eyebrow">${slide.eyebrow || partLabel(i)}</p><h1 class="slide-title">${slide.title || ""}</h1></header>`;
-      const footer = chromeFree ? "" : `<footer class="slide-foot"><span class="source">${slide.source || ""}</span><span class="footer-nav"><span class="course-name">${spec.meta.section || ""}</span><span class="page-number">${i + 1} / ${spec.slides.length}</span></span></footer>`;
+      const footer = chromeFree ? "" : `<footer class="slide-foot"><span class="source">${slide.source || ""}</span><span class="footer-nav"><span class="course-name">${spec.meta.section || ""}</span><span class="page-number">${numbering.position(i)}</span></span></footer>`;
       const slideId = slide.id ? ` data-slide-id="${escapeHtml(slide.id)}"` : "";
-      return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${slide.className ? ` ${escapeHtml(slide.className)}` : ""}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || partAccent(i))}" data-index="${i}"${slideId} aria-label="Slide ${i + 1}: ${escapeHtml(slideTitleText(slide, i))}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
+      const appendix = numbering.inAppendix(i) ? ` data-appendix="true"` : "";
+      return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${slide.className ? ` ${escapeHtml(slide.className)}` : ""}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || partAccent(i))}" data-index="${i}"${slideId}${appendix} aria-label="${numbering.ariaLabel(i, escapeHtml(slideTitleText(slide, i)))}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
     }
 
     function fitFormulas(scope) {
@@ -560,7 +586,8 @@
       document.body.classList.toggle("immersive-slide", spec.slides[index].chrome === false);
       deck.innerHTML = slideMarkup(spec.slides[index], index);
       fitFormulas(deck);
-      counter.textContent = `${index + 1} / ${spec.slides.length}`;
+      counter.textContent = numbering.position(index);
+      if (numbering.hasAppendix) document.body.classList.toggle("in-appendix", numbering.inAppendix(index));
       previousButton.disabled = index === 0;
       nextButton.disabled = index === spec.slides.length - 1;
       document.title = typeof spec.meta.tabTitle === "string" && spec.meta.tabTitle.trim()
@@ -683,7 +710,7 @@
       nextButton.disabled = open || index === spec.slides.length - 1;
       deck.hidden = open;
       if (!open) { render(); return; }
-      overview.innerHTML = spec.slides.map((slide, i) => `<button class="overview-card" type="button" data-index="${i}" aria-current="${i === index}"><div class="overview-thumb">${slideMarkup(slide, i, true)}</div><span class="overview-label">${i + 1}. ${slideTitleText(slide, i)}</span></button>`).join("");
+      overview.innerHTML = spec.slides.map((slide, i) => `<button class="overview-card" type="button" data-index="${i}" aria-current="${i === index}"><div class="overview-thumb">${slideMarkup(slide, i, true)}</div><span class="overview-label">${numbering.label(i)}. ${slideTitleText(slide, i)}</span></button>`).join("");
       fitFormulas(overview);
       scaleOverviewThumbs();
       overview.querySelector('[aria-current="true"]')?.focus();

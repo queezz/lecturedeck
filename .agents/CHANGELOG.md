@@ -1,5 +1,15 @@
 # Changelog — shipped version history
 
+## 0.21.0
+
+- Mark backup material with an optional `appendix: true` slide field. Main
+  slides count against the main total (`21 / 46`); the appendix reads B1, B2,
+  … in the counter, footer, overview, aria labels and pacing report. Paging,
+  Home/End, history and `#/N` deep links keep raw positions.
+- Expose `data-appendix` on appendix frames and `in-appendix` on the body for
+  unit styling. Validation requires a boolean and at most one marker; decks
+  without it render exactly as before.
+
 ## 0.20.0
 
 - Add an opt-in presenter clock with scheduled time remaining, last-five-minute

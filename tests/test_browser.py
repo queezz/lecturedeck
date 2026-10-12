@@ -155,6 +155,19 @@ def build_json_unit(unit: Path) -> None:
     (webdeck / "deck.json").write_text(json.dumps(deck), encoding="utf-8")
 
 
+APPENDIX_DECK = {
+    "deck": 1,
+    "meta": {"title": "Appendix deck", "section": "SMOKE", "opening": "OPENING"},
+    "slides": [
+        {"id": "a-title", "type": "title", "title": "Appendix deck", "claim": "Main one."},
+        {"id": "a-two", "title": "Main two", "claim": "Main two."},
+        {"id": "a-three", "title": "Main three", "claim": "Main three."},
+        {"id": "a-backup", "type": "section", "title": "Backup", "appendix": True},
+        {"id": "a-derivation", "title": "Backup derivation", "claim": "Backup two."},
+    ],
+}
+
+
 def build_legacy_unit(unit: Path) -> None:
     webdeck = unit / "webdeck"
     assets = webdeck / "assets"
@@ -341,6 +354,8 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertLess(total, 15000)
         self.assertEqual([v["number"] for v in data["visits"]
                           if v["durationMs"] >= 1000], [1, 2, 2, 2])
+        # Without an appendix the exported visit shape is unchanged.
+        self.assertFalse(any("label" in v for v in data["visits"]))
         page.clock.run_for(5000)
         page.locator("#pacing-close").click()
         page.clock.set_fixed_time(datetime(2026, 1, 1, 9, 1, tzinfo=timezone.utc))
@@ -367,6 +382,139 @@ class BrowserSmokeTest(unittest.TestCase):
     def current_index(self, page) -> int:
         return page.evaluate(
             "Number(document.querySelector('.slide-frame')?.dataset.index)"
+        )
+
+    def open_appendix_deck(self, fragment: str = ""):
+        # Serve the appendix deck in place of the smoke deck's data, so the
+        # selector and the other tests keep their own fixture unchanged.
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.route("**/deck.json", lambda route: route.fulfill(json=APPENDIX_DECK))
+        page.goto(self.urls["json"] + fragment)
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        return page
+
+    def numbering_state(self, page) -> dict:
+        return page.evaluate(
+            """() => {
+              const frame = document.querySelector('#deck .slide-frame');
+              return {
+                index: Number(frame.dataset.index),
+                counter: document.querySelector('#counter').textContent,
+                footer: frame.querySelector('.page-number')?.textContent ?? null,
+                aria: frame.getAttribute('aria-label'),
+                appendix: frame.getAttribute('data-appendix'),
+                bodyClass: document.body.classList.contains('in-appendix'),
+                hash: location.hash,
+              };
+            }"""
+        )
+
+    def overview_labels(self, page) -> list[str]:
+        page.keyboard.press("o")
+        page.wait_for_selector(".overview-card")
+        labels = page.locator(".overview-label").all_inner_texts()
+        page.keyboard.press("Escape")
+        page.wait_for_function("document.querySelector('#overview').hidden")
+        return labels
+
+    def test_appendix_numbers_main_slides_and_labels_backup(self):
+        page = self.open_appendix_deck()
+        self.assertEqual(
+            {"index": 0, "counter": "1 / 3", "footer": "1 / 3",
+             "aria": "Slide 1 of 3: Appendix deck", "appendix": None,
+             "bodyClass": False, "hash": "#/0"},
+            self.numbering_state(page),
+        )
+        page.keyboard.press("End")
+        self.assertEqual(
+            {"index": 4, "counter": "B2", "footer": "B2",
+             "aria": "Backup slide B2: Backup derivation", "appendix": "true",
+             "bodyClass": True, "hash": "#/4"},
+            self.numbering_state(page),
+        )
+        self.assertTrue(page.locator("#next-button").is_disabled())
+        page.keyboard.press("ArrowLeft")
+        state = self.numbering_state(page)
+        self.assertEqual(("B1", "B1", "#/3"), (state["counter"], state["footer"], state["hash"]))
+        self.assertEqual("Backup slide B1: Backup", state["aria"])
+        page.keyboard.press("ArrowLeft")
+        state = self.numbering_state(page)
+        self.assertEqual(("3 / 3", "3 / 3", None), (
+            state["counter"], state["footer"], state["appendix"]))
+        self.assertFalse(state["bodyClass"])
+        page.keyboard.press("Home")
+        self.assertEqual(0, self.current_index(page))
+        self.assertEqual(
+            ["1. Appendix deck", "2. Main two", "3. Main three", "B1. Backup",
+             "B2. Backup derivation"],
+            self.overview_labels(page),
+        )
+        # Deep links keep the raw zero-based index.
+        deep = self.open_appendix_deck("#/3")
+        self.assertEqual("B1", self.numbering_state(deep)["counter"])
+        self.assertTrue(self.numbering_state(deep)["bodyClass"])
+
+    def test_appendix_labels_print_pages(self):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.route("**/deck.json", lambda route: route.fulfill(json=APPENDIX_DECK))
+        page.goto(self.urls["json"] + "?print=1")
+        page.wait_for_function("window.LECTUREDECK_PRINT_READY === true")
+        self.assertEqual(
+            ["1 / 3", "2 / 3", "3 / 3", "B1", "B2"],
+            page.locator("#deck .page-number").all_inner_texts(),
+        )
+        self.assertEqual(2, page.locator('#deck .slide-frame[data-appendix="true"]').count())
+
+    def test_deck_without_appendix_keeps_plain_numbering(self):
+        page = self.open_deck("json", "#/1")
+        self.assertEqual(
+            {"index": 1, "counter": "2 / 11", "footer": "2 / 11",
+             "aria": "Slide 2: Statement A", "appendix": None,
+             "bodyClass": False, "hash": "#/1"},
+            self.numbering_state(page),
+        )
+        labels = self.overview_labels(page)
+        self.assertEqual(11, len(labels))
+        self.assertEqual("1. Smoke deck", labels[0])
+        self.assertEqual("11. Aligned derivation", labels[-1])
+        self.assertEqual(0, page.locator("[data-appendix]").count())
+        self.assertNotIn("in-appendix", page.evaluate("document.body.className"))
+        page.keyboard.press("End")
+        state = self.numbering_state(page)
+        self.assertEqual(("11 / 11", "11 / 11"), (state["counter"], state["footer"]))
+        self.assertEqual("Slide 11: Aligned derivation", state["aria"])
+
+    def test_pacer_labels_appendix_visits(self):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.route("**/deck.json", lambda route: route.fulfill(json=APPENDIX_DECK))
+        page.route("**/presentation-time.json", lambda route: route.fulfill(
+            json={"start": "09:00", "end": "10:00", "timeZone": "UTC",
+                  "dates": ["2026-01-01"]}
+        ))
+        page.clock.install(time=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc))
+        page.goto(self.urls["json"] + "#/2")
+        page.wait_for_selector("#pacing-button")
+        page.clock.run_for(2000)
+        page.keyboard.press("ArrowRight")
+        page.clock.run_for(2000)
+        page.locator("#controls-toggle").click()
+        page.locator("#pacing-button").click()
+        rows = page.locator("#pacing-dialog tbody tr td:first-child").all_inner_texts()
+        self.assertEqual(["3", "B1"], rows)
+        visits = page.evaluate(
+            """() => {
+              const key = Object.keys(localStorage)
+                .find(name => name.startsWith('lecturedeck-pacing:')
+                  && name.endsWith(':2026-01-01'));
+              return JSON.parse(localStorage.getItem(key)).visits;
+            }"""
+        )
+        self.assertEqual(
+            [(3, "3", "a-three"), (4, "B1", "a-backup")],
+            [(v["number"], v["label"], v["slideId"]) for v in visits],
         )
 
     def test_selector_filters_and_opens_a_deck(self):
@@ -431,6 +579,7 @@ class BrowserSmokeTest(unittest.TestCase):
         page.keyboard.press("ArrowRight")
         self.assertEqual("Smoke deck · 1", page.title())
         page.reload()
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
         self.assertEqual("Smoke deck · 1", page.title())
         legacy = self.open_deck("legacy")
         self.assertNotEqual("Smoke deck · 1", legacy.title())
@@ -542,6 +691,7 @@ class BrowserSmokeTest(unittest.TestCase):
         page.keyboard.press("o")
         page.locator(".overview-card[data-index='9']").click()
         page.reload()
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
         self.assertEqual(9, self.current_index(page))
         self.assertEqual("10 / 11", page.text_content("#counter"))
         page.go_back()
@@ -830,6 +980,7 @@ class BrowserSmokeTest(unittest.TestCase):
                 page.locator(".overview-card[data-index='5']").click()
                 self.assertEqual(5, self.current_index(page))
                 page.reload()
+                page.wait_for_function("Boolean(window.LECTUREDECK)")
                 gear.wait_for(state="visible")
                 self.assertEqual(5, self.current_index(page))
                 self.assertTrue(page.locator("#touch-nav").is_hidden())
