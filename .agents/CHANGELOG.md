@@ -1,5 +1,19 @@
 # Changelog — shipped version history
 
+## 0.23.1
+
+- Backup slides show where the presenter is: the counter and footer read
+  `B4 / 92` (position and backup total) instead of bare `B4`; screen readers
+  hear "Backup slide B4 of 92". Main slides keep `21 / 57`. Overview cards,
+  the pacing report and its `label` field keep the bare `B4`. Decks without
+  `appendix: true` are unchanged (owner request, 2026-10-13: a bare `B4`
+  did not say how deep the backup goes, and `B4 / B92` reads strangely).
+- The blank-page PDF regression test now sweeps 18–28 gloss lines, one
+  slide each. The bug appears only in a narrow, font-dependent band of
+  overflow, and the single 24-line slide caught it only with Calibri. Without
+  containment the sweep now fails under every font tried; with it, it passes.
+  The test's docstring no longer names a consuming course.
+
 ## 0.23.0
 
 - `#/N` links in a PDF export now jump inside the document. Print mode gives

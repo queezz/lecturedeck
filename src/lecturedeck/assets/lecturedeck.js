@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.23.0";
+  const VIEWER_VERSION = "0.23.1";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -172,15 +172,18 @@
     const start = slides.findIndex(slide => slide?.appendix === true);
     const hasAppendix = start >= 0;
     const mainTotal = hasAppendix ? start : slides.length;
+    const backupTotal = hasAppendix ? slides.length - start : 0;
     const inAppendix = i => hasAppendix && i >= start;
     const label = i => inAppendix(i) ? `B${i - start + 1}` : String(i + 1);
     return {
       hasAppendix,
       inAppendix,
       label,
-      position: i => inAppendix(i) ? label(i) : `${i + 1} / ${mainTotal}`,
+      // Inside the backup the presenter still wants to see where he is:
+      // "B4 / 92" (position and backup total), never "B4 / B92".
+      position: i => inAppendix(i) ? `${label(i)} / ${backupTotal}` : `${i + 1} / ${mainTotal}`,
       ariaLabel: (i, title) => !hasAppendix ? `Slide ${i + 1}: ${title}`
-        : inAppendix(i) ? `Backup slide ${label(i)}: ${title}`
+        : inAppendix(i) ? `Backup slide ${label(i)} of ${backupTotal}: ${title}`
           : `Slide ${i + 1} of ${mainTotal}: ${title}`,
     };
   }

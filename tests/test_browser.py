@@ -169,14 +169,17 @@ APPENDIX_DECK = {
 
 
 def crowded_link_deck() -> dict:
-    """A title page linking forward, then a roomy and an overfull equation slide.
+    """A title page linking forward, a roomy equation slide, then a sweep of overfull ones.
 
     Chromium's page fragmentation pushed the whole body of an equation slide
-    that overflowed its page, by as little as a pixel, past the page and out
-    of the clipped frame: a blank page in the PDF (five Lecture 2 pages of
-    the quantum course, 2026-10-14). Which content lands on that pixel
-    depends on fonts, so the test overfills generously instead; each body
-    ends with a link home, and a dropped body drops its link annotation.
+    that overflowed its page past the page and out of the clipped frame: a
+    blank page in the PDF (found on five formula pages of a 149-slide deck,
+    2026-10-14). It happens only inside a narrow band of overflow, and the
+    band moves with the font: without containment Calibri drops the body at
+    22-26 gloss lines, Arial at 20-23, and more overflow does not reproduce
+    it. So the deck sweeps 18-28 lines, one slide each, to land in the band
+    whatever font the machine has. Each body ends with a link home, and a
+    dropped body drops its link annotation.
     """
     formula = (
         "<math display='block'><mi>R</mi><mo>=</mo><msubsup><mo>∫</mo><mn>0</mn>"
@@ -195,14 +198,14 @@ def crowded_link_deck() -> dict:
                 + ['Names: <a href="#/0">back to the start</a>'],
             },
         }
-        for lines in (2, 24)
+        for lines in (2, *range(18, 29))
     ]
     return {
         "deck": 1,
         "meta": {"title": "Crowded deck", "section": "SMOKE"},
         "slides": [
             {"id": "start", "type": "title", "title": "Crowded deck",
-             "claim": 'Jump to <a href="#/2">the overfull slide</a>.'},
+             "claim": 'Jump to <a href="#/2">the first overfull slide</a>.'},
             *crowded,
         ],
     }
@@ -468,16 +471,18 @@ class BrowserSmokeTest(unittest.TestCase):
         )
         page.keyboard.press("End")
         self.assertEqual(
-            {"index": 4, "counter": "B2", "footer": "B2",
-             "aria": "Backup slide B2: Backup derivation", "appendix": "true",
+            {"index": 4, "counter": "B2 / 2", "footer": "B2 / 2",
+             "aria": "Backup slide B2 of 2: Backup derivation", "appendix": "true",
              "bodyClass": True, "hash": "#/4"},
             self.numbering_state(page),
         )
         self.assertTrue(page.locator("#next-button").is_disabled())
         page.keyboard.press("ArrowLeft")
         state = self.numbering_state(page)
-        self.assertEqual(("B1", "B1", "#/3"), (state["counter"], state["footer"], state["hash"]))
-        self.assertEqual("Backup slide B1: Backup", state["aria"])
+        self.assertEqual(
+            ("B1 / 2", "B1 / 2", "#/3"), (state["counter"], state["footer"], state["hash"])
+        )
+        self.assertEqual("Backup slide B1 of 2: Backup", state["aria"])
         page.keyboard.press("ArrowLeft")
         state = self.numbering_state(page)
         self.assertEqual(("3 / 3", "3 / 3", None), (
@@ -492,7 +497,7 @@ class BrowserSmokeTest(unittest.TestCase):
         )
         # Deep links keep the raw zero-based index.
         deep = self.open_appendix_deck("#/3")
-        self.assertEqual("B1", self.numbering_state(deep)["counter"])
+        self.assertEqual("B1 / 2", self.numbering_state(deep)["counter"])
         self.assertTrue(self.numbering_state(deep)["bodyClass"])
 
     def test_appendix_labels_print_pages(self):
@@ -502,7 +507,7 @@ class BrowserSmokeTest(unittest.TestCase):
         page.goto(self.urls["json"] + "?print=1")
         page.wait_for_function("window.LECTUREDECK_PRINT_READY === true")
         self.assertEqual(
-            ["1 / 3", "2 / 3", "3 / 3", "B1", "B2"],
+            ["1 / 3", "2 / 3", "3 / 3", "B1 / 2", "B2 / 2"],
             page.locator("#deck .page-number").all_inner_texts(),
         )
         self.assertEqual(2, page.locator('#deck .slide-frame[data-appendix="true"]').count())
@@ -667,14 +672,15 @@ class BrowserSmokeTest(unittest.TestCase):
         hrefs = page.locator("#deck a").evaluate_all(
             "links => links.map(a => a.getAttribute('href'))"
         )
-        self.assertEqual(["#slide-2", "#slide-0", "#slide-0"], hrefs)
+        crowded = len(deck["slides"]) - 1
+        self.assertEqual(["#slide-2"] + ["#slide-0"] * crowded, hrefs)
         page.emulate_media(media="print")
         payload = page.pdf(print_background=True, prefer_css_page_size=True)
-        self.assertEqual(3, len(re.findall(rb"/Type\s*/Page\b", payload)))
-        # Every link survives as a named destination, the overfull page's
+        self.assertEqual(len(deck["slides"]), len(re.findall(rb"/Type\s*/Page\b", payload)))
+        # Every link survives as a named destination, each overfull page's
         # too; none is a dead URL back into the export's temporary server.
         self.assertEqual(
-            [b"slide-0", b"slide-0", b"slide-2"],
+            [b"slide-0"] * crowded + [b"slide-2"],
             sorted(re.findall(rb"/Dest\s*/(slide-\d+)", payload)),
         )
         self.assertNotIn(b"127.0.0.1", payload)

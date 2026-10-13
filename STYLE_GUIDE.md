@@ -50,8 +50,10 @@ section slide:
 ```
 
 Main slides then read `21 / 46`, counting only the slides before the
-appendix, and backup slides read `B1`, `B2`, … in the counter, footer, and
-overview. Only one slide may set the field. Navigation is unchanged:
+appendix. Backup slides read `B4 / 92` in the counter and footer, their
+position and the backup total, so a presenter deep in a derivation still
+sees where they are. The overview labels them `B4.`. Only one slide may set
+the field. Navigation is unchanged:
 next/previous, `Home`/`End`, and `#/N` deep links still walk the whole deck
 by raw position, so a link from the main thread to a backup slide and back
 keeps working.

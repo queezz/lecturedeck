@@ -115,8 +115,10 @@ HTTP, with no functions or executable deck code. A minimal deck looks like:
   it is accepted in source data but never shown to the audience.
 - `appendix: true` on one slide marks where backup material starts. Slides
   before it count against the main total (`21 / 46` in the counter and
-  footer); that slide and every later one read `B1`, `B2`, … in the counter,
-  footer, overview, screen-reader labels and pacing report. Navigation and
+  footer); that slide and every later one is numbered `B1`, `B2`, …. The
+  counter and footer add the backup total (`B4 / 92`, never `B4 / B92`), and
+  screen readers hear "Backup slide B4 of 92". The overview and the pacing
+  report show the bare `B4`. Navigation and
   `#/N` deep links keep the raw zero-based position. Appendix frames carry
   `data-appendix="true"` and the body gains `in-appendix` while one is shown,
   so `deck.css` can style them. `check` requires a boolean and rejects more
