@@ -1,5 +1,15 @@
 # Changelog — shipped version history
 
+## 0.23.2
+
+- The laser pointer tracks over interactive animations. An embedded page is
+  its own document and kept the mouse to itself, so the dot froze at the
+  animation's edge. While the laser is on, interactive frames now let the
+  mouse through. Switching it off (L) gives the animation its mouse back.
+  Found by the owner in class, 2026-10-13; reproduced on a real deck's
+  animations with 0.21.0 and fixed there with this viewer. A browser test
+  covers the dot over a frame and the frame getting its mouse back.
+
 ## 0.23.1
 
 - Backup slides show where the presenter is: the counter and footer read

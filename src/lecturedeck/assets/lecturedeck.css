@@ -247,6 +247,10 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 .laser-dot[hidden] { display: none; }
 /* Hide the arrow only over the slide: the controls stay clickable. */
 body.laser-active .deck, body.laser-active .deck * { cursor: none; }
+/* An embedded animation is its own document and keeps the mouse to itself,
+   so the laser froze at its edge. While pointing, the frame lets the mouse
+   through; switching the laser off gives the animation its mouse back. */
+body.laser-active .interactive-frame iframe { pointer-events: none; }
 @media print { .laser-dot { display: none; } }
 .deck-chrome { position: fixed; z-index: 20; top: 12px; left: 24px; display: flex; align-items: center; gap: 6px; opacity: .42; transition: opacity .15s; }
 .deck-chrome:hover, .deck-chrome:focus-within, .deck-chrome.has-safe-space { opacity: 1; }

@@ -303,9 +303,10 @@ endpoint). Adjacent unit files such as `script.md`, `brief.md`, and
 - **Laser pointer:** `L` or the **Laser** control toggles a glowing dot that
   follows the pointer and hides the arrow over the slide. The dot takes the
   current slide's accent colour and keeps a white core so it stays visible on
-  any figure. It switches off when the overview opens, disappears while the
-  pointer sits over an interactive iframe or outside the window, and never
-  appears in a PDF export.
+  any figure. It also tracks over interactive animations: while the laser is
+  on they let the mouse through, so press `L` again to click or drag one. It
+  switches off when the overview opens, hides while the pointer is outside the
+  window, and never appears in a PDF export.
 - **Deck selector:** the home button returns to the selector when the deck was
   opened from one; it stays hidden for a directly served deck.
 - **Viewer version:** the expanded controls strip shows a small `vX.Y.Z`

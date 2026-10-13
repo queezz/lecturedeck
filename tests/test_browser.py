@@ -966,6 +966,27 @@ class BrowserSmokeTest(unittest.TestCase):
             delta=1,
         )
 
+    def test_laser_tracks_over_an_interactive_frame(self):
+        # An embedded animation is its own document and keeps the mouse to
+        # itself, so the laser froze at its edge (owner report, 2026-10-14).
+        page = self.open_deck("json", "#/4")
+        frame = page.wait_for_selector(".interactive-frame iframe")
+        box = frame.bounding_box()
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        page.keyboard.press("l")
+        page.mouse.move(x - 40, y - 30)
+        page.mouse.move(x, y)
+        page.wait_for_function(
+            "(p) => { const d = document.querySelector('.laser-dot');"
+            " if (d.hidden) return false; const r = d.getBoundingClientRect();"
+            " return Math.abs(r.left + r.width / 2 - p.x) < 2"
+            " && Math.abs(r.top + r.height / 2 - p.y) < 2; }",
+            arg={"x": x, "y": y},
+        )
+        # Switching the laser off gives the animation its mouse back.
+        page.keyboard.press("l")
+        self.assertEqual("auto", frame.evaluate("f => getComputedStyle(f).pointerEvents"))
+
     def test_interactive_iframe_pointer_navigates(self):
         page = self.open_deck("json", "#/4")
         page.wait_for_selector(".interactive-frame iframe")
