@@ -168,6 +168,46 @@ APPENDIX_DECK = {
 }
 
 
+def crowded_link_deck() -> dict:
+    """A title page linking forward, then a roomy and an overfull equation slide.
+
+    Chromium's page fragmentation pushed the whole body of an equation slide
+    that overflowed its page, by as little as a pixel, past the page and out
+    of the clipped frame: a blank page in the PDF (five Lecture 2 pages of
+    the quantum course, 2026-10-14). Which content lands on that pixel
+    depends on fonts, so the test overfills generously instead; each body
+    ends with a link home, and a dropped body drops its link annotation.
+    """
+    formula = (
+        "<math display='block'><mi>R</mi><mo>=</mo><msubsup><mo>∫</mo><mn>0</mn>"
+        "<mi>∞</mi></msubsup><mi>r</mi><mi>d</mi><mi>ω</mi></math>"
+    )
+    crowded = [
+        {
+            "id": f"crowded-{lines}",
+            "title": f"Crowded {lines}",
+            "layout": "equation",
+            "claim": "A claim long enough to wrap onto a second line of the equation layout.",
+            "formula": {
+                "label": "Label",
+                "mathml": formula,
+                "gloss": [f"Gloss line {n} of a crowded equation slide" for n in range(lines)]
+                + ['Names: <a href="#/0">back to the start</a>'],
+            },
+        }
+        for lines in (2, 24)
+    ]
+    return {
+        "deck": 1,
+        "meta": {"title": "Crowded deck", "section": "SMOKE"},
+        "slides": [
+            {"id": "start", "type": "title", "title": "Crowded deck",
+             "claim": 'Jump to <a href="#/2">the overfull slide</a>.'},
+            *crowded,
+        ],
+    }
+
+
 def build_legacy_unit(unit: Path) -> None:
     webdeck = unit / "webdeck"
     assets = webdeck / "assets"
@@ -614,6 +654,30 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(payload.startswith(b"%PDF-"))
         self.assertGreater(len(payload), 10_000)
         self.assertEqual(11, len(re.findall(rb"/Type\s*/Page\b", payload)))
+
+    def test_print_pdf_links_jump_inside_the_document(self):
+        deck = crowded_link_deck()
+        page = self.browser.new_page(viewport={"width": 1280, "height": 720})
+        self.addCleanup(page.close)
+        page.route("**/deck.json", lambda route: route.fulfill(json=deck))
+        page.goto(self.urls["json"] + "?print=1&theme=light")
+        page.wait_for_function("window.LECTUREDECK_PRINT_READY === true")
+        ids = page.locator("#deck > .slide-frame").evaluate_all("frames => frames.map(f => f.id)")
+        self.assertEqual([f"slide-{i}" for i in range(len(deck["slides"]))], ids)
+        hrefs = page.locator("#deck a").evaluate_all(
+            "links => links.map(a => a.getAttribute('href'))"
+        )
+        self.assertEqual(["#slide-2", "#slide-0", "#slide-0"], hrefs)
+        page.emulate_media(media="print")
+        payload = page.pdf(print_background=True, prefer_css_page_size=True)
+        self.assertEqual(3, len(re.findall(rb"/Type\s*/Page\b", payload)))
+        # Every link survives as a named destination, the overfull page's
+        # too; none is a dead URL back into the export's temporary server.
+        self.assertEqual(
+            [b"slide-0", b"slide-0", b"slide-2"],
+            sorted(re.findall(rb"/Dest\s*/(slide-\d+)", payload)),
+        )
+        self.assertNotIn(b"127.0.0.1", payload)
 
     def test_declarative_figure_geometry_renders(self):
         page = self.open_deck("json", "#/2")

@@ -206,9 +206,10 @@ self-contained static bundle, and refuses to overwrite its destination.
 `pdf` validates first, starts a temporary localhost-only server, and prints
 every slide through headless Chromium. The result has one 16:9 slide per page,
 uses the light theme by default, and refuses to overwrite an existing file.
-Pass `--theme dark` to preserve the dark presentation surface. Videos export
-their poster (or a labeled placeholder) and interactive iframes export a
-labeled placeholder, since a PDF cannot retain their live behavior.
+Pass `--theme dark` to preserve the dark presentation surface. Links between
+slides (`#/N`) become jumps inside the PDF, and external links stay links.
+Videos export their poster (or a labeled placeholder) and interactive iframes
+export a labeled placeholder, since a PDF cannot retain their live behavior.
 
 `narration` validates like `check` and prints a Markdown skeleton of what the
 audience sees, for translation into spoken text: chapters are the only `##`

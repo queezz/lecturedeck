@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.22.0";
+  const VIEWER_VERSION = "0.23.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -603,6 +603,14 @@
     async function renderPrintDeck() {
       document.body.classList.add("print-deck");
       deck.innerHTML = spec.slides.map((slide, i) => slideMarkup(slide, i, true)).join("");
+      // A PDF has no router: anchor every page and point `#/N` links at it,
+      // resolved as the live viewer resolves the hash, so Chromium writes
+      // them as jumps inside the document instead of dead localhost URLs.
+      deck.querySelectorAll(":scope > .slide-frame").forEach(frame => { frame.id = `slide-${frame.dataset.index}`; });
+      deck.querySelectorAll('a[href^="#/"]').forEach(link => {
+        const target = Math.max(0, Math.min(spec.slides.length - 1, Number(link.getAttribute("href").slice(2)) || 0));
+        link.setAttribute("href", `#slide-${target}`);
+      });
       document.title = spec.meta.tabTitle?.trim() || spec.meta.title || "Lecturedeck";
       const images = [...deck.querySelectorAll("img")];
       await Promise.all(images.map(image => image.complete

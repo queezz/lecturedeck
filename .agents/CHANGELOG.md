@@ -1,5 +1,19 @@
 # Changelog — shipped version history
 
+## 0.23.0
+
+- `#/N` links in a PDF export now jump inside the document. Print mode gives
+  each page the anchor `slide-N` and points every `#/N` link at it, resolved
+  as the live viewer resolves the hash. Chromium writes them as named
+  destinations instead of dead URLs into the export's temporary localhost
+  server. External links stay links.
+- A slide whose body overflowed its page, even by a pixel, printed blank
+  under its title: Chromium pushed the body past the page, out of the
+  clipped frame. Print frames are now contained (`contain: size layout
+  paint`), so each slide is one page that is never fragmented. Found on five
+  formula pages of a 149-page lecture. The other pages are unchanged apart
+  from anti-aliasing.
+
 ## 0.22.0
 
 - Add `lecturedeck narration [UNIT] [--deck PATH] [--outline] [--output

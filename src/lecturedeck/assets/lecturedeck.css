@@ -318,6 +318,10 @@ body.print-deck .slide-frame {
   transform: none;
   break-after: page;
   page-break-after: always;
+  /* One page, never fragmented: without containment Chromium pushes a body
+     that overflows by even a pixel past the page, out of the clipped frame,
+     and the PDF page prints blank. */
+  contain: size layout paint;
 }
 body.print-deck .slide-frame:last-child { break-after: auto; page-break-after: auto; }
 body.print-deck .deck-chrome,
