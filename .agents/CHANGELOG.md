@@ -1,5 +1,26 @@
 # Changelog — shipped version history
 
+## 0.22.0
+
+- Add `lecturedeck narration [UNIT] [--deck PATH] [--outline] [--output
+  FILE]`: a Markdown skeleton of each slide's visible content for
+  spoken-text translation, or a JSON outline (schema 1) of chapters, ids,
+  labels (`12`, `B3`) and titles. Both carry the deck's sha256 with BOM and
+  CRLF normalized.
+- Chapters follow section slides, the appendix marker and its later
+  sections; decks without sections fall back to eyebrow changes. Layout
+  gating, `chrome: false`, eyebrow overrides, `#/N` navigation, figures,
+  cards, interactives and video mirror the viewer; MathML is linearized
+  and kept beside its TeX annotation. Output is UTF-8/LF on any console.
+- Escaped markup such as `&lt;v&gt;` stays text in the skeleton, a table
+  nested in a cell becomes one line, and text outside table cells is kept.
+  Markup nested past 200 levels is read flat instead of overflowing the
+  stack, and a reader that closes the pipe early ends the output quietly.
+  Legacy `slides.js` ids must be kebab-case, and a unit name that would
+  break the header is refused.
+- `python -m lecturedeck` now exits with the command's status (it always
+  exited 0 before); the installed `lecturedeck` script was unaffected.
+
 ## 0.21.0
 
 - Mark backup material with an optional `appendix: true` slide field. Main

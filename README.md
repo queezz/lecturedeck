@@ -189,6 +189,8 @@ lecturedeck serve <unit> --livereload
 lecturedeck serve --folder <presentations-directory>
 lecturedeck release <unit> --output <new-output-directory>
 lecturedeck pdf <unit> --output <new-file.pdf>
+lecturedeck narration <unit> [--outline] [--output <new-file>]
+lecturedeck narration --deck <deck.json|webdeck|unit-folder> [--outline]
 ```
 
 `init` creates `deck.json`, `deck.css`, and an `assets/` directory without
@@ -207,6 +209,19 @@ uses the light theme by default, and refuses to overwrite an existing file.
 Pass `--theme dark` to preserve the dark presentation surface. Videos export
 their poster (or a labeled placeholder) and interactive iframes export a
 labeled placeholder, since a PDF cannot retain their live behavior.
+
+`narration` validates like `check` and prints a Markdown skeleton of what the
+audience sees, for translation into spoken text: chapters are the only `##`
+headings, each slide opens with `<!-- slide: ID -->`, `#/N` links become
+`<!-- nav: … -->` notes, MathML is linearized beside its source, and blocks the
+layout hides are left out. Line 1 carries the deck's sha256 (BOM and CRLF
+normalized) so stale narration can be detected. `--outline` prints the same
+structure as JSON (`schema: 1`) with labels `12` or `B3`. Output is UTF-8 with
+LF on any console; `--output` only creates a new file outside `webdeck/`.
+Legacy `slides.js` is read only when it assigns a plain JSON literal whose ids
+are lowercase kebab-case, as in `deck.json`. Ids and unit names are emitted as
+authored, including any `--`; a unit name containing `-->` or a line break is
+refused. Piping the output into `head` or a pager ends it without a traceback.
 
 Install the optional PDF toolchain once in the shared environment:
 

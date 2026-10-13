@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import argparse
 import errno
+import json
+import os
 import socket
 import sys
 import tomllib
 import webbrowser
 from pathlib import Path
 
+from .narration import NarrationError, outline, read_deck, skeleton
 from .pdf import PDFExportError, export_pdf
 from .scaffold import refresh_unit, scaffold_unit
 from .server import make_selector_server, make_server
@@ -187,7 +190,163 @@ def build_parser() -> argparse.ArgumentParser:
         help="PDF color theme (default: light)",
     )
     pdf.add_argument("--repo", type=Path, help="repository root; normally auto-detected")
+
+    narration = subparsers.add_parser(
+        "narration",
+        help="print a Markdown narration skeleton (or JSON outline) of a deck",
+    )
+    narration.add_argument(
+        "unit", nargs="?", type=clean_unit, help="unit to read; or pass --deck PATH"
+    )
+    deck_source = narration.add_mutually_exclusive_group()
+    deck_source.add_argument(
+        "--repo", type=Path, help="repository root; normally auto-detected"
+    )
+    deck_source.add_argument(
+        "--deck",
+        type=Path,
+        help="a deck.json file, a webdeck/ folder, or a unit folder (instead of UNIT)",
+    )
+    narration.add_argument(
+        "--outline", action="store_true", help="print the JSON outline instead"
+    )
+    narration.add_argument(
+        "--output", type=Path, help="new file to write instead of standard output"
+    )
+    narration.set_defaults(subparser=narration)
     return parser
+
+
+def write_stdout(text: str) -> None:
+    """Write UTF-8 bytes to stdout whatever the console encoding.
+
+    A reader that stops early (``| head``) ends the output quietly: the rest
+    goes to the null device, so neither this write nor the flush at
+    interpreter exit prints a BrokenPipeError traceback.
+    """
+    try:
+        buffer = getattr(sys.stdout, "buffer", None)
+        if buffer is None:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            return
+        sys.stdout.flush()
+        buffer.write(text.encode("utf-8"))
+        buffer.flush()
+    except OSError as error:
+        if not _reader_gone(error):
+            raise
+        _silence_stdout()
+
+
+def _reader_gone(error: OSError) -> bool:
+    # Windows reports a pipe closed mid-write as EINVAL as often as EPIPE.
+    return isinstance(error, BrokenPipeError) or (
+        sys.platform == "win32" and error.errno == errno.EINVAL
+    )
+
+
+def _silence_stdout() -> None:
+    try:
+        target = sys.stdout.fileno()
+    except (OSError, ValueError):
+        return  # no real descriptor behind stdout (an in-memory stream)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, target)
+    except OSError:
+        pass  # at worst Python reports the pipe once more at exit
+    finally:
+        os.close(devnull)
+
+
+def narration_label(label: str) -> str:
+    """A unit label that cannot end or split its ``<!-- deck: ... -->`` line."""
+    if any(part in label for part in ("-->", "--!>", "\n", "\r")):
+        raise NarrationError(
+            [
+                f"unit name {label!r} cannot appear in a narration header "
+                "(it contains '-->', '--!>' or a line break)"
+            ]
+        )
+    return label
+
+
+def narration_deck(path: Path) -> Path:
+    """Resolve --deck: a deck file, a webdeck/ folder, or a unit folder."""
+    path = path.resolve()
+    if path.is_file():
+        return path
+    if path.is_dir():
+        entry = deck_entry(path)
+        if entry is not None:
+            return entry
+        for name in ("deck.json", "slides.js"):
+            if (path / name).is_file():
+                return path / name
+    raise FileNotFoundError(
+        f"no deck at {path}: expected deck.json, a webdeck/ folder, or a unit folder"
+    )
+
+
+def narrate(args: argparse.Namespace) -> int:
+    if args.deck is not None and args.unit is not None:
+        args.subparser.error("narration takes UNIT or --deck PATH, not both")
+    if args.deck is None and args.unit is None:
+        args.subparser.error("narration needs UNIT or --deck PATH")
+    try:
+        if args.deck is not None:
+            deck = narration_deck(args.deck)
+            unit_folder = deck.parent.parent if deck.parent.name == "webdeck" else deck.parent
+            label = narration_label(unit_folder.name)
+        else:
+            label = narration_label(args.unit)
+            repo = args.repo.resolve() if args.repo else find_repo_root(Path.cwd())
+            unit_folder = repo / "Studio" / "work" / "presentations" / args.unit
+            deck = deck_entry(unit_folder)
+            if deck is None:
+                raise FileNotFoundError(
+                    f"web deck not found: {unit_folder / 'webdeck'} has no deck.json "
+                    "or slides.js"
+                )
+        data, digest = read_deck(deck)
+    except (RuntimeError, FileNotFoundError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
+    except NarrationError as error:
+        for problem in error.errors:
+            print(f"ERROR: {problem}", file=sys.stderr)
+        return 2
+    relative = deck.relative_to(unit_folder).as_posix()
+    try:
+        if args.outline:
+            document = outline(data, unit=label, deck=relative, digest=digest)
+            text = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+        else:
+            text = skeleton(data, unit=label, digest=digest)
+    except RecursionError:
+        print(f"ERROR: {deck.name}: markup nested too deeply", file=sys.stderr)
+        return 2
+    if args.output is None:
+        write_stdout(text)
+        return 0
+    output = args.output.resolve()
+    webdeck = deck.parent.resolve()
+    if output == webdeck or webdeck in output.parents:
+        print(f"ERROR: refusing to write inside the deck folder: {output}", file=sys.stderr)
+        return 2
+    if output.exists():
+        print(f"ERROR: output already exists: {output}", file=sys.stderr)
+        return 2
+    try:
+        with output.open("xb") as handle:
+            handle.write(text.encode("utf-8"))
+    except OSError as error:
+        print(f"ERROR: cannot write {output} ({error})", file=sys.stderr)
+        return 2
+    kind = "outline" if args.outline else "skeleton"
+    write_stdout(f"Wrote {label} narration {kind} to {output}\n")
+    return 0
 
 
 def serve(args: argparse.Namespace) -> int:
@@ -286,6 +445,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "serve":
         return serve(args)
+    if args.command == "narration":
+        return narrate(args)
     repo = args.repo.resolve() if args.repo else find_repo_root(Path.cwd())
     unit_root = repo / "Studio" / "work" / "presentations" / args.unit
     if args.command == "init":
