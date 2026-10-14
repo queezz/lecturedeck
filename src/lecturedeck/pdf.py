@@ -37,7 +37,10 @@ def export_pdf(unit_root: Path, output: Path, *, theme: str = "light") -> Path:
             "then run: python -m playwright install chromium"
         ) from exc
 
-    server = make_server(unit_root, "127.0.0.1", 0, livereload=False, quiet=True)
+    # The export browser never receives the pacing sink, so it can never write.
+    server = make_server(
+        unit_root, "127.0.0.1", 0, livereload=False, quiet=True, pacing_records=False
+    )
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = (
         f"http://127.0.0.1:{server.server_address[1]}/webdeck/"

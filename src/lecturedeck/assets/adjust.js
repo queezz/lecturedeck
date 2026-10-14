@@ -115,6 +115,8 @@
     }).observe(overview, { attributes: true, attributeFilter: ["hidden"] });
   }
   addEventListener("keydown", event => {
+    // An open dialog owns the keyboard; the viewer pairs this guard.
+    if (document.querySelector("dialog[open]")) return;
     const target = event.target instanceof Element ? event.target : null;
     if (target && target.closest("input, textarea, select, [contenteditable]")) return;
     if (overviewVisible()) {

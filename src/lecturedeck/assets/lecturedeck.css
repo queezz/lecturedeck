@@ -414,8 +414,82 @@ body.overview-open .lecture-clock { display: none; }
 }
 @media print { .lecture-clock { display: none !important; } }
 
-.pacing-dialog { padding: 22px; width: min(700px, 94vw); max-height: 85dvh; overflow: auto; }
-.pacing-dialog table { width: 100%; border-collapse: collapse; font-size: 16px; }
-.pacing-dialog th, .pacing-dialog td { padding: 8px; text-align: left; border-bottom: 1px solid var(--border); }
-.pacing-dialog td:nth-child(3) { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Pacing report. Only the body scrolls, so Close (head) and Export (foot)
+   are always on screen. Display is set only on [open]: a closed dialog
+   must stay hidden. */
+.pacing-dialog[open] {
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(760px, calc(100vw - 32px)); max-height: min(88dvh, 820px);
+  padding: 0; overflow: hidden;
+}
+.pacing-head {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px 16px;
+  padding: 16px 20px 12px; border-bottom: 1px solid var(--border);
+}
+.pacing-head h2 { margin: 0; color: var(--strong); font-size: 21px; line-height: 1.2; }
+.pacing-head select {
+  grid-column: 1 / -1; justify-self: start; max-width: 100%;
+  border: 1px solid var(--border); border-radius: 7px; padding: 5px 8px;
+  background: var(--chrome-bg); color: var(--ink); font: inherit; font-size: 14px;
+}
+.pacing-head select[hidden] { display: none; }
+.pacing-head select:focus-visible, .pacing-dialog summary:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+.pacing-body {
+  min-height: 0; overflow: auto; overscroll-behavior: contain;
+  padding: 16px 20px 20px; display: grid; gap: 16px; align-content: start;
+}
+.pacing-body:focus-visible { outline: 2px solid color-mix(in srgb, var(--blue) 55%, transparent); outline-offset: -2px; }
+.pacing-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 20px; border-top: 1px solid var(--border);
+}
+.pacing-foot .appearance-close { flex: none; }
+.pacing-foot .appearance-close:disabled { opacity: .45; cursor: default; }
+#pacing-status { margin: 0; flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+#pacing-status[data-state="ok"] { color: var(--green); }
+#pacing-status[data-state="warn"] { color: var(--gold); }
+#pacing-status[data-state="error"] { color: var(--red); }
+.pacing-empty { margin: 0; color: var(--strong); font-size: 17px; }
+.pacing-headline { display: grid; gap: 6px; }
+.pacing-headline p { margin: 0; }
+.pacing-headline-main { color: var(--strong); font-size: 23px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.pacing-headline[data-over="true"] .pacing-headline-main { color: var(--red); }
+.pacing-headline-facts { color: var(--muted); font-size: 14px; line-height: 1.4; }
+.pacing-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.pacing-tile {
+  min-width: 0; display: grid; gap: 3px; align-content: start; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--chrome-bg);
+}
+.pacing-tile-label, .pacing-tile-detail { color: var(--muted); font-size: 13px; line-height: 1.3; }
+.pacing-tile-value { color: var(--strong); font-size: 22px; font-variant-numeric: tabular-nums; }
+.pacing-tile[data-over="true"] { border-color: var(--red); }
+.pacing-tile[data-over="true"] :is(.pacing-tile-value, .pacing-tile-detail) { color: var(--red); }
+.pacing-notes { margin: 0; padding-left: 1.1em; color: var(--ink); font-size: 14px; line-height: 1.4; }
+.pacing-not-shown, .pacing-help { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.pacing-body table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.3; }
+.pacing-body th, .pacing-body td { padding: 6px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+.pacing-body thead th { color: var(--strong); font-size: 13px; }
+.pacing-body td { font-variant-numeric: tabular-nums; }
+.pacing-sections tbody th { color: var(--strong); font-weight: 600; }
+.pacing-sections tr.pacing-backup th { color: var(--muted); }
+.pacing-body details { border: 1px solid var(--border); border-radius: 10px; }
+.pacing-body summary { padding: 9px 12px; color: var(--strong); font-weight: 600; cursor: pointer; }
+.pacing-body details[open] summary { border-bottom: 1px solid var(--border); }
+.pacing-body details table { margin: 0; }
+.pacing-body tr.pacing-group th { padding-top: 10px; color: var(--aqua); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+.pacing-body tr[data-after="true"] td:last-child, .pacing-timeline tr[data-phase="after"] td { color: var(--red); }
+.pacing-timeline tr[data-phase="before"] td { color: var(--muted); }
+.pacing-timeline tr.pacing-pause td { color: var(--muted); font-style: italic; }
+.pacing-boundary td { color: var(--gold); font-weight: 700; text-align: center; }
+.pacing-boundary.pacing-reload td { color: var(--blue); font-weight: 600; }
+@media (max-width: 700px) {
+  .pacing-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pacing-head, .pacing-body, .pacing-foot { padding-left: 14px; padding-right: 14px; }
+  .pacing-head h2 { font-size: 18px; }
+  .pacing-headline-main { font-size: 19px; }
+}
+/* While recording, the dot says where the record goes: green to disk,
+   gold to this browser only, red when saving is failing. */
 #pacing-button[data-recording="true"]::after { content: " ●"; color: var(--green); }
+#pacing-button[data-recording="true"][data-saved="browser"]::after { color: var(--gold); }
+#pacing-button[data-recording="true"][data-saved="failing"]::after { color: var(--red); }

@@ -1,12 +1,72 @@
 # Changelog — shipped version history
 
+## 0.24.0
+
+Owner, 2026-10-14, after the lecture of 13 October: "the timings save button was on the
+end of a long list, With no good back/close option. And saving location was
+default, downloads folder."
+
+- Pacing records save themselves. While `serve` delivers a scheduled deck to
+  a browser on the serving computer, each page load's segment is written to
+  `<unit>/pacing-records/<date>_<HHMM>_<unit>_<segment>.json`, beside
+  `webdeck/`: 2 s after a slide change, at phase boundaries and pauses,
+  every 15 s while a segment is open (also while the report is held open),
+  and with keepalive when the tab hides or closes. Nothing needs pressing. The write code is a serve-only `pacing-sink.js`, injected only
+  for a loopback (or own-address) browser with a `localhost` or IP-literal
+  `Host`, exact `Origin`, the custom header and no proxy headers; releases,
+  PDF exports, LAN viewers and automated browsers never write. The server
+  rebuilds each record from a strict whitelist, writes it atomically, keeps
+  only a higher revision and never deletes. `serve --no-pacing-records`
+  turns it off; `/__lecturedeck/version` reports the `pacing` state.
+- Recording runs from 30 min before to 60 min after the slot, and every
+  visit is tagged `before`, `slot` or `after`, split exactly at the
+  boundaries. The report leads with the last main-slide change and the
+  signed overrun, so a closing slide left up during questions no longer
+  reads as overrun; "deck on screen until" is shown separately. Opening a
+  page (the deck itself, or again after class to read the report) is no
+  slide change, and coming back from the backup to the slide shown before it
+  is no main-slide change. The overrun reads in whole seconds, floored like
+  the wall times beside it.
+- Record schema 2: titles once per slide in a `slides` map, unbroken visits
+  (a gap over 10 s or a 2 s clock disagreement credits nothing and logs a
+  `suspended` or `clock` pause, also inside an overview, report or dialog
+  pause), pauses with their reason (overview, report, dialog, hidden tab),
+  and time in full screen. A segment rolls over at
+  48 KiB so the closing keepalive always fits.
+- The report keeps Close and Export JSON on screen and scrolls only its body:
+  headline, four tiles, notes, a section table with one backup row, "not
+  shown" slides, and collapsed per-slide and timeline tables. A footer says
+  where the record went or why it stayed in the browser, and the button's
+  dot is green (disk), gold (browser only) or red (failing). Older entries
+  the server will not take (another unit, a date no longer scheduled) stay
+  pending without blocking the open deck or hiding "Disk saving ready". Export is now
+  secondary and names the file `<date>_<HHMM>_<unit>_export.json`, like the
+  records: lecture and start time, not only the date.
+- Any open dialog now owns keys, the wheel, the trackpad and swipes: Escape
+  in the report no longer opens the overview, arrows no longer page the deck
+  behind it, an Escape that leaves native full screen no longer opens the
+  overview behind a dialog, and the adjust HUD's keys stay out.
+- Two tabs on one date no longer overwrite each other's record: each page
+  load writes its own segment, and the report merges them, counting
+  overlapping time once for the window that changed slide most recently and
+  saying so; an idle second window no longer wins the phase-boundary splits.
+  The note tells page reloads, rollovers to a new file and other windows
+  apart.
+- Schema-1 browser records from 0.20–0.23 convert once into migrated
+  segments and upload to their own unit on the next page load, once their
+  slot has ended (an older tab may still be writing one); the old keys are
+  kept. The browser journal also uploads what a crash or a stopped server
+  left behind. The upload script answers 413 itself for a body over
+  256 KiB, so an oversized migrated record is refused at once instead of
+  retried as a network error ahead of newer ones.
+
 ## 0.23.2
 
 - The laser pointer tracks over interactive animations. An embedded page is
   its own document and kept the mouse to itself, so the dot froze at the
   animation's edge. While the laser is on, interactive frames now let the
   mouse through. Switching it off (L) gives the animation its mouse back.
-  Found by the owner in class, 2026-10-13; reproduced on a real deck's
+  Reported by the owner on 2026-10-14; reproduced on a real deck's
   animations with 0.21.0 and fixed there with this viewer. A browser test
   covers the dot over a frame and the frame getting its mouse back.
 

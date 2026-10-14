@@ -1,4 +1,4 @@
-"""Strict, cache-free static server with a tiny live-reload endpoint."""
+"""Strict, cache-free static server with live reload and the pacing-record sink."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import mimetypes
 import posixpath
 import socket
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import partial
 from hashlib import sha1
 from html import escape
@@ -16,7 +17,8 @@ from importlib.resources import files
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
-from . import __version__
+from . import __version__, pacing
+from .pacing import PACING_ROUTE, PACING_SINK_ROUTE
 
 VIEWER_ROUTES = {
     "/webdeck/lecturedeck.css": "lecturedeck.css",
@@ -26,6 +28,15 @@ VIEWER_ROUTES = {
 INDEX_ROUTES = {"/webdeck", "/webdeck/index.html"}
 ADJUST_ROUTE = "/__lecturedeck/adjust.js"
 FAVICON_ROUTE = "/favicon.svg"
+# pacing_problem() result -> the "pacing" field of /__lecturedeck/version.
+PACING_STATES = {
+    None: "on",
+    "off": "off",
+    "not-same-machine": "not-this-machine",
+    "host": "use-local-address",
+    "proxied": "proxied",
+}
+PACING_READ_TIMEOUT_S = 10
 
 
 @dataclass(frozen=True)
@@ -299,10 +310,20 @@ def content_version(root: Path) -> str:
 class DeckRequestHandler(SimpleHTTPRequestHandler):
     server_version = f"lecturedeck/{__version__}"
 
-    def __init__(self, *args, directory: str, livereload: bool, quiet: bool = False, **kwargs):
+    def __init__(
+        self,
+        *args,
+        directory: str,
+        livereload: bool,
+        quiet: bool = False,
+        pacing_records: bool = True,
+        **kwargs,
+    ):
         self.deck_root = Path(directory).resolve()
+        self.unit_name = self.deck_root.name
         self.livereload = livereload
         self.quiet = quiet
+        self.pacing_records = pacing_records
         super().__init__(*args, directory=directory, **kwargs)
 
     def log_message(self, format: str, *args) -> None:
@@ -347,6 +368,10 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
         index = local if local.is_file() else files("lecturedeck").joinpath("assets", "index.html")
         text = index.read_text(encoding="utf-8")
         script = '<script src="../__lecturedeck/adjust.js"></script>'
+        if self.pacing_problem() is None:
+            # Write code reaches only a browser on this computer, never a release.
+            unit = escape(self.unit_name, quote=True)
+            script += f'<script src="../__lecturedeck/pacing-sink.js" data-unit="{unit}"></script>'
         payload = text.replace("</body>", f"{script}</body>").encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -360,6 +385,120 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
         """Only the unit's webdeck bundle is public; scripts and briefs are not."""
         return route == "/webdeck" or route.startswith("/webdeck/")
 
+    def pacing_problem(self) -> str | None:
+        """None only when this request may receive and use the pacing sink."""
+        if not self.pacing_records:
+            return "off"
+        return pacing.page_problem(
+            self.headers,
+            self.client_address[0],
+            self.connection.getsockname()[0],
+            self.server.server_address[1],
+        )
+
+    def pacing_state(self) -> str:
+        return PACING_STATES[self.pacing_problem()]
+
+    def send_json(self, status: int, payload: dict, *, close: bool = False) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        if close:
+            self.send_header("Connection", "close")
+            self.close_connection = True
+        try:
+            self.end_headers()
+            self.wfile.write(body)
+        except ConnectionError:
+            # A closing page may drop its request before the answer arrives;
+            # the record is already stored or refused, so nothing is lost.
+            self.close_connection = True
+
+    def send_pacing_sink(self, include_body: bool) -> None:
+        if self.pacing_problem() is not None:
+            self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+            return
+        asset = files("lecturedeck").joinpath("assets", "pacing-sink.js")
+        self.send_packaged(asset, include_body=include_body)
+
+    def handle_pacing_post(self) -> None:
+        """Validate and store one pacing segment: the only serve-time write.
+
+        Nothing reads the body before every header gate has passed, and each
+        earlier refusal closes the connection so an unread body goes nowhere.
+        """
+        if self.normalized_route() != PACING_ROUTE:
+            self.send_json(HTTPStatus.NOT_FOUND, {"error": "not-found"}, close=True)
+            return
+        if not self.pacing_records:
+            self.send_json(HTTPStatus.NOT_FOUND, {"error": "disabled"}, close=True)
+            return
+        problem = self.pacing_problem() or pacing.write_problem(self.headers)
+        if problem is not None:
+            self.send_json(HTTPStatus.FORBIDDEN, {"error": problem}, close=True)
+            return
+        try:
+            length = pacing.body_length(self.headers)
+        except pacing.PacingRefusal as refusal:
+            self.send_json(refusal.status, refusal.payload(), close=True)
+            return
+        if not pacing.is_json_content(self.headers):
+            self.send_json(
+                HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "content-type"}, close=True
+            )
+            return
+        previous_timeout = self.connection.gettimeout()
+        try:
+            self.connection.settimeout(PACING_READ_TIMEOUT_S)
+            body = self.rfile.read(length)
+            # The handler speaks HTTP/1.0, so each connection serves only this
+            # request and there is no keep-alive to protect. The timeout goes
+            # back defensively, so the reply is not bound by the read limit.
+            self.connection.settimeout(previous_timeout)
+        except TimeoutError:
+            body = None
+        except OSError:
+            self.close_connection = True
+            return
+        if body is None or len(body) != length:
+            self.send_json(HTTPStatus.REQUEST_TIMEOUT, {"error": "timeout"}, close=True)
+            return
+
+        dates = pacing.scheduled_dates(self.deck_root / "webdeck")
+        if not dates:
+            self.send_json(HTTPStatus.NOT_FOUND, {"error": "no-schedule"})
+            return
+        try:
+            if self.headers.get(pacing.PACING_HEADER) == "probe":
+                pacing.probe_unit(self.deck_root)
+                ready = {"ok": True, "ready": True, "folder": f"{pacing.RECORDS_DIR}/"}
+                self.send_json(HTTPStatus.OK, ready)
+                return
+            now = datetime.now(timezone.utc)
+            record = pacing.parse_record(
+                body,
+                dates=dates,
+                unit=self.unit_name,
+                route_path=f"{getattr(self, 'route_prefix', '')}/webdeck/",
+                now=now,
+            )
+            result = pacing.store_record(
+                self.deck_root,
+                self.unit_name,
+                record,
+                host=pacing.machine_label(),
+                version=__version__,
+                now=now,
+            )
+        except pacing.PacingRefusal as refusal:
+            self.send_json(refusal.status, refusal.payload())
+            return
+        self.send_json(HTTPStatus.OK, result)
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+        self.handle_pacing_post()
+
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
         route = self.normalized_route()
         if route == FAVICON_ROUTE:
@@ -370,11 +509,15 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
             asset = files("lecturedeck").joinpath("assets", "adjust.js")
             self.send_packaged(asset, include_body=True)
             return
+        if route == PACING_SINK_ROUTE:
+            self.send_pacing_sink(include_body=True)
+            return
         if route == "/__lecturedeck/version":
             payload = json.dumps(
                 {
                     "version": content_version(self.deck_root / "webdeck"),
                     "livereload": self.livereload,
+                    "pacing": self.pacing_state(),
                 }
             ).encode("utf-8")
             self.send_response(200)
@@ -408,6 +551,9 @@ class DeckRequestHandler(SimpleHTTPRequestHandler):
         if route == ADJUST_ROUTE:
             asset = files("lecturedeck").joinpath("assets", "adjust.js")
             self.send_packaged(asset, include_body=False)
+            return
+        if route == PACING_SINK_ROUTE:
+            self.send_pacing_sink(include_body=False)
             return
         if self.needs_slash_redirect():
             self.send_slash_redirect()
@@ -450,6 +596,7 @@ class SelectorRequestHandler(DeckRequestHandler):
             return False
         deck = self.decks[parts[2]]
         self.deck_root = deck.root
+        self.unit_name = deck.name
         self.directory = str(deck.root)
         self.route_prefix = f"/decks/{quote(deck.name, safe='')}"
         inner = "/" + "/".join(parts[3:])
@@ -491,12 +638,28 @@ class SelectorRequestHandler(DeckRequestHandler):
             return
         super().do_HEAD()
 
+    def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+        if not self.select_deck():
+            self.send_json(HTTPStatus.NOT_FOUND, {"error": "not-found"}, close=True)
+            return
+        super().do_POST()
+
 
 def make_server(
-    root: Path, host: str, port: int, livereload: bool, *, quiet: bool = False
+    root: Path,
+    host: str,
+    port: int,
+    livereload: bool,
+    *,
+    quiet: bool = False,
+    pacing_records: bool = True,
 ) -> DeckHTTPServer:
     handler = partial(
-        DeckRequestHandler, directory=str(root), livereload=livereload, quiet=quiet
+        DeckRequestHandler,
+        directory=str(root),
+        livereload=livereload,
+        quiet=quiet,
+        pacing_records=pacing_records,
     )
     server = DeckHTTPServer((host, port), handler)
     server.daemon_threads = True
@@ -504,7 +667,13 @@ def make_server(
 
 
 def make_selector_server(
-    folder: Path, host: str, port: int, livereload: bool, *, quiet: bool = False
+    folder: Path,
+    host: str,
+    port: int,
+    livereload: bool,
+    *,
+    quiet: bool = False,
+    pacing_records: bool = True,
 ) -> DeckHTTPServer:
     decks = discover_decks(folder)
     handler = partial(
@@ -512,6 +681,7 @@ def make_selector_server(
         directory=str(folder.resolve()),
         livereload=livereload,
         quiet=quiet,
+        pacing_records=pacing_records,
         decks=decks,
     )
     server = DeckHTTPServer((host, port), handler)

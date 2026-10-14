@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.23.2";
+  const VIEWER_VERSION = "0.24.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -259,112 +259,1444 @@
   }
 
 
-  function setupLecturePacer(timing, spec) {
-    if (printMode || !Array.isArray(timing?.dates) || !document.querySelector("#lecture-clock")) return;
-    const dates = new Set(timing.dates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)));
+  // ---------------------------------------------------------------------
+  // Lecture pacing, record schema 2.
+  //
+  // On scheduled teaching dates the recorder runs from 30 min before the
+  // slot to 60 min after it. Every page load writes its own segment:
+  // visits are unbroken spans tagged before/slot/after, pauses carry a
+  // reason, and a gap the two clocks cannot vouch for is never credited.
+  // localStorage is the per-second journal. Records reach disk only
+  // through the serve-only sink that the server injects for a browser on
+  // its own machine (window.lecturedeckPacingSink). This file holds no
+  // endpoint and no write code, so a static release never writes.
+  const PACING_LEAD_S = 1800;
+  const PACING_TAIL_S = 3600;
+  const GAP_MS = 10000;
+  const SKEW_MS = 2000;
+  const HEARTBEAT_MS = 15000;
+  const CHANGE_DEBOUNCE_MS = 2000;
+  const ROLLOVER_BYTES = 49152;
+  const KEEPALIVE_MAX_BYTES = 60000;
+  const BACKOFF_S = [5, 10, 20, 40, 60];
+  const PACING_PREFIX = "lecturedeck-pacing2:";
+  const PACING_V1_MARK = "lecturedeck-pacing2-migrated:";
+  const PACING_PRUNE_DAYS = 60;
+  const PACING_REFUSED = [400, 411, 413, 415];
+  const PACING_FINAL = [400, 403, 404, 409, 411, 413, 415, 422, 429];
+  const pacingEncoder = new TextEncoder();
+  const pacingBytes = text => pacingEncoder.encode(text).length;
+  const pacingIso = ms => new Date(ms).toISOString();
+  const pacingPath = (path = location.pathname) => String(path).replace(/index\.html$/, "");
+  // Looked up on every use, so the order in which scripts load is irrelevant.
+  const pacingSink = () => window.lecturedeckPacingSink || null;
+  // What /__lecturedeck/version said: "unknown" until it answers, the
+  // server's own `pacing` word, "absent" from an older server, or
+  // "static" when nothing answers (a release or a file copy).
+  let serverPacing = "unknown";
+  // Segments this page records; the recovery sweep leaves them alone.
+  const pacingLive = new Set();
+
+  const modalOpen = () => Boolean(document.querySelector("dialog[open]"));
+
+  // A lone surrogate would make the server refuse the whole record.
+  const pacingWellFormed = text => typeof text.toWellFormed === "function" ? text.toWellFormed() : text;
+
+  // Recorded text: no control characters, bounded in code points.
+  function pacingText(value, max = 500) {
+    const text = pacingWellFormed(String(value ?? "")).replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+    return Array.from(text).slice(0, max).join("");
+  }
+
+  function pacingId(value, fallback) {
+    const text = pacingWellFormed(String(value ?? "")).replace(/[\u0000-\u001f\u007f]/g, "");
+    return Array.from(text).slice(0, 200).join("") || fallback;
+  }
+
+  function htmlText(html) {
+    // A template parses inertly: nothing in it loads or runs.
+    const template = document.createElement("template");
+    template.innerHTML = String(html ?? "");
+    return template.content.textContent || "";
+  }
+
+  const pacingDeckTitle = spec => pacingText(spec?.meta?.tabTitle || spec?.meta?.title || "Lecture", 300) || "Lecture";
+
+  function pacingClock(timeZone) {
     const formatter = new Intl.DateTimeFormat("en-GB", {
-      timeZone: timing.timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+      timeZone, year: "numeric", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
     });
-    const toSeconds = value => { const [h, m] = value.split(":").map(Number); return h * 3600 + m * 60; };
-    const start = toSeconds(timing.start), end = toSeconds(timing.end);
-    const numbering = slideNumbering(Array.isArray(spec.slides) ? spec.slides : []);
-    const prefix = `lecturedeck-pacing:${location.pathname}:`;
-    let previous = null, record = null, recordKey = "", lastKey = "", storageAvailable = true;
-    const read = key => {
-      try { return JSON.parse(localStorage.getItem(key)); } catch (_) { return null; }
+    return {
+      timeZone: formatter.resolvedOptions().timeZone,
+      parts(ms) {
+        const p = Object.fromEntries(formatter.formatToParts(new Date(ms)).map(part => [part.type, part.value]));
+        return {
+          date: `${p.year}-${p.month}-${p.day}`,
+          seconds: +p.hour * 3600 + +p.minute * 60 + +p.second,
+          hhmm: `${p.hour}${p.minute}`,
+          hm: `${p.hour}:${p.minute}`,
+          hms: `${p.hour}:${p.minute}:${p.second}`,
+        };
+      },
     };
-    try { lastKey = localStorage.getItem(prefix + "latest") || ""; } catch (_) { storageAvailable = false; }
+  }
+
+  // Epoch of wall-clock second `target` on the day of `ms`, whose own
+  // wall-clock second is `secondsNow`. Every boundary uses this one
+  // formula, so a split lands exactly on the scheduled instant.
+  const epochAtSecond = (ms, secondsNow, target) => ms - ((secondsNow - target) * 1000 + (ms % 1000));
+  const pacingSeconds = value => {
+    const [hour, minute] = String(value).split(":").map(Number);
+    return hour * 3600 + minute * 60;
+  };
+
+  function pacingSegmentId() {
+    const bytes = new Uint8Array(6);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  const pacingDuration = ms => {
+    const seconds = Math.floor(Math.abs(Number(ms) || 0) / 1000);
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  };
+
+  function pacingDay(date, withYear = false) {
+    const [year, month, day] = String(date).split("-").map(Number);
+    const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+    const name = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][month - 1];
+    return `${weekday} ${day} ${name}${withYear ? ` ${year}` : ""}`;
+  }
+
+  function pacingRanges(numbers) {
+    const parts = [];
+    for (let i = 0; i < numbers.length; i += 1) {
+      let j = i;
+      while (j + 1 < numbers.length && numbers[j + 1] === numbers[j] + 1) j += 1;
+      parts.push(j > i ? `${numbers[i]}–${numbers[j]}` : String(numbers[i]));
+      i = j;
+    }
+    return parts.join(", ");
+  }
+
+  function pacingSlug(unit, deckTitle) {
+    const token = value => String(value || "").normalize("NFKD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, 60);
+    return token(unit) || token(deckTitle).toLowerCase() || "lecture";
+  }
+
+  const pacingShortFile = file => String(file || "").replace(/_([0-9a-f]{4})[0-9a-f]{8}\.json$/, "_$1….json");
+
+  const pacingIsPending = entry => entry.sync.state !== "refused" && (entry.sync.rev || 0) < entry.record.rev;
+  const pacingIsSaved = entry => entry.sync.state === "saved" && (entry.sync.rev || 0) >= entry.record.rev;
+
+  function pacingFirstInstant(record) {
+    let first = Infinity;
+    for (const item of [...(record.visits || []), ...(record.pauses || [])]) {
+      const at = Date.parse(item.startedAt);
+      if (at < first) first = at;
+    }
+    return Number.isFinite(first) ? first : Date.parse(record.window?.from) || 0;
+  }
+
+  function pacingLastInstant(record) {
+    let last = -Infinity;
+    for (const item of [...(record.visits || []), ...(record.pauses || [])]) {
+      const at = Date.parse(item.startedAt) + (Number(item.durationMs) || 0);
+      if (at > last) last = at;
+    }
+    return last;
+  }
+
+  // A schema-1 browser record (viewer 0.20-0.23) as a schema-2 segment.
+  // Visits keep their values; v1 recorded only inside the slot, so the
+  // window is the slot and every visit is in phase "slot".
+  function pacingFromV1(old, keyPath, keyDate) {
+    const clockTime = /^([01]\d|2[0-3]):[0-5]\d$/;
+    const instant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+    if (!Array.isArray(old.visits) || !old.visits.length) return null;
+    if (!clockTime.test(old.start) || !clockTime.test(old.end)) return null;
+    const usable = visit => visit && typeof visit.slideId === "string" && visit.slideId
+      && instant.test(visit.startedAt) && Number.isFinite(visit.durationMs);
+    if (!old.visits.every(usable)) return null;
+    let clock;
+    try { clock = pacingClock(old.timeZone); } catch (_) { return null; }
+    const first = Date.parse(old.visits[0].startedAt);
+    const zoned = clock.parts(first);
+    const startAt = epochAtSecond(first, zoned.seconds, pacingSeconds(old.start));
+    const endAt = epochAtSecond(first, zoned.seconds, pacingSeconds(old.end));
+    const slides = {};
+    const visits = old.visits.map(visit => {
+      const slideId = pacingId(visit.slideId, "slide");
+      const number = Number.isInteger(visit.number) && visit.number > 0 ? Math.min(visit.number, 100000) : 1;
+      const label = /^B?\d{1,6}$/.test(String(visit.label ?? "")) ? String(visit.label) : String(number);
+      slides[slideId] = {
+        number, label,
+        title: pacingText(visit.title) || `Slide ${number}`,
+        section: pacingText(visit.section) || "Opening",
+      };
+      if (/^B\d+$/.test(label)) slides[slideId].backup = true;
+      return {
+        slideId, startedAt: visit.startedAt,
+        durationMs: Math.min(86400000, Math.max(0, Math.round(visit.durationMs))), phase: "slot",
+      };
+    });
+    return {
+      schema: 2, kind: "lecturedeck-pacing-segment", segment: pacingSegmentId(), rev: 1, unit: null,
+      path: pacingPath(typeof old.path === "string" ? old.path : keyPath),
+      deck: pacingText(old.deck, 300) || "Lecture", viewer: VIEWER_VERSION,
+      date: /^\d{4}-\d{2}-\d{2}$/.test(old.date) ? old.date : keyDate,
+      opened: zoned.hhmm, timeZone: clock.timeZone,
+      slot: {start: old.start, end: old.end, startAt: pacingIso(startAt), endAt: pacingIso(endAt)},
+      window: {before: 0, after: 0, from: pacingIso(startAt), to: pacingIso(endAt)},
+      migratedFrom: 1, slides, visits, pauses: [], fullscreenMs: null,
+    };
+  }
+
+  // Whether an older viewer could still add to a schema-1 record: its date
+  // is today or later in its own time zone and its slot has not ended.
+  function pacingV1MayGrow(old, keyDate, now = Date.now()) {
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(old.date) ? old.date : keyDate;
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(old.end)) return false;
+    try {
+      const today = pacingClock(old.timeZone).parts(now);
+      return today.date < date || (today.date === date && today.seconds < pacingSeconds(old.end));
+    } catch (_) { return false; }
+  }
+
+  // The journal: one localStorage entry per segment,
+  // "lecturedeck-pacing2:<path>:<date>:<segment>" -> {record, sync}.
+  const pacingStore = {
+    available: true,
+    keyFor: record => `${PACING_PREFIX}${record.path}:${record.date}:${record.segment}`,
+    keys() {
+      const keys = [];
+      try {
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith(PACING_PREFIX)) keys.push(key);
+        }
+      } catch (_) { this.available = false; }
+      return keys;
+    },
+    read(key) {
+      try {
+        const value = JSON.parse(localStorage.getItem(key));
+        if (value?.record?.schema !== 2 || !value.sync || !Number.isInteger(value.record.rev)) return null;
+        return {key, record: value.record, sync: value.sync};
+      } catch (_) { return null; }
+    },
+    all() { return this.keys().map(key => this.read(key)).filter(Boolean); },
+    list({path, date} = {}) {
+      return this.all().filter(entry => (path === undefined || pacingPath(entry.record.path) === path)
+        && (date === undefined || entry.record.date === date));
+    },
+    pending() { return this.all().filter(pacingIsPending); },
+    put(entry, json = JSON.stringify(entry.record)) {
+      const value = `{"record":${json},"sync":${JSON.stringify(entry.sync)}}`;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        try {
+          localStorage.setItem(entry.key, value);
+          this.available = true;
+          return true;
+        } catch (error) {
+          // A full quota drops the oldest saved entries first. Pending and
+          // refused entries are never dropped.
+          const full = error?.name === "QuotaExceededError" || error?.code === 22;
+          if (!full || !this.dropOldestSaved(entry.key)) break;
+        }
+      }
+      this.available = false;
+      return false;
+    },
+    // Store a response without taking a newer journal record backwards:
+    // another tab may own the segment and still be writing it.
+    putSync(entry) {
+      if (entry.live) return this.put(entry);
+      const stored = this.read(entry.key);
+      if (stored && stored.record.rev > entry.record.rev) entry.record = stored.record;
+      if (stored && (stored.sync.rev || 0) > (entry.sync.rev || 0)) entry.sync = stored.sync;
+      if (entry.sync.state !== "refused") {
+        entry.sync.state = (entry.sync.rev || 0) >= entry.record.rev ? "saved" : "pending";
+      }
+      return this.put(entry);
+    },
+    dropOldestSaved(except) {
+      const saved = this.all().filter(entry => entry.key !== except && pacingIsSaved(entry))
+        .sort((a, b) => a.record.date.localeCompare(b.record.date)
+          || pacingFirstInstant(a.record) - pacingFirstInstant(b.record));
+      if (!saved.length) return false;
+      try { localStorage.removeItem(saved[0].key); } catch (_) { return false; }
+      return true;
+    },
+    prune(now = Date.now()) {
+      const cutoff = now - PACING_PRUNE_DAYS * 86400000;
+      for (const entry of this.all()) {
+        if (pacingIsSaved(entry) && Date.parse(`${entry.record.date}T00:00:00Z`) < cutoff) {
+          try { localStorage.removeItem(entry.key); } catch (_) { /* optional */ }
+        }
+      }
+    },
+    // The server's unit for a record. A selector path names it; a bare
+    // /webdeck/ record takes the sink's unit only on a page at /webdeck/
+    // showing the same deck. Otherwise it stays unknown, and pending.
+    attributeUnit(record, page = {}) {
+      const selected = /^\/decks\/([^/]+)\/webdeck\/$/.exec(record.path || "");
+      if (selected) {
+        try { return decodeURIComponent(selected[1]); } catch (_) { return null; }
+      }
+      const sink = pacingSink();
+      const pagePath = page.path ?? pacingPath();
+      const deckTitle = page.deckTitle ?? (window.LECTUREDECK ? pacingDeckTitle(window.LECTUREDECK) : "");
+      if (record.path === "/webdeck/" && pagePath === "/webdeck/" && typeof sink?.unit === "string"
+        && sink.unit && deckTitle && deckTitle === record.deck) return sink.unit;
+      return null;
+    },
+    // Convert schema-1 keys once. The v1 key and its ':latest' key are
+    // kept; a marker records the conversion.
+    migrateV1(page = {}) {
+      const keys = [];
+      try {
+        for (let i = 0; i < localStorage.length; i += 1) keys.push(localStorage.key(i));
+      } catch (_) { return 0; }
+      let migrated = 0;
+      for (const key of keys) {
+        const match = /^lecturedeck-pacing:(.+):(\d{4}-\d{2}-\d{2})$/.exec(key || "");
+        if (!match) continue;
+        let old = null;
+        try {
+          if (localStorage.getItem(PACING_V1_MARK + key)) continue;
+          old = JSON.parse(localStorage.getItem(key));
+        } catch (_) { old = null; }
+        // A tab still running an older viewer may be recording this one:
+        // v1 never writes after the slot's end, so convert it only then.
+        if (old?.schema === 1 && pacingV1MayGrow(old, match[2])) continue;
+        const record = old?.schema === 1 ? pacingFromV1(old, match[1], match[2]) : null;
+        if (!record) {
+          console.warn(`lecturedeck: left the unreadable pacing record ${key} as it is`);
+          continue;
+        }
+        record.unit = this.attributeUnit(record, page);
+        const entry = {key: this.keyFor(record), record,
+          sync: {rev: 0, file: null, at: null, state: "pending", error: null}};
+        if (!this.put(entry)) break;
+        try { localStorage.setItem(PACING_V1_MARK + key, entry.key); } catch (_) { break; }
+        migrated += 1;
+      }
+      return migrated;
+    },
+  };
+
+  // Keep the item whose window changed slide most recently wherever items
+  // overlap (then the later start). Returns disjoint pieces and the time
+  // claimed by more than one group.
+  function pacingLatestStart(items) {
+    const points = [...new Set(items.flatMap(item => [item.start, item.end]))].sort((a, b) => a - b);
+    const queue = [...items].sort((a, b) => a.start - b.start);
+    const rank = (a, b) => a.changedAt - b.changedAt || a.start - b.start || a.group - b.group || a.order - b.order;
+    const pieces = [];
+    let active = [], next = 0, overlapMs = 0;
+    for (let p = 0; p < points.length - 1; p += 1) {
+      const from = points[p], to = points[p + 1];
+      while (next < queue.length && queue[next].start <= from) active.push(queue[next++]);
+      active = active.filter(item => item.end > from);
+      if (!active.length) continue;
+      const winner = active.reduce((best, item) => rank(item, best) > 0 ? item : best);
+      if (new Set(active.map(item => item.group)).size > 1) overlapMs += to - from;
+      const last = pieces[pieces.length - 1];
+      if (last && last.item === winner && last.end === from) last.end = to;
+      else pieces.push({start: from, end: to, item: winner});
+    }
+    return {pieces, overlapMs};
+  }
+
+  // Follow each window through its own segments. A visit that continues
+  // the previous visit's slide across a phase split, an uncredited gap (a
+  // suspended or clock pause) or a rollover keeps the time its window last
+  // changed slide (changedAt); any other visit starts a new one. A visit
+  // changes slide only when its window showed another slide just before:
+  // the first visit of a page load does not. A rollover is the segment
+  // whose first instant is another segment's last.
+  function pacingWindowVisits(segments) {
+    const gapsOf = segment => (segment.pauses || [])
+      .filter(pause => pause.why === "suspended" || pause.why === "clock")
+      .map(pause => {
+        const from = Date.parse(pause.startedAt);
+        return [from, from + (Number(pause.durationMs) || 0)];
+      });
+    const order = segments.map((_, group) => group)
+      .sort((a, b) => pacingFirstInstant(segments[a]) - pacingFirstInstant(segments[b]) || a - b);
+    const tails = [];
+    const flags = segments.map(() => []);
+    for (const group of order) {
+      const segment = segments[group];
+      const first = pacingFirstInstant(segment);
+      const parent = [...tails].reverse().find(tail => tail.at === first) || null;
+      const own = gapsOf(segment);
+      const gaps = parent ? [...parent.gaps, ...own] : own;
+      let previous = parent?.last || null;
+      (segment.visits || []).forEach((visit, i) => {
+        const start = Date.parse(visit.startedAt);
+        const end = start + (Number(visit.durationMs) || 0);
+        let changedAt = start, slideChange = false;
+        if (previous) {
+          const same = visit.slideId === previous.slideId;
+          const joined = previous.end === start || gaps.some(([from, to]) => from <= previous.end && to >= start);
+          if (same && joined) changedAt = previous.changedAt;
+          slideChange = !same;
+        }
+        flags[group][i] = {changedAt, slideChange};
+        previous = {slideId: visit.slideId, end, changedAt};
+      });
+      tails.push({at: pacingLastInstant(segment), last: previous, gaps: own});
+    }
+    return flags;
+  }
+
+  function pacingIntervals(segments, field) {
+    const flags = field === "visits" ? pacingWindowVisits(segments) : null;
+    const items = [];
+    segments.forEach((segment, group) => (segment[field] || []).forEach((value, order) => {
+      const start = Date.parse(value.startedAt);
+      const end = start + (Number(value.durationMs) || 0);
+      const flag = flags?.[group][order] || {changedAt: start, slideChange: false};
+      if (Number.isFinite(start) && end > start) items.push({start, end, group, order, value, ...flag});
+    }));
+    return items;
+  }
+
+  // Merge the segments of one host: each moment counts once, for the
+  // window that changed slide most recently; overlapMs is the doubled time.
+  // A piece is a slide change when its window changed slide right there.
+  function mergeVisits(segments) {
+    const {pieces, overlapMs} = pacingLatestStart(pacingIntervals(segments, "visits"));
+    return {
+      pieces: pieces.map(piece => ({
+        start: piece.start, end: piece.end, slideId: piece.item.value.slideId,
+        phase: piece.item.value.phase || "slot", segment: piece.item.group,
+        slideChange: piece.item.slideChange && piece.start === piece.item.start,
+      })),
+      overlapMs,
+    };
+  }
+
+  // Derived measures, as documented for agents in the README.
+  function summarizePacing(segments, {mainSlideIds = []} = {}) {
+    const ordered = [...segments].sort((a, b) => pacingFirstInstant(a) - pacingFirstInstant(b));
+    const slides = {};
+    ordered.forEach(segment => Object.assign(slides, segment.slides || {}));
+    const {pieces, overlapMs} = mergeVisits(ordered);
+    const slot = ordered[ordered.length - 1]?.slot || {};
+    const slotStart = Date.parse(slot.startAt), slotEnd = Date.parse(slot.endAt);
+    const slotMs = Number.isFinite(slotEnd - slotStart) ? Math.max(0, slotEnd - slotStart) : 0;
+    const phaseMs = {before: 0, slot: 0, after: 0};
+    const perSlide = new Map();
+    const arrivals = [];
+    const changes = [];
+    let previousId = null, lastMainId = null, lastMainChange = null;
+    for (const piece of pieces) {
+      const ms = piece.end - piece.start;
+      const phase = piece.phase in phaseMs ? piece.phase : "slot";
+      phaseMs[phase] += ms;
+      // An arrival puts another slide on screen. It is a slide change only
+      // where its window changed slide: opening a page (the deck, a new tab,
+      // a reload landing elsewhere) is not one, and neither is a phase
+      // split, a gap or a rollover on the same slide.
+      const arrival = piece.slideId !== previousId;
+      const change = arrival && previousId !== null && piece.slideChange;
+      previousId = piece.slideId;
+      if (arrival) arrivals.push(piece);
+      if (change) changes.push(piece);
+      if (slides[piece.slideId]?.backup !== true) {
+        // Coming back from the backup to the main slide shown before it is
+        // not a main-slide change.
+        if (change && piece.slideId !== lastMainId) lastMainChange = piece.start;
+        lastMainId = piece.slideId;
+      }
+      const info = slides[piece.slideId] || {};
+      const row = perSlide.get(piece.slideId) || {
+        slideId: piece.slideId, number: Number(info.number) || 0, label: String(info.label ?? info.number ?? "?"),
+        title: info.title || piece.slideId, section: info.section || "", backup: info.backup === true,
+        firstAt: piece.start, totalMs: 0, arrivals: 0, beforeMs: 0, slotMs: 0, afterMs: 0,
+      };
+      row.totalMs += ms;
+      row[`${phase}Ms`] += ms;
+      if (arrival) row.arrivals += 1;
+      perSlide.set(piece.slideId, row);
+    }
+    let furthest = null;
+    for (const piece of pieces) {
+      const info = slides[piece.slideId];
+      if (!info || info.backup === true) continue;
+      if (!furthest || info.number > furthest.number) furthest = {number: info.number, label: info.label, at: piece.start};
+    }
+    const shown = new Set(pieces.map(piece => piece.slideId));
+    const notShown = mainSlideIds.map((id, i) => shown.has(id) ? 0 : i + 1).filter(Boolean);
+    // Off slides in the slot: paused where some window logged a pause and
+    // none showed a slide; untracked where nothing was recorded at all.
+    const pausedByReason = {};
+    let pausedMs = 0;
+    if (slotMs) {
+      let cursor = 0;
+      for (const piece of pacingLatestStart(pacingIntervals(ordered, "pauses")).pieces) {
+        const from = Math.max(piece.start, slotStart), to = Math.min(piece.end, slotEnd);
+        if (to <= from) continue;
+        while (cursor < pieces.length && pieces[cursor].end <= from) cursor += 1;
+        let free = to - from;
+        for (let i = cursor; i < pieces.length && pieces[i].start < to; i += 1) {
+          free -= Math.max(0, Math.min(to, pieces[i].end) - Math.max(from, pieces[i].start));
+        }
+        if (free <= 0) continue;
+        const why = piece.item.value.why || "paused";
+        pausedByReason[why] = (pausedByReason[why] || 0) + free;
+        pausedMs += free;
+      }
+    }
+    const offSlidesMs = Math.max(0, slotMs - phaseMs.slot);
+    const sections = new Map();
+    let backup = null;
+    for (const row of perSlide.values()) {
+      const key = row.section || "—";
+      let section = row.backup ? backup : sections.get(key);
+      if (!section) {
+        section = {name: row.backup ? "Backup slides" : key, backup: row.backup, firstAt: row.firstAt,
+          minNumber: row.number, slides: [], beforeMs: 0, slotMs: 0, afterMs: 0};
+        if (row.backup) backup = section;
+        else sections.set(key, section);
+      }
+      section.firstAt = Math.min(section.firstAt, row.firstAt);
+      section.minNumber = Math.min(section.minNumber, row.number);
+      section.slides.push(row);
+      section.beforeMs += row.beforeMs;
+      section.slotMs += row.slotMs;
+      section.afterMs += row.afterMs;
+    }
+    const sectionList = [...sections.values()].sort((a, b) => a.minNumber - b.minNumber);
+    if (backup) sectionList.push(backup);
+    sectionList.forEach(section => section.slides.sort((a, b) => a.number - b.number));
+    const changesIn = phase => changes.filter(piece => piece.phase === phase).length;
+    // How the recordings join: a rollover starts where the previous one
+    // ended, a later start is a reload, an earlier one another window.
+    const joins = {reloads: 0, rollovers: 0, windows: 0};
+    let previousEnd = -Infinity;
+    ordered.forEach((segment, i) => {
+      const first = pacingFirstInstant(segment);
+      if (i > 0) joins[first === previousEnd ? "rollovers" : first < previousEnd ? "windows" : "reloads"] += 1;
+      previousEnd = Math.max(previousEnd, pacingLastInstant(segment));
+    });
+    return {
+      segments: ordered.length,
+      joins,
+      migrated: ordered.some(segment => segment.migratedFrom === 1),
+      overlapMs,
+      slot: {start: slot.start, end: slot.end, startAt: slotStart, endAt: slotEnd, ms: slotMs},
+      openFrom: pieces.length ? pieces[0].start : null,
+      onScreenUntil: pieces.length ? pieces[pieces.length - 1].end : null,
+      started: changes.length ? changes[0].start : null,
+      lastMainChange,
+      overrunMs: lastMainChange !== null && Number.isFinite(slotEnd) ? lastMainChange - slotEnd : null,
+      furthest,
+      mainTotal: mainSlideIds.length,
+      notShown,
+      beforeMs: phaseMs.before, inSlotMs: phaseMs.slot, afterMs: phaseMs.after,
+      beforeChanges: changesIn("before"), slotChanges: changesIn("slot"), afterChanges: changesIn("after"),
+      offSlidesMs, pausedMs, pausedByReason, untrackedMs: Math.max(0, offSlidesMs - pausedMs),
+      sections: sectionList,
+      slides: [...perSlide.values()],
+      arrivals: arrivals.length,
+      visits: ordered.reduce((n, segment) => n + (segment.visits || []).length, 0),
+      pauses: ordered.reduce((n, segment) => n + (segment.pauses || []).length, 0),
+    };
+  }
+
+  function pacingExportSummary(summary) {
+    const at = ms => ms === null || !Number.isFinite(ms) ? null : pacingIso(ms);
+    return {
+      deckOpenFrom: at(summary.openFrom),
+      onScreenUntil: at(summary.onScreenUntil),
+      started: at(summary.started),
+      lastMainSlideChange: at(summary.lastMainChange),
+      overrunMs: summary.overrunMs,
+      furthestMainSlide: summary.furthest
+        ? {number: summary.furthest.number, label: summary.furthest.label, at: at(summary.furthest.at)} : null,
+      mainSlides: summary.mainTotal,
+      mainSlidesNotShown: summary.notShown,
+      slotMs: summary.slot.ms,
+      beforeMs: summary.beforeMs,
+      inSlotMs: summary.inSlotMs,
+      afterMs: summary.afterMs,
+      slideChanges: {before: summary.beforeChanges, slot: summary.slotChanges, after: summary.afterChanges},
+      offSlidesInSlotMs: summary.offSlidesMs,
+      pausedInSlotMs: summary.pausedMs,
+      pausedInSlotByReason: summary.pausedByReason,
+      untrackedInSlotMs: summary.untrackedMs,
+      overlapMs: summary.overlapMs,
+      segments: summary.segments,
+      migrated: summary.migrated,
+      arrivals: summary.arrivals,
+      sections: summary.sections.map(section => ({
+        name: section.name, backup: section.backup, enteredAt: at(section.firstAt),
+        slidesShown: section.slides.length, beforeMs: section.beforeMs,
+        inSlotMs: section.slotMs, afterMs: section.afterMs,
+      })),
+      slides: summary.slides.map(row => ({
+        slideId: row.slideId, number: row.number, label: row.label, title: row.title,
+        section: row.section, backup: row.backup, firstAt: at(row.firstAt), totalMs: row.totalMs,
+        arrivals: row.arrivals, beforeMs: row.beforeMs, inSlotMs: row.slotMs, afterMs: row.afterMs,
+      })),
+    };
+  }
+
+  // Saving to disk. Every request carries a whole segment; the server
+  // keeps the highest revision, so retries and overlaps are harmless.
+  const pacingDisk = {
+    blocked: null, // {code, refused?}: this page may not write
+    deckBlocked: null, // 404/422 code for this page's own deck
+    blockedDates: new Set(), // 429: too many segments for the date
+    failing: null, // {since, reason} while retrying
+    refusal: null,
+    lastSavedAt: 0,
+    pendingOthers: 0, // older entries still being retried
+    heldOthers: [], // reasons of older entries this server will not take
+    sweeping: false,
+    sweepBackoff: 0,
+    sweepTimer: 0,
+    listeners: new Set(),
+    changed() {
+      this.listeners.forEach(listener => {
+        try { listener(); } catch (_) { /* a listener never stops the others */ }
+      });
+    },
+  };
+
+  function pacingCanSend(record) {
+    const sink = pacingSink();
+    if (!sink || sink.inert || typeof sink.save !== "function" || pacingDisk.blocked) return false;
+    if (pacingDisk.deckBlocked && pacingPath(record.path) === pacingPath()) return false;
+    return !pacingDisk.blockedDates.has(record.date);
+  }
+
+  function pacingFlush(entry, {closing = false} = {}) {
+    const record = entry.record;
+    if (entry.sync.state === "refused" || record.rev <= (entry.sync.rev || 0)) return;
+    if (!pacingCanSend(record)) return;
+    if (!record.unit) {
+      record.unit = pacingStore.attributeUnit(record);
+      if (!record.unit) return;
+    }
+    if (closing) {
+      // A close-time save rides keepalive when it fits the browser's
+      // budget. It may overlap an ordinary request; the revision check on
+      // the server orders the two.
+      if ((entry.sentRev || 0) >= record.rev) return;
+      const body = JSON.stringify(record);
+      if (pacingBytes(body) <= KEEPALIVE_MAX_BYTES) {
+        pacingSend(entry, {keepalive: true, body});
+        return;
+      }
+    }
+    if (entry.inflight) {
+      entry.again = true;
+      return;
+    }
+    if (!closing && Date.now() < (entry.retryAt || 0)) return;
+    pacingSend(entry);
+  }
+
+  function pacingSend(entry, {keepalive = false, body = JSON.stringify(entry.record)} = {}) {
+    const sink = pacingSink();
+    const rev = entry.record.rev;
+    entry.sentRev = Math.max(entry.sentRev || 0, rev);
+    entry.lastSentAt = Date.now();
+    if (!keepalive) entry.inflight = true;
+    let request;
+    try { request = Promise.resolve(sink.save(JSON.parse(body), {keepalive})); }
+    catch (_) { request = Promise.resolve(null); }
+    return request
+      .then(result => result && typeof result === "object" ? result : {ok: false, status: 0, error: "network"},
+        () => ({ok: false, status: 0, error: "network"}))
+      .then(result => {
+        if (!keepalive) entry.inflight = false;
+        pacingResult(entry, rev, result);
+        if (!keepalive && entry.again) {
+          entry.again = false;
+          pacingFlush(entry);
+        }
+        return result;
+      });
+  }
+
+  const pacingTransient = result => !result.ok && !PACING_FINAL.includes(Number(result.status) || 0);
+
+  function pacingResult(entry, rev, result) {
+    const status = Number(result.status) || 0;
+    const code = pacingText(result.error || (status ? `http-${status}` : "network"), 60);
+    const sync = entry.sync;
+    const savedUpTo = value => {
+      sync.rev = Math.max(sync.rev || 0, Number.isInteger(value) ? value : rev);
+      sync.state = sync.rev >= entry.record.rev ? "saved" : "pending";
+      sync.error = null;
+      entry.backoff = 0;
+      entry.retryAt = 0;
+      pacingDisk.failing = null;
+    };
+    if (result.ok) {
+      savedUpTo(result.rev);
+      if (result.file) sync.file = pacingText(result.file, 300);
+      sync.at = typeof result.savedAt === "string" ? result.savedAt : new Date().toISOString();
+      pacingDisk.lastSavedAt = Date.now();
+      if (entry.live) pacingDisk.refusal = null;
+    } else if (status === 409 && code === "stale") {
+      // The disk already holds this revision or a newer one.
+      savedUpTo(result.rev);
+    } else if (PACING_REFUSED.includes(status) || status === 409) {
+      sync.state = "refused";
+      sync.error = code;
+      if (entry.live) pacingDisk.refusal = code;
+      entry.onRefused?.();
+    } else if (status === 403) {
+      sync.error = code;
+      pacingDisk.blocked = {code};
+    } else if (status === 404 || status === 422) {
+      // Browser-only for this deck when its own recording is refused.
+      // An older entry stays pending with its reason: on a single-unit
+      // serve every unit shares /webdeck/, and a date dropped from the
+      // schedule says nothing about today's lecture.
+      sync.error = code;
+      if (entry.live && pacingPath(entry.record.path) === pacingPath()) pacingDisk.deckBlocked = code;
+    } else if (status === 429) {
+      sync.error = code;
+      pacingDisk.blockedDates.add(entry.record.date);
+    } else {
+      sync.error = code;
+      pacingDisk.failing ||= {
+        since: Date.now(),
+        reason: status === 0 ? "server unreachable" : status === 503 ? "server could not write"
+          : status === 408 ? "request timed out" : `HTTP ${status}`,
+      };
+      if (!entry.sweep) {
+        const delay = BACKOFF_S[Math.min(entry.backoff || 0, BACKOFF_S.length - 1)] * 1000;
+        entry.backoff = (entry.backoff || 0) + 1;
+        entry.retryAt = Date.now() + delay;
+        clearTimeout(entry.retryTimer);
+        entry.retryTimer = setTimeout(() => {
+          entry.retryAt = 0;
+          pacingFlush(entry);
+        }, delay);
+      }
+    }
+    pacingStore.putSync(entry);
+    pacingDisk.changed();
+  }
+
+  // Answers after which this server will not take an older entry as things
+  // stand (another unit, a date no longer scheduled, ...). The entry stays
+  // pending for a later page load or another server, but is not retried here.
+  const PACING_HELD = ["not-found", "disabled", "no-schedule", "not-scheduled", "wrong-unit", "wrong-path",
+    "too-many-segments"];
+
+  function pacingCountPending() {
+    const others = pacingStore.pending().filter(entry => !pacingLive.has(entry.record.segment));
+    const held = [];
+    let retrying = 0;
+    for (const entry of others) {
+      if (PACING_HELD.includes(entry.sync.error)) held.push(entry.sync.error);
+      else if (!entry.record.unit && !pacingStore.attributeUnit(entry.record)) held.push("unit unknown");
+      else retrying += 1;
+    }
+    pacingDisk.pendingOthers = retrying;
+    pacingDisk.heldOthers = held;
+  }
+
+  function pacingScheduleSweep() {
+    clearTimeout(pacingDisk.sweepTimer);
+    const delay = BACKOFF_S[Math.min(pacingDisk.sweepBackoff, BACKOFF_S.length - 1)] * 1000;
+    pacingDisk.sweepBackoff += 1;
+    pacingDisk.sweepTimer = setTimeout(pacingSweep, delay);
+  }
+
+  // Upload every pending journal entry on this origin, oldest first and
+  // one at a time, each to its own record's endpoint.
+  async function pacingSweep() {
+    const sink = pacingSink();
+    if (pacingDisk.sweeping || !sink || sink.inert || pacingDisk.blocked) return;
+    pacingDisk.sweeping = true;
+    let transient = false;
+    try {
+      const pending = pacingStore.pending().filter(entry => !pacingLive.has(entry.record.segment))
+        .sort((a, b) => a.record.date.localeCompare(b.record.date)
+          || pacingFirstInstant(a.record) - pacingFirstInstant(b.record));
+      for (const entry of pending) {
+        if (pacingDisk.blocked) break;
+        if (!pacingCanSend(entry.record)) continue;
+        if (!entry.record.unit) {
+          entry.record.unit = pacingStore.attributeUnit(entry.record);
+          if (!entry.record.unit) continue;
+        }
+        entry.sweep = true;
+        if (pacingTransient(await pacingSend(entry))) {
+          transient = true;
+          break;
+        }
+      }
+    } finally {
+      pacingDisk.sweeping = false;
+      pacingCountPending();
+      if (transient) pacingScheduleSweep();
+      else pacingDisk.sweepBackoff = 0;
+      pacingDisk.changed();
+    }
+  }
+
+  function pacingRecovery(spec) {
+    const page = {path: pacingPath(), deckTitle: spec ? pacingDeckTitle(spec) : ""};
+    try { pacingStore.migrateV1(page); } catch (error) { console.warn("lecturedeck: pacing migration stopped", error); }
+    try { pacingStore.prune(); } catch (_) { /* optional */ }
+    pacingCountPending();
+    pacingDisk.changed();
+    pacingSweep();
+  }
+
+  // Why this page saves only in the browser, or null when it saves to disk.
+  function pacingBrowserOnlyReason(date) {
+    const sink = pacingSink();
+    const port = location.port || (location.protocol === "https:" ? "443" : "80");
+    const local = `open the deck at http://127.0.0.1:${port} to save to disk`;
+    const elsewhere = "only a browser on the computer serving the deck saves to disk";
+    const proxied = "the deck is opened through a proxy, which never saves to disk";
+    if (!sink) {
+      return {
+        absent: "this server does not save records yet: restart lecturedeck serve",
+        off: "disk saving is off on this server",
+        "not-this-machine": elsewhere,
+        "use-local-address": local,
+        proxied,
+        static: "static copy",
+        on: "reload the page to save to disk",
+      }[serverPacing] || "this page has no disk saving";
+    }
+    if (sink.inert) return sink.inert === "automation" ? "automated browser" : `disk saving is off (${pacingText(sink.inert, 40)})`;
+    const blocked = pacingDisk.blocked;
+    if (blocked && !blocked.refused) {
+      return {"not-same-machine": elsewhere, host: local, proxied}[blocked.code]
+        || `the server refused this page (${blocked.code})`;
+    }
+    if (pacingDisk.deckBlocked) {
+      return {
+        disabled: "disk saving is off on this server",
+        "no-schedule": "the server finds no schedule for this deck",
+        "not-scheduled": "this date is not in the deck's schedule on the server",
+        "wrong-unit": "the server serves this deck under another unit",
+        "wrong-path": "the server serves this deck at another address",
+      }[pacingDisk.deckBlocked] || `the server refused this deck (${pacingDisk.deckBlocked})`;
+    }
+    if (date && pacingDisk.blockedDates.has(date)) return "too many recordings for this date";
+    return null;
+  }
+
+  function setupLecturePacer(timing, spec) {
+    if (printMode || !Array.isArray(timing?.dates) || !document.querySelector("#lecture-clock")) return;
+    let clock;
+    try { clock = pacingClock(timing.timeZone); } catch (_) { return; }
+    const dates = new Set(timing.dates.filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date)));
+    const start = pacingSeconds(timing.start), end = pacingSeconds(timing.end);
+    const windowFrom = Math.max(0, start - PACING_LEAD_S);
+    const windowTo = Math.min(86400, end + PACING_TAIL_S);
+    const slides = Array.isArray(spec?.slides) ? spec.slides : [];
+    const numbering = slideNumbering(slides);
+    const path = pacingPath();
+    const deckTitle = pacingDeckTitle(spec);
+    const page = {path, deckTitle};
+    const zonedParts = ms => clock.parts(ms);
+    const hms = ms => zonedParts(ms).hms;
+    const hm = ms => zonedParts(ms).hm;
+    const slideIdAt = i => pacingId(slides[i]?.id, `slide-${i + 1}`);
+    const mainSlideIds = slides.map((_, i) => i).filter(i => !numbering.inAppendix(i)).map(slideIdAt);
+    const sectionAt = i => {
+      let section = "Opening";
+      for (let j = 0; j <= i; j += 1) {
+        if (slides[j]?.type === "section") section = pacingText(htmlText(slides[j].title)) || section;
+      }
+      return section;
+    };
+    const titleAt = (i, frame) => {
+      const heading = Number(frame?.dataset.index) === i ? frame.querySelector("h1")?.textContent : "";
+      const slide = slides[i] || {};
+      return pacingText(heading)
+        || pacingText(htmlText(slide.title || slide.interactive?.title || slide.video?.title))
+        || `Slide ${i + 1}`;
+    };
+    const fullscreen = () => Boolean(document.fullscreenElement || document.webkitFullscreenElement)
+      || document.body.classList.contains("pseudo-fullscreen");
+
     const button = document.createElement("button");
-    button.id = "pacing-button"; button.type = "button"; button.textContent = "Pacing";
+    button.id = "pacing-button";
+    button.type = "button";
+    button.textContent = "Pacing";
     button.setAttribute("aria-haspopup", "dialog");
     controlsTools?.append(button);
+    // Built once; opening re-renders only the body and the footer.
     const dialog = document.createElement("dialog");
-    dialog.id = "pacing-dialog"; dialog.className = "appearance-dialog pacing-dialog";
-    dialog.setAttribute("aria-label", "Lecture pacing report");
+    dialog.id = "pacing-dialog";
+    dialog.className = "appearance-dialog pacing-dialog";
+    dialog.setAttribute("aria-labelledby", "pacing-title");
+    dialog.innerHTML = '<header class="pacing-head"><h2 id="pacing-title">Pacing</h2>'
+      + '<button id="pacing-close" class="appearance-close" type="button">Close</button>'
+      + '<select id="pacing-date" aria-label="Recorded date" hidden></select></header>'
+      + '<div class="pacing-body" tabindex="0" role="region" aria-label="Pacing report"></div>'
+      + '<footer class="pacing-foot"><p id="pacing-status" role="status" data-state="neutral"></p>'
+      + '<button id="pacing-export" class="appearance-close" type="button">Export JSON</button></footer>';
     document.body.append(dialog);
-    const save = () => {
-      if (!record) return;
-      try { localStorage.setItem(recordKey, JSON.stringify(record)); localStorage.setItem(prefix + "latest", recordKey); lastKey = recordKey; }
-      catch (_) { storageAvailable = false; }
-    };
-    const sample = () => {
-      const now = Date.now();
-      const parts = Object.fromEntries(formatter.formatToParts(new Date(now)).map(p => [p.type, p.value]));
-      const date = `${parts.year}-${parts.month}-${parts.day}`;
-      const seconds = +parts.hour * 3600 + +parts.minute * 60 + +parts.second;
-      const frame = document.querySelector("#deck .slide-frame");
+    const titleNode = dialog.querySelector("#pacing-title");
+    const dateSelect = dialog.querySelector("#pacing-date");
+    const body = dialog.querySelector(".pacing-body");
+    const status = dialog.querySelector("#pacing-status");
+    const exportButton = dialog.querySelector("#pacing-export");
+
+    let seg = null; // the open segment's journal entry
+    let openVisit = null; // {visit, start, until, index}
+    let openPause = null; // {pause, start, why}
+    let last = null; // {wall, mono} of the previous sample
+    let active = false;
+    let gone = false;
+    let urgent = false;
+    let slideChanged = false;
+    let debounceTimer = 0;
+    let liveRefusals = 0;
+    let selectedDate = null;
+    let savedForDate = null;
+    let probeState = null;
+    let probing = false;
+    const pageEntries = new Map();
+    const finished = [];
+
+    function newSegment(now, zoned) {
+      const at = target => epochAtSecond(now, zoned.seconds, target);
+      const bounds = {startAt: at(start), endAt: at(end), from: at(windowFrom), to: at(windowTo)};
+      const record = {
+        schema: 2, kind: "lecturedeck-pacing-segment", segment: pacingSegmentId(), rev: 0, unit: null,
+        path, deck: deckTitle, viewer: VIEWER_VERSION, date: zoned.date, opened: zoned.hhmm,
+        timeZone: clock.timeZone,
+        slot: {start: timing.start, end: timing.end, startAt: pacingIso(bounds.startAt), endAt: pacingIso(bounds.endAt)},
+        window: {before: PACING_LEAD_S / 60, after: PACING_TAIL_S / 60, from: pacingIso(bounds.from), to: pacingIso(bounds.to)},
+        slides: {}, visits: [], pauses: [], fullscreenMs: 0,
+      };
+      record.unit = pacingStore.attributeUnit(record, page);
+      const entry = {
+        key: pacingStore.keyFor(record), record, bounds, live: true,
+        sync: {rev: 0, file: null, at: null, state: "pending", error: null},
+        sentRev: 0, inflight: false, again: false, retryAt: 0, backoff: 0, lastSentAt: 0,
+      };
+      entry.onRefused = () => refused(entry);
+      pacingLive.add(record.segment);
+      pageEntries.set(record.segment, entry);
+      return entry;
+    }
+
+    const phaseAt = t => t < seg.bounds.startAt ? "before" : t < seg.bounds.endAt ? "slot" : "after";
+
+    function startVisit(t, index) {
+      const slideId = slideIdAt(index);
+      const info = {number: index + 1, label: numbering.label(index),
+        title: titleAt(index, deck.querySelector(".slide-frame")), section: sectionAt(index)};
+      if (numbering.inAppendix(index)) info.backup = true;
+      seg.record.slides[slideId] = info;
+      const visit = {slideId, startedAt: pacingIso(t), durationMs: 0, phase: phaseAt(t)};
+      seg.record.visits.push(visit);
+      openVisit = {visit, start: t, until: t, index};
+    }
+
+    function startPause(t, why) {
+      const pause = {startedAt: pacingIso(t), durationMs: 0, why};
+      seg.record.pauses.push(pause);
+      openPause = {pause, start: t, why};
+    }
+
+    // Extend the open visit or pause to now, splitting a visit exactly at
+    // a phase boundary. Returns whether the record changed.
+    function advance(now) {
+      const t = Math.min(now, seg.bounds.to);
+      let changed = false;
+      if (openVisit && t > openVisit.until) {
+        const credit = t - openVisit.until;
+        for (const boundary of [seg.bounds.startAt, seg.bounds.endAt]) {
+          if (openVisit.start < boundary && boundary <= t) {
+            openVisit.visit.durationMs = boundary - openVisit.start;
+            startVisit(boundary, openVisit.index);
+            urgent = true;
+          }
+        }
+        openVisit.visit.durationMs = t - openVisit.start;
+        openVisit.until = t;
+        if (fullscreen()) seg.record.fullscreenMs += credit;
+        changed = true;
+      }
+      if (openPause && t - openPause.start > openPause.pause.durationMs) {
+        openPause.pause.durationMs = t - openPause.start;
+        changed = true;
+      }
+      return changed;
+    }
+
+    function finish() {
+      if (!seg) return;
+      finished.push(seg);
+      seg = null;
+      openVisit = null;
+      openPause = null;
+    }
+
+    function rollover(now, zoned) {
+      const index = openVisit?.index;
+      const why = openPause?.why;
+      finish();
+      seg = newSegment(now, zoned);
+      // The current slide continues as a new visit, not an arrival.
+      if (index !== undefined) startVisit(now, index);
+      else if (why) startPause(now, why);
+      seg.record.rev += 1;
+      pacingStore.put(seg);
+    }
+
+    // A refused live segment rolls to a new one once; a second refusal
+    // stops disk saving for this page.
+    function refused(entry) {
+      if (entry !== seg || !last) return;
+      liveRefusals += 1;
+      if (liveRefusals >= 2) {
+        pacingDisk.blocked = {code: entry.sync.error, refused: true};
+        return;
+      }
+      rollover(last.wall, zonedParts(last.wall));
+      finished.length = 0;
+      pacingFlush(seg);
+    }
+
+    function sample({quiet = false} = {}) {
+      const now = Date.now(), mono = performance.now();
+      const previous = last;
+      last = {wall: now, mono};
+      const dirty = new Set();
+      if (seg && previous) {
+        const dWall = now - previous.wall, dMono = mono - previous.mono;
+        const skew = Math.abs(dWall - dMono) > SKEW_MS;
+        // A hidden tab's timers are throttled, so only its pause may span
+        // a long gap; an overview, report or dialog pause ends at the gap.
+        const gap = openPause?.why !== "hidden" && (dWall > GAP_MS || dMono > GAP_MS);
+        if (dWall < 0 || skew || gap) {
+          // Sleep, frozen timers or a clock step: credit nothing. The
+          // visit or pause stays ended at the previous sample.
+          openVisit = null;
+          openPause = null;
+          const until = Math.min(Math.max(now, previous.wall), seg.bounds.to);
+          seg.record.pauses.push({startedAt: pacingIso(previous.wall), durationMs: until - previous.wall,
+            why: dWall < 0 || skew ? "clock" : "suspended"});
+          dirty.add(seg);
+          urgent = true;
+          if (now < previous.wall) finish();
+        } else if (advance(now)) dirty.add(seg);
+        if (seg && now >= seg.bounds.to) {
+          // The window is over: the visit closed at window.to.
+          dirty.add(seg);
+          finish();
+        }
+      }
+      const zoned = zonedParts(now);
+      const frame = deck.querySelector(".slide-frame");
       const index = Number(frame?.dataset.index);
-      const active = dates.has(date) && seconds >= start && seconds < end
-        && document.visibilityState === "visible" && !document.body.classList.contains("overview-open")
-        && !dialog.open && Boolean(frame);
-      // Clamp the last interval to the scheduled finish; never count sleep/closed-tab gaps.
-      if (previous && record) {
-        const elapsed = Math.max(0, Math.min(now, previous.finish) - previous.at);
-        // A suspended browser should not silently count a whole sleep interval.
-        if (elapsed <= 10000) record.visits[previous.visit].durationMs += elapsed;
-        save();
+      const inWindow = !gone && dates.has(zoned.date) && zoned.seconds >= windowFrom && zoned.seconds < windowTo;
+      const showing = inWindow && Boolean(frame) && Number.isInteger(index);
+      const why = document.visibilityState !== "visible" ? "hidden"
+        : dialog.open ? "report"
+          : modalOpen() ? "dialog"
+            : document.body.classList.contains("overview-open") ? "overview" : null;
+      const wasActive = active;
+      active = showing && !why;
+      if (!seg && active) {
+        seg = newSegment(now, zoned);
+        dirty.add(seg);
       }
-      const changed = !previous || previous.id !== frame?.dataset.slideId || previous.date !== date;
-      if (active) {
-        const key = prefix + date;
-        if (recordKey !== key) {
-          recordKey = key;
-          record = read(key) || {schema: 1, date, timeZone: timing.timeZone,
-            start: timing.start, end: timing.end, deck: spec.meta.tabTitle || spec.meta.title || "Lecture",
-            path: location.pathname, visits: []};
+      if (seg) {
+        if (active) {
+          if (openPause) openPause = null;
+          if (!openVisit) {
+            startVisit(now, index);
+            dirty.add(seg);
+          } else if (openVisit.index !== index) {
+            startVisit(now, index);
+            slideChanged = true;
+            dirty.add(seg);
+          }
+        } else {
+          if (openVisit) {
+            openVisit = null;
+            dirty.add(seg);
+          }
+          if (openPause && openPause.why !== why) openPause = null;
+          if (why && showing && !openPause) {
+            startPause(now, why);
+            dirty.add(seg);
+          }
         }
-        let visit = previous?.visit;
-        if (changed) {
-          let section = "Opening";
-          for (let i = 0; i <= index; i++) if (spec.slides[i]?.type === "section") section = spec.slides[i].title;
-          const slide = spec.slides[index] || {};
-          visit = record.visits.length;
-          // `number` stays the raw position for older readers; `label` adds
-          // the audience-facing name (B1, …) when the deck has an appendix.
-          record.visits.push({slideId: frame.dataset.slideId || `slide-${index + 1}`,
-            number: index + 1, ...(numbering.hasAppendix ? {label: numbering.label(index)} : {}),
-            title: frame.querySelector("h1")?.textContent || slide.title || "Slide",
-            section: String(section).replace(/<[^>]*>/g, ""), startedAt: new Date(now).toISOString(), durationMs: 0});
-        }
-        previous = {at: now, finish: now + (end - seconds) * 1000 - (now % 1000),
-          id: frame.dataset.slideId, date, visit};
-        save();
-      } else previous = null;
+        if (wasActive !== active) urgent = true;
+      }
+      let roll = false;
+      for (const entry of dirty) {
+        entry.record.rev += 1;
+        const json = JSON.stringify(entry.record);
+        pacingStore.put(entry, json);
+        if (entry === seg && pacingBytes(json) > ROLLOVER_BYTES) roll = true;
+      }
+      if (roll) {
+        rollover(now, zoned);
+        urgent = true;
+      }
+      if (quiet) {
+        // The caller saves with keepalive instead.
+        finished.length = 0;
+        urgent = false;
+        slideChanged = false;
+      } else {
+        while (finished.length) pacingFlush(finished.shift());
+        if (seg) schedule(now);
+      }
       button.dataset.recording = String(active);
-      button.title = active ? "Recording slide time locally" : "Review recorded slide time";
-    };
-    const duration = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
-    const show = () => {
-      sample();
-      const data = record || read(lastKey);
-      const totals = new Map();
-      for (const visit of data?.visits || []) {
-        const old = totals.get(visit.slideId) || {...visit, durationMs: 0, visits: 0};
-        old.durationMs += visit.durationMs; old.visits++; totals.set(visit.slideId, old);
+      updateSaved();
+      if (dialog.open) renderStatus();
+    }
+
+    function schedule(now) {
+      if (urgent) {
+        // A phase boundary, an active/paused transition or a gap.
+        urgent = false;
+        slideChanged = false;
+        clearTimeout(debounceTimer);
+        debounceTimer = 0;
+        pacingFlush(seg);
+      } else if (slideChanged) {
+        // Paging through many slides becomes one send.
+        slideChanged = false;
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          debounceTimer = 0;
+          if (seg) pacingFlush(seg);
+        }, CHANGE_DEBOUNCE_MS);
+      } else if (!debounceTimer && now - (seg.lastSentAt || 0) >= HEARTBEAT_MS) {
+        // While recording or paused: a growing pause (the report held
+        // open after class) reaches disk too, and the footer stays true.
+        pacingFlush(seg);
       }
-      const total = [...totals.values()].reduce((n, v) => n + v.durationMs, 0);
-      dialog.innerHTML = `<div class="appearance-head"><h2>Pacing</h2><button id="pacing-close" class="appearance-close" type="button">Close</button></div>
-        <p>${data ? `${escapeHtml(data.date)} · ${escapeHtml(data.start)}–${escapeHtml(data.end)} · ${duration(total)} on slides` : "No recorded lecture yet."}</p>
-        <p class="appearance-note">Automatic on scheduled teaching dates. Pauses in overview, this report and hidden tabs. Saved only in this browser${storageAvailable ? "." : "; storage unavailable — export before closing."}</p>
-        <table><thead><tr><th>Slide</th><th>Section / title</th><th>Time</th><th>Visits</th></tr></thead><tbody>${[...totals.values()].map(v => `<tr><td>${escapeHtml(String(v.label ?? v.number))}</td><td>${escapeHtml(v.section)}<br>${escapeHtml(v.title)}</td><td>${duration(v.durationMs)}</td><td>${v.visits}</td></tr>`).join("")}</tbody></table>
-        <button id="pacing-export" class="appearance-close" type="button" ${data ? "" : "disabled"}>Export JSON</button>`;
-      dialog.querySelector("#pacing-close").addEventListener("click", () => dialog.close());
-      dialog.querySelector("#pacing-export").addEventListener("click", () => {
-        const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}));
-        const a = document.createElement("a"); a.href = url; a.download = `lecture-pacing-${data.date}.json`; a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function savedState(live) {
+      if (pacingBrowserOnlyReason(live?.record.date)) return "browser";
+      if (pacingDisk.failing || pacingDisk.blocked?.refused || live?.sync.state === "refused") return "failing";
+      return "disk";
+    }
+
+    function updateSaved() {
+      const saved = savedState(seg);
+      button.dataset.saved = saved;
+      button.title = active
+        ? `Recording slide time · ${{disk: "saving to disk", browser: "saved in this browser only", failing: "disk saving failing"}[saved]}`
+        : "Lecture pacing report";
+    }
+
+    const savedTime = at => Number.isFinite(Date.parse(at)) ? hms(Date.parse(at)) : "";
+
+    function recordsFromText() {
+      const pad = value => String(value).padStart(2, "0");
+      const from = `${pad(Math.floor(windowFrom / 3600))}:${pad(Math.floor((windowFrom % 3600) / 60))}`;
+      const today = zonedParts(Date.now());
+      if (dates.has(today.date) && today.seconds < windowTo) return `records from ${from}`;
+      const next = [...dates].sort().find(date => date > today.date);
+      return next ? `records from ${from} on ${pacingDay(next)}` : "no teaching date ahead";
+    }
+
+    function statusInfo() {
+      const live = seg || [...pageEntries.values()].pop() || null;
+      if (pacingDisk.blocked?.refused) return ["error", `Disk refused this recording: ${pacingDisk.blocked.code}`];
+      const reason = pacingBrowserOnlyReason(live?.record.date ?? selectedDate);
+      if (reason && !pacingStore.available) {
+        return ["error", `Kept only while this page is open — ${reason}; browser storage is unavailable, so export before closing`];
+      }
+      if (reason) return ["warn", `Saved in this browser only — ${reason}`];
+      if (pacingDisk.failing) {
+        return ["error", `Disk save failing since ${hms(pacingDisk.failing.since)} (${pacingDisk.failing.reason})`
+          + " — retrying; every second is kept in this browser"];
+      }
+      if (live) {
+        if (live.sync.state === "refused" || (pacingDisk.refusal && !live.sync.rev)) {
+          return ["error", `Disk refused this recording: ${live.sync.error || pacingDisk.refusal}`];
+        }
+        if (live.sync.rev && (live.sync.rev >= live.record.rev
+          || Date.now() - pacingDisk.lastSavedAt < HEARTBEAT_MS + 5000)) {
+          return ["ok", `Saved to disk ${savedTime(live.sync.at)} · ${pacingShortFile(live.sync.file)}`, live.sync.file];
+        }
+        return ["warn", pacingDisk.lastSavedAt ? `Saving… last saved ${hms(pacingDisk.lastSavedAt)}` : "Saving…"];
+      }
+      const pending = pacingDisk.pendingOthers;
+      if (pending) return ["warn", `${pending} recording${pending === 1 ? "" : "s"} not yet on disk — retrying`];
+      if (savedForDate) {
+        return ["ok", `Saved to disk ${savedTime(savedForDate.sync.at)} · ${pacingShortFile(savedForDate.sync.file)}`,
+          savedForDate.sync.file];
+      }
+      if (probeState?.ok) {
+        // Older entries this server will not take never hide the check.
+        const held = pacingDisk.heldOthers;
+        const note = held.length ? ` · ${held.length} older recording${held.length === 1 ? "" : "s"} not accepted`
+          + ` by this server (${[...new Set(held)].join(", ")})` : "";
+        return ["neutral", `Disk saving ready on this computer · ${recordsFromText()}${note}`];
+      }
+      if (probeState?.status === 503) return ["error", "Disk saving not ready — the unit folder is not writable"];
+      if (probeState) return ["error", `Disk saving check failed (${probeState.error || probeState.status})`];
+      return ["neutral", "Checking disk saving…"];
+    }
+
+    function renderStatus() {
+      const [state, text, title] = statusInfo();
+      status.dataset.state = state;
+      status.textContent = text;
+      if (title) status.title = title;
+      else status.removeAttribute("title");
+    }
+
+    function probe() {
+      const sink = pacingSink();
+      if (probing || !sink || sink.inert || typeof sink.probe !== "function") return;
+      if (probeState && Math.abs(Date.now() - probeState.at) < 30000) return;
+      probing = true;
+      let request;
+      try { request = Promise.resolve(sink.probe(path)); } catch (_) { request = Promise.resolve(null); }
+      request
+        .then(result => result && typeof result === "object" ? result : {ok: false, status: 0, error: "network"},
+          () => ({ok: false, status: 0, error: "network"}))
+        .then(result => {
+          const code = pacingText(result.error || "", 60);
+          probeState = {ok: Boolean(result.ok), status: Number(result.status) || 0, error: code, at: Date.now()};
+          if (probeState.status === 403 && !pacingDisk.blocked) pacingDisk.blocked = {code};
+          if (probeState.status === 404 && code && !pacingDisk.deckBlocked) pacingDisk.deckBlocked = code;
+        })
+        .finally(() => {
+          probing = false;
+          pacingDisk.changed();
+        });
+    }
+
+    function reportEntries() {
+      const entries = new Map(pacingStore.list({path}).map(entry => [entry.key, entry]));
+      for (const entry of pageEntries.values()) entries.set(entry.key, entry);
+      return [...entries.values()];
+    }
+
+    const helpMarkup = () => `<p class="pacing-help">Records automatically on teaching dates from ${PACING_LEAD_S / 60} min before to ${PACING_TAIL_S / 60} min after the slot. Overview, dialogs and hidden tabs pause it; gaps over ${GAP_MS / 1000} s are never counted. Shows this browser's recordings; files on disk may include other browsers.</p>`;
+
+    function timelineMarkup(segments, summary) {
+      const rows = [];
+      const slotStart = summary.slot.startAt, slotEnd = summary.slot.endAt;
+      if (Number.isFinite(slotStart)) rows.push({at: slotStart, rank: 0, html: `<tr class="pacing-boundary"><td colspan="4">— ${escapeHtml(summary.slot.start)} scheduled start —</td></tr>`});
+      if (Number.isFinite(slotEnd)) rows.push({at: slotEnd, rank: 0, html: `<tr class="pacing-boundary"><td colspan="4">— ${escapeHtml(summary.slot.end)} scheduled end —</td></tr>`});
+      let previousEnd = -Infinity;
+      segments.forEach((segment, i) => {
+        const first = pacingFirstInstant(segment);
+        if (i > 0 && first !== previousEnd) {
+          const text = first < previousEnd ? "another window opened" : "page reloaded";
+          rows.push({at: first, rank: 1, html: `<tr class="pacing-boundary pacing-reload"><td colspan="4">— ${text} —</td></tr>`});
+        }
+        previousEnd = Math.max(previousEnd, pacingLastInstant(segment));
+        for (const visit of segment.visits || []) {
+          const info = segment.slides?.[visit.slideId] || {};
+          rows.push({at: Date.parse(visit.startedAt), rank: 3, html: `<tr data-phase="${escapeHtml(visit.phase)}"><td>${hms(Date.parse(visit.startedAt))}</td><td>${escapeHtml(info.label ?? info.number ?? "")}</td><td>${escapeHtml(info.title || visit.slideId)}</td><td>${pacingDuration(visit.durationMs)}</td></tr>`});
+        }
+        for (const pause of segment.pauses || []) {
+          rows.push({at: Date.parse(pause.startedAt), rank: 2, html: `<tr class="pacing-pause"><td>${hms(Date.parse(pause.startedAt))}</td><td colspan="2">Paused · ${escapeHtml(pause.why)}</td><td>${pacingDuration(pause.durationMs)}</td></tr>`});
+        }
       });
-      dialog.showModal(); sample();
-    };
-    button.addEventListener("click", show);
-    dialog.addEventListener("close", () => { sample(); button.focus(); });
-    const observer = new MutationObserver(sample);
+      rows.sort((a, b) => a.at - b.at || a.rank - b.rank);
+      return `<details class="pacing-timeline"><summary>Timeline · ${summary.visits} visit${summary.visits === 1 ? "" : "s"} · ${summary.pauses} pause${summary.pauses === 1 ? "" : "s"}</summary><table><thead><tr><th scope="col">Time</th><th scope="col">Slide</th><th scope="col">Title</th><th scope="col">Duration</th></tr></thead><tbody>${rows.map(row => row.html).join("")}</tbody></table></details>`;
+    }
+
+    function reportMarkup(segments) {
+      const s = summarizePacing(segments, {mainSlideIds});
+      const slotStartText = s.slot.start || timing.start, slotEndText = s.slot.end || timing.end;
+      const over = s.overrunMs !== null && s.overrunMs > 0;
+      let headline = "No main-slide change recorded";
+      if (s.lastMainChange !== null) {
+        headline = `Last main-slide change ${hms(s.lastMainChange)}`;
+        if (s.overrunMs !== null) {
+          // In whole seconds floored like the wall times beside it (the
+          // scheduled end is a whole second), so 09:01:27.150 reads 0:33
+          // before 09:02. data-overrun-ms keeps the milliseconds.
+          const seconds = Math.floor(s.overrunMs / 1000);
+          headline += over ? ` · +${pacingDuration(seconds * 1000)} past ${slotEndText}`
+            : ` · ${pacingDuration(-seconds * 1000)} before ${slotEndText}`;
+        }
+      }
+      const facts = [s.started === null ? "No slide change yet" : `Started ${hms(s.started)} (first slide change)`];
+      if (s.openFrom !== null) facts.push(`deck open ${hm(s.openFrom)}–${hm(s.onScreenUntil)}`);
+      if (s.furthest && s.mainTotal) {
+        facts.push(s.furthest.number >= s.mainTotal
+          ? `reached slide ${s.furthest.number} of ${s.mainTotal} at ${hms(s.furthest.at)}`
+          : `stopped at slide ${s.furthest.number} of ${s.mainTotal}`);
+      }
+      const percent = s.slot.ms ? Math.round((100 * s.inSlotMs) / s.slot.ms) : 0;
+      const reasons = Object.entries(s.pausedByReason).sort((a, b) => b[1] - a[1])
+        .map(([why, ms]) => `${why} ${pacingDuration(ms)}`).join(", ");
+      const tile = (key, label, value, detail, flag = false) => `<div class="pacing-tile" data-tile="${key}"${flag ? ' data-over="true"' : ""}><span class="pacing-tile-label">${escapeHtml(label)}</span><strong class="pacing-tile-value">${escapeHtml(value)}</strong><span class="pacing-tile-detail">${escapeHtml(detail)}</span></div>`;
+      const tiles = [
+        tile("slot", "In slot", pacingDuration(s.inSlotMs), `${percent}% of ${pacingDuration(s.slot.ms)}`),
+        tile("before", `Before ${slotStartText}`, pacingDuration(s.beforeMs),
+          `${s.beforeChanges} slide change${s.beforeChanges === 1 ? "" : "s"}`),
+        tile("after", `After ${slotEndText}`, pacingDuration(s.afterMs), s.afterMs > 0 ? "over" : "nothing after the end",
+          s.afterMs > 0),
+        tile("off", "Off slides in slot", pacingDuration(s.offSlidesMs),
+          `paused ${pacingDuration(s.pausedMs)}${reasons ? ` (${reasons})` : ""} · no record ${pacingDuration(s.untrackedMs)}`),
+      ].join("");
+      const notes = [];
+      if (s.overlapMs > 0) notes.push(`Two windows recorded at once for ${pacingDuration(s.overlapMs)}; counted once, for the most recently changed window.`);
+      if (s.segments > 1) {
+        // A rollover continues one page load in a new file; it is no reload.
+        const {reloads, rollovers, windows} = s.joins;
+        const how = [reloads ? `${reloads} page reload${reloads === 1 ? "" : "s"}` : "",
+          rollovers ? `${rollovers} continued in a new file` : "",
+          windows ? `${windows} other window${windows === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ");
+        notes.push(`${s.segments} recordings merged (${how}).`);
+      }
+      if (s.migrated) notes.push(`Migrated from browser storage (viewer 0.20–0.23): nothing was recorded before ${slotStartText} or after ${slotEndText}, and pauses were not logged.`);
+      const backupName = section => {
+        const labels = section.slides.map(row => row.label);
+        const range = labels.length > 1 ? `${labels[0]}–${labels[labels.length - 1]}` : labels[0] || "";
+        return `Backup slides (${range})`;
+      };
+      const sectionName = section => section.backup ? backupName(section) : section.name;
+      const outside = section => [section.beforeMs ? `${pacingDuration(section.beforeMs)} before` : "",
+        section.afterMs ? `${pacingDuration(section.afterMs)} after` : ""].filter(Boolean).join(" · ") || "—";
+      const sectionRows = s.sections.map(section => `<tr${section.backup ? ' class="pacing-backup"' : ""}><th scope="row">${escapeHtml(sectionName(section))}</th><td>${hms(section.firstAt)}</td><td>${section.slides.length}</td><td>${pacingDuration(section.slotMs)}</td><td>${escapeHtml(outside(section))}</td></tr>`).join("");
+      const notShown = s.notShown.length
+        ? `Not shown: ${s.notShown.length === 1 ? "slide" : "slides"} ${pacingRanges(s.notShown)} (${s.notShown.length} main slide${s.notShown.length === 1 ? "" : "s"}), against the current deck`
+        : s.mainTotal ? `All ${s.mainTotal} main slides of the current deck shown` : "";
+      const slideRows = s.sections.map(section => `<tr class="pacing-group"><th colspan="5" scope="rowgroup">${escapeHtml(sectionName(section))}</th></tr>${section.slides.map(row => `<tr${row.afterMs ? ' data-after="true"' : ""}><td>${escapeHtml(row.label)}</td><td>${escapeHtml(row.title)}</td><td>${pacingDuration(row.totalMs)}</td><td>${row.arrivals}</td><td>${row.afterMs ? pacingDuration(row.afterMs) : ""}</td></tr>`).join("")}`).join("");
+      return `<section id="pacing-headline" class="pacing-headline" data-overrun-ms="${s.overrunMs ?? ""}" data-in-slot-ms="${s.inSlotMs}" data-on-screen-until="${s.onScreenUntil ?? ""}"${over ? ' data-over="true"' : ""}><p class="pacing-headline-main">${escapeHtml(headline)}</p><p class="pacing-headline-facts">${escapeHtml(facts.join(" · "))}</p></section>`
+        + `<div class="pacing-tiles">${tiles}</div>`
+        + (notes.length ? `<ul class="pacing-notes">${notes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : "")
+        + `<table class="pacing-sections"><thead><tr><th scope="col">Section</th><th scope="col">Entered</th><th scope="col">Slides shown</th><th scope="col">In slot</th><th scope="col">Outside slot</th></tr></thead><tbody>${sectionRows}</tbody></table>`
+        + (notShown ? `<p class="pacing-not-shown">${escapeHtml(notShown)}</p>` : "")
+        + `<details class="pacing-slides"><summary>Per-slide time · ${s.slides.length} slide${s.slides.length === 1 ? "" : "s"} · ${s.visits} visit${s.visits === 1 ? "" : "s"}</summary><table><thead><tr><th scope="col">Slide</th><th scope="col">Title</th><th scope="col">Time</th><th scope="col">Arrivals</th><th scope="col">After end</th></tr></thead><tbody>${slideRows}</tbody></table></details>`
+        + timelineMarkup(segments, s)
+        + helpMarkup();
+    }
+
+    function renderPacingReport(requested) {
+      const entries = reportEntries();
+      const recorded = [...new Set(entries.map(entry => entry.record.date))].sort();
+      const today = zonedParts(Date.now()).date;
+      const date = recorded.includes(requested) ? requested
+        : recorded.includes(today) ? today : recorded[recorded.length - 1] || null;
+      selectedDate = date;
+      dateSelect.hidden = recorded.length <= 1;
+      dateSelect.innerHTML = [...recorded].reverse().map(value => `<option value="${escapeHtml(value)}"${value === date ? " selected" : ""}>${escapeHtml(pacingDay(value, true))}</option>`).join("");
+      const forDate = entries.filter(entry => entry.record.date === date)
+        .sort((a, b) => pacingFirstInstant(a.record) - pacingFirstInstant(b.record));
+      const segments = forDate.map(entry => entry.record);
+      savedForDate = forDate.filter(entry => entry.sync.file && entry.sync.at).pop() || null;
+      const slot = segments.length ? segments[segments.length - 1].slot : {start: timing.start, end: timing.end};
+      titleNode.textContent = date ? `Pacing · ${pacingDay(date)} · ${slot.start}–${slot.end}` : "Pacing";
+      exportButton.disabled = !segments.length;
+      body.innerHTML = segments.length ? reportMarkup(segments)
+        : `<p class="pacing-empty">No recorded lecture yet.</p>${helpMarkup()}`;
+      renderStatus();
+    }
+
+    function openReport() {
+      if (!dialog.open) dialog.showModal();
+      // The report pause starts now; that sends the latest state to disk.
+      sample();
+      for (const entry of pageEntries.values()) pacingFlush(entry);
+      pacingCountPending();
+      renderPacingReport(selectedDate);
+      body.scrollTop = 0;
+      // Keys and the trackpad scroll the report; Escape closes it.
+      body.focus({preventScroll: true});
+      probe();
+    }
+
+    function exportReport() {
+      const segments = reportEntries().filter(entry => entry.record.date === selectedDate)
+        .map(entry => entry.record).sort((a, b) => pacingFirstInstant(a) - pacingFirstInstant(b));
+      if (!segments.length) return;
+      const unit = segments.find(record => record.unit)?.unit || pacingSink()?.unit || null;
+      const payload = {
+        schema: 2, kind: "lecturedeck-pacing-export", date: selectedDate, unit, deck: deckTitle, path,
+        exportedAt: new Date().toISOString(),
+        summary: pacingExportSummary(summarizePacing(segments, {mainSlideIds})),
+        segments,
+      };
+      const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 1)], {type: "application/json"}));
+      const link = document.createElement("a");
+      link.href = url;
+      // Named like the disk records (owner: "No lecture name, no time. Only date.").
+      link.download = `${selectedDate}_${segments[0].opened}_${pacingSlug(unit, deckTitle)}_export.json`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    button.addEventListener("click", openReport);
+    dialog.querySelector("#pacing-close").addEventListener("click", () => dialog.close());
+    exportButton.addEventListener("click", exportReport);
+    dateSelect.addEventListener("change", () => {
+      renderPacingReport(dateSelect.value);
+      body.scrollTop = 0;
+    });
+    dialog.addEventListener("click", event => {
+      // The backdrop belongs to the dialog element itself.
+      if (event.target !== dialog) return;
+      const box = dialog.getBoundingClientRect();
+      if (event.clientX < box.left || event.clientX > box.right
+        || event.clientY < box.top || event.clientY > box.bottom) dialog.close();
+    });
+    dialog.addEventListener("close", () => {
+      sample();
+      const usable = node => node && !node.closest("[inert]") && node.getClientRects().length > 0;
+      [button, controlsToggle, mobileMenuButton].find(usable)?.focus();
+    });
+
+    function closingSave() {
+      for (const entry of pageEntries.values()) pacingFlush(entry, {closing: true});
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "hidden") {
+        sample();
+        return;
+      }
+      sample({quiet: true});
+      closingSave();
+    });
+    addEventListener("pagehide", () => {
+      sample({quiet: true});
+      // The tab is going away: the visit ends at this last sample. Time
+      // with the tab closed is the gap between segments.
+      gone = true;
+      finish();
+      finished.length = 0;
+      closingSave();
+    });
+    addEventListener("pageshow", event => {
+      if (!event.persisted) return;
+      gone = false;
+      last = null;
+      sample();
+    });
+    pacingDisk.listeners.add(() => {
+      updateSaved();
+      if (dialog.open) renderStatus();
+    });
+    const observer = new MutationObserver(() => sample());
     observer.observe(deck, {childList: true});
     observer.observe(document.body, {attributes: true, attributeFilter: ["class"]});
-    document.addEventListener("visibilitychange", sample);
-    window.addEventListener("pagehide", () => { sample(); previous = null; save(); });
-    sample(); setInterval(sample, 1000);
+    document.querySelectorAll("dialog").forEach(node => observer.observe(node, {attributes: true, attributeFilter: ["open"]}));
+    sample();
+    setInterval(() => sample(), 1000);
   }
 
   function boot(rawSpec) {
@@ -655,7 +1987,9 @@
         button.setAttribute("aria-pressed", String(active));
       });
       requestAnimationFrame(scaleCurrent);
-      if (escapedNativeFullscreen && overview.hidden) toggleOverview(true);
+      // Escape that leaves native fullscreen opens the overview, but never
+      // behind an open dialog: the same Escape closed that dialog.
+      if (escapedNativeFullscreen && overview.hidden && !modalOpen()) toggleOverview(true);
     }
 
     async function toggleFullscreen() {
@@ -782,8 +2116,10 @@
       const direction = Number(event.data.direction);
       if (direction === 1 || direction === -1) go(index + direction);
     });
+    // While any dialog is open, keys, the wheel and swipes belong to it:
+    // they scroll the dialog and never page, open or exit the deck.
     addEventListener("keydown", event => {
-      if (appearanceDialog?.open) return;
+      if (modalOpen()) return;
       const target = event.target instanceof Element ? event.target : null;
       if (target && target.closest("video, audio, input, textarea, select, [contenteditable]")) return;
       // Buttons and links keep Space/Enter activation but still allow deck paging.
@@ -802,7 +2138,7 @@
     let wheelPrevAt = -1e6;
     let wheelHoldUntil = 0;
     addEventListener("wheel", event => {
-      if (!overview.hidden || event.ctrlKey) return;
+      if (modalOpen() || !overview.hidden || event.ctrlKey) return;
       if (event.target instanceof Element && event.target.closest("video, audio, .interactive-frame")) return;
       const now = performance.now();
       const gap = now - wheelPrevAt;
@@ -833,7 +2169,7 @@
     let swipe = null;
     addEventListener("touchstart", event => {
       swipe = null;
-      if (!overview.hidden || appearanceDialog?.open || event.touches.length > 1) return;
+      if (!overview.hidden || modalOpen() || event.touches.length > 1) return;
       if (event.target instanceof Element && event.target.closest(
         "video, audio, iframe, button, a, input, select, textarea, .deck-chrome, .touch-nav, .interactive-frame",
       )) return;
@@ -843,7 +2179,7 @@
     addEventListener("touchend", event => {
       const start = swipe;
       swipe = null;
-      if (!start || !overview.hidden || appearanceDialog?.open) return;
+      if (!start || !overview.hidden || modalOpen()) return;
       const touch = [...event.changedTouches].find(t => t.identifier === start.id);
       if (!touch) return;
       const dx = touch.clientX - start.x;
@@ -899,11 +2235,22 @@
       if (!response.ok) throw new Error(response.status);
       const state = await response.json();
       reloadFailures = 0;
+      // The pacing footer words why a page without a sink saves only in
+      // the browser; an older server sends no `pacing` field at all.
+      const pacing = typeof state.pacing === "string" ? state.pacing : "absent";
+      if (pacing !== serverPacing) {
+        serverPacing = pacing;
+        pacingDisk.changed();
+      }
       if (!state.livereload) { clearInterval(reloadTimer); return; }
       if (reloadVersion === null) reloadVersion = state.version;
       else if (reloadVersion !== state.version) location.reload();
     } catch (_) {
       // Static releases and file:// previews intentionally have no reload endpoint.
+      if (serverPacing === "unknown") {
+        serverPacing = "static";
+        pacingDisk.changed();
+      }
       reloadFailures += 1;
       if (reloadFailures >= 3) clearInterval(reloadTimer);
     }
@@ -914,5 +2261,12 @@
   (async () => {
     const [spec, timing] = await Promise.all([loadSpec(), loadPresentationTime()]);
     if (spec) { boot(spec); setupLectureClock(timing); setupLecturePacer(timing, spec); }
+    if (printMode) return;
+    // Every page load, scheduled or not: convert old records and upload
+    // what the journal still holds, once the serve-only sink has loaded.
+    if (document.readyState !== "complete") {
+      await new Promise(resolve => addEventListener("load", resolve, {once: true}));
+    }
+    pacingRecovery(spec ? window.LECTUREDECK : null);
   })();
 })();

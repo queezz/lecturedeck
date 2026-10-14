@@ -50,6 +50,7 @@ Studio/work/presentations/<unit>/
     deck.json
     deck.css
     assets/
+  pacing-records/
 ```
 
 `deck.json` and `assets/` are the deck content. `deck.css` is an optional,
@@ -58,6 +59,9 @@ unit-owned override loaded after the installed viewer styles. While serving,
 package; `release` materializes them into the static bundle. Only `webdeck/`
 content is exposed or copied, and `lecturedeck` never reads adjacent lecture
 scripts, source books, agent notes, or other course materials.
+`pacing-records/` is the only place `lecturedeck` writes: it is machine-written
+by `serve` on scheduled teaching dates (see
+[Lecture pacing records](#lecture-pacing-records)) and holds no student data.
 
 Legacy units may instead carry an executable `slides.js`; the viewer falls back
 to it automatically when no `deck.json` exists, and it remains a supported
@@ -189,6 +193,7 @@ lecturedeck check <unit>
 lecturedeck serve
 lecturedeck serve <unit> --livereload
 lecturedeck serve --folder <presentations-directory>
+lecturedeck serve --no-pacing-records
 lecturedeck release <unit> --output <new-output-directory>
 lecturedeck pdf <unit> --output <new-file.pdf>
 lecturedeck narration <unit> [--outline] [--output <new-file>]
@@ -252,6 +257,13 @@ Serving is localhost-only by default. For a trusted local network:
 lecturedeck serve <unit> --lan --livereload
 ```
 
+On a unit's scheduled teaching dates, `serve` saves pacing records to
+`<unit>/pacing-records/`, and only for a browser on the serving computer (see
+[Lecture pacing records](#lecture-pacing-records)). `--no-pacing-records`
+switches this off. Serve directly, not behind a reverse proxy, SSH tunnel or
+port forwarder: proxied requests never save, and a forwarder on the same
+computer is unsupported.
+
 Omit the unit to open a searchable selector for the current course's
 `Studio/work/presentations/` folder. The selector discovers only immediate
 child directories containing `webdeck/deck.json` or legacy
@@ -270,7 +282,8 @@ files beside `webdeck/` are not reachable.
 The commands above describe foreground CLI use. Agent entry points and
 background previews should use the local service manager (for Fleet, the
 course's `lab` alias). Test with scratch `LAB_CONFIG`, `LAB_RUNTIME_ROOT`, and
-`LAB_LOG_ROOT`, a disposable sample deck, and an explicit free `--port`.
+`LAB_LOG_ROOT`, a disposable sample deck, an explicit free `--port`, and
+`--no-pacing-records`.
 Stop through `lab stop` and verify the listening port is free; on Windows,
 stopping only a launcher PID can leave its Python child serving. `init`
 creates deck content, not a course `AGENTS.md` or service entry point.
@@ -280,9 +293,11 @@ another deck automatically advances to 4174, then 4175, and so on; the printed
 URL and `--open` always use the selected port. Passing `--port PORT` is strict
 and reports an error when that exact port is unavailable.
 
-The server exposes only the unit's `webdeck/` tree (plus the live-reload
-endpoint). Adjacent unit files such as `script.md`, `brief.md`, and
-`workflow-state.yaml` are never reachable, and directory listings are off.
+The server exposes only the unit's `webdeck/` tree, plus the live-reload
+endpoint and a write-only pacing endpoint that accepts records from a browser
+on the serving computer. Records are never served. Adjacent unit files such as
+`script.md`, `brief.md`, and `workflow-state.yaml` are never reachable, and
+directory listings are off.
 
 ## Presenter controls
 
@@ -325,7 +340,9 @@ Browsers reserve `Escape` while using native full screen, so it cannot open the
 overview directly. `O` and the always-visible fullscreen control bar still open
 the overview. When `Escape` exits native full screen, lecturedeck opens the
 overview automatically; press `F` when you want to leave full screen without
-opening it.
+opening it. While any dialog (Appearance, Pacing) is open, keys, the wheel,
+the trackpad and swipes belong to the dialog: they scroll it and never page
+the deck, and `Escape` only closes the dialog.
 
 ### Serve-only figure adjustment
 
@@ -450,7 +467,8 @@ history.
 
 The test run includes a Chromium smoke suite for the presenter contract:
 both data-loading paths, navigation, wheel input, overview, fullscreen,
-theme, media attributes, iframe interaction, and the geometry-adjust guards.
+theme, media attributes, iframe interaction, the geometry-adjust guards, and
+the pacing recorder, report and same-computer saving.
 It requires the optional Playwright dev dependency plus a one-time browser
 download, and is skipped automatically when either is absent:
 
@@ -497,11 +515,157 @@ in fullscreen and interactive slides, is hidden in overview and print, and
 requires no network service. Omit the file to keep the clock disabled.
 
 
-Add an optional `dates` array of ISO teaching dates to that file to enable
-automatic slide pacing, for example `"dates": ["2026-01-01"]`. Only the
-configured dates and start–end slot are recorded. Pacing in the menu shows
-per-slide totals/visits and exports JSON with the ordered visit timeline.
-Each visit keeps its raw `number`; in a deck with an appendix it also carries
-the audience `label` (`B1`, …) shown in the report. Records stay in local browser storage, scoped to the unit and date. Overview,
-the report, hidden tabs and long suspension gaps are excluded. Reloads preserve
-saved visits; no closed-tab time or past lecture time is reconstructed.
+Add an optional `dates` array of ISO teaching dates to that file, for example
+`"dates": ["2026-01-01"]`, to record slide pacing automatically on those dates.
+Nothing needs pressing; see [Lecture pacing records](#lecture-pacing-records).
+
+### Lecture pacing records
+
+**Window and phases.** On a listed date the recorder runs from 30 minutes
+before the slot's start to 60 minutes after its end (clipped to that day)
+while the page is visible, the overview and every dialog are closed, and a
+slide is shown. Opening a deck outside that window records nothing. Each
+visit is tagged `before` (earlier than the start), `slot` (start to end) or
+`after` (the end or later); a visit crossing a boundary is split exactly at
+it. Visits are unbroken spans, so `startedAt + durationMs` is when a visit
+ended. The recorder samples once a second and credits nothing across a gap
+over 10 s or a disagreement over 2 s between the wall clock and the monotonic
+clock (sleep, a closed lid, frozen timers, a clock step); such a gap is logged
+as a `suspended` or `clock` pause. Time in the overview, the pacing report,
+another dialog or a hidden tab is a pause with that reason (`overview`,
+`report`, `dialog`, `hidden`); a gap ends an overview, report or dialog pause
+too, while a hidden tab's pause spans it (browsers slow a hidden tab's
+timers). Pauses are not slide time.
+
+**Where records land.** While `lecturedeck serve` delivers the deck to a
+browser on the serving computer, each page load's recording (a *segment*)
+saves itself beside `webdeck/`, never inside it:
+
+```text
+<unit>/pacing-records/<YYYY-MM-DD>_<HHMM>_<unit>_<segment>.json
+Studio/work/presentations/lecture-02/pacing-records/2026-01-13_0858_lecture-02_3fa9c1d27b0e.json
+```
+
+`<HHMM>` is when the segment opened (schedule time zone), `<unit>` is the
+unit folder name made safe for a file name, and `<segment>` is 12 random hex
+digits drawn per page load. A reload, a live reload or another tab starts a
+new segment, and a segment rolls over to a new file past 48 KiB, so a lecture
+usually gives one to four files that never overwrite each other. The page
+saves 2 s after a slide change, at once at a phase boundary or a pause, every
+15 s while a segment is open (recording or paused), and with `keepalive` when
+the tab is hidden or closed.
+Every save carries the whole segment with a rising `rev`; the server rebuilds
+it from whitelisted fields, writes it atomically, keeps only a higher revision
+and never deletes a file. One segment (schema 2) looks like:
+
+```json
+{"schema": 2, "kind": "lecturedeck-pacing-segment", "segment": "3fa9c1d27b0e",
+ "rev": 412, "unit": "lecture-02", "path": "/decks/lecture-02/webdeck/",
+ "deck": "Lecture 2", "viewer": "0.24.0", "date": "2026-01-13", "opened": "0858",
+ "timeZone": "Europe/London",
+ "slot": {"start": "09:00", "end": "10:30",
+          "startAt": "2026-01-13T09:00:00.000Z", "endAt": "2026-01-13T10:30:00.000Z"},
+ "window": {"before": 30, "after": 60,
+            "from": "2026-01-13T08:30:00.000Z", "to": "2026-01-13T11:30:00.000Z"},
+ "slides": {"<slide id>": {"number": 12, "label": "12", "title": "…", "section": "…"}},
+ "visits": [{"slideId": "<slide id>", "startedAt": "…Z", "durationMs": 61234,
+             "phase": "slot"}],
+ "pauses": [{"startedAt": "…Z", "durationMs": 17000, "why": "overview"}],
+ "fullscreenMs": 4012000,
+ "savedAt": "…Z", "savedBy": {"host": "<computer name>", "lecturedeck": "0.24.0"}}
+```
+
+Backup slides carry `"backup": true` and labels `B1`, `B2`, …. A record
+holds only slide ids, numbers, labels, titles and sections, visit and pause
+times, time in full screen, the deck title, path and schedule, and the saving
+computer's host name and lecturedeck version: no student data and nothing
+typed into the page.
+
+**Same computer only.** The server injects its small saving script, and
+accepts a record, only for a browser on the serving computer: a loopback
+connection (or one from the server's own address), a `localhost` or
+IP-literal `Host` on the server's port, a same-origin JSON POST with an exact
+`Origin` and the `X-Lecturedeck-Pacing` header, and no proxy headers. The
+date must be listed in that unit's `presentation-time.json`. Open the deck at
+`http://127.0.0.1:<port>`; under a host name or `.local` address it records in
+the browser only. LAN viewers, other devices, static releases and PDF exports
+never receive write code, and `pacing-records/` is never served, checked,
+released or watched for live reload. Automated browsers (`navigator.webdriver`
+true, as under Playwright) save nothing; any other browser showing a
+scheduled deck inside the window writes a segment of its own, which
+`savedBy.host` identifies. `--no-pacing-records` switches disk saving off,
+for example on scratch instances.
+
+**The report.** Pacing in the controls menu opens this browser's recordings
+of the deck, with a date menu when it holds more than one date. The header
+(Close) and the footer (status and Export JSON) stay on screen; only the
+report scrolls. It leads with the last main-slide change and the signed
+overrun against the scheduled end, then time in the slot, before it, after
+it and off slides; notes on overlapping windows, merged recordings (page
+reloads, rollovers to a new file, other windows) and migrated records; a
+section table; the main slides not shown; and collapsed per-slide and
+timeline tables. The footer says where the record went: `Saved to disk` with
+the file name; `Disk saving ready on this computer` before class, noting any
+older recordings this server will not take (another unit, a date no longer
+scheduled; they stay in the browser); why it is saved in this browser only
+(an older server that needs `lecturedeck serve` restarted, saving switched
+off, another computer, a non-local address, a static copy, an automated
+browser); older recordings still being retried; or that saving is failing,
+retried after 5, 10, 20 and 40 s and then every 60 s. Another unit's or an
+unscheduled date's leftovers never stop the open deck from saving. While
+recording, the Pacing button's
+dot is green when saving to disk, gold in this browser only and red when
+saving fails. Export JSON downloads `<date>_<HHMM>_<unit>_export.json`
+(`"kind": "lecturedeck-pacing-export"`) with the derived summary and every
+segment.
+
+**Before class.** After upgrading, restart `lecturedeck serve`, open any
+scheduled deck at the address you present from, and check that Pacing reads
+"Disk saving ready on this computer".
+
+**Journal, recovery and older records.** Every second is also kept in this
+browser's `localStorage` (`lecturedeck-pacing2:<path>:<date>:<segment>`).
+After a crash, a killed browser or a server restart, the next page load of any
+deck at the same origin uploads whatever the disk is missing. Static releases
+and `file://` copies record in the browser only and keep Export JSON. Records
+from viewers 0.20–0.23 (`lecturedeck-pacing:<path>:<date>`, schema 1) are
+converted once into migrated segments (`"migratedFrom": 1`: slot time only,
+no pauses, `fullscreenMs` null) and uploaded to their own unit; the old keys
+are kept. A schema-1 record whose slot has not ended yet is left until it
+has, since a tab still running an older viewer may be writing it. The upload
+script refuses a body over 256 KiB itself (413), as the server would.
+
+**Derived measures (for agents).** Merge the segments of one host for a date
+(`savedBy.host`; a meeting that shows several decks writes into each unit's
+folder, so merge across units too). First follow each window through its
+segments, in order of first instant: a segment whose first instant is
+another's last instant continues it (a rollover); any other segment is a page
+load (a reload, a new tab, the deck opened again). Within a window, a visit
+changes slide when its slide differs from the window's previous visit; the
+first visit of a page load does not. A visit on the previous visit's slide
+that starts where that one ended (a phase split, a rollover), or after a
+`suspended` or `clock` pause covering the gap, keeps the window's last
+slide-change time; any other visit sets it to its own start. Where visits
+from different segments overlap, each moment counts once, for the window
+whose last slide change is latest (then the later visit start), and the
+overlap is reported. On the merged visits:
+
+- An arrival is a merged piece whose slide differs from the previous piece's.
+  A slide change is an arrival where its own visit starts and changes slide:
+  opening a page and splits at phase boundaries, gaps and rollovers are not
+  slide changes. Started is the first slide change.
+- The last main-slide change is the latest slide change to a non-backup
+  slide other than the last main slide shown, so coming back from the backup
+  to the slide shown before it does not count; the overrun is that time
+  minus the scheduled end, signed. Leaving the closing slide up during
+  questions, paging the backup, or opening the deck again after class to
+  read the report does not inflate it. On screen until, the end of the last
+  visit, is reported separately. The report shows the overrun in whole
+  seconds, floored like the wall times beside it.
+- Time before, in and after the slot sums visit time by phase. Off slides in
+  the slot is the slot length minus time in it, split into paused (by reason)
+  and untracked (deck closed, crashed or asleep).
+- The furthest main slide reached and the main slides never shown are
+  measured against the current deck. Sections report when they were first
+  entered, slides shown, and time in and outside the slot; all backup slides
+  form one row.

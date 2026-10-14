@@ -1,7 +1,9 @@
 import http.client
 import json
+import sys
 import tempfile
 import threading
+import types
 import unittest
 from contextlib import redirect_stderr
 from importlib.resources import files
@@ -9,7 +11,7 @@ from io import BytesIO, StringIO, TextIOWrapper
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from lecturedeck import __version__, scaffold
+from lecturedeck import __version__, pacing, scaffold
 from lecturedeck.cli import (
     DEFAULT_PORT,
     build_parser,
@@ -20,7 +22,7 @@ from lecturedeck.cli import (
 from lecturedeck.pdf import export_pdf
 from lecturedeck.scaffold import refresh_unit, runtime_hash, scaffold_unit
 from lecturedeck.server import discover_decks, make_selector_server, make_server, selector_page
-from lecturedeck.validation import deck_entry, release_unit, validate_unit
+from lecturedeck.validation import VIEWER_FILES, deck_entry, release_unit, validate_unit
 
 LEGACY_SLIDES = """window.LECTUREDECK = {
   meta: { title: "Legacy deck", section: "COURSE TITLE", opening: "OPENING" },
@@ -139,6 +141,29 @@ class LecturedeckTest(unittest.TestCase):
             self.assertFalse((output / "slides.js").exists())
             self.assertEqual(custom_css, (output / "deck.css").read_text(encoding="utf-8"))
             self.assertIn('href="deck.css"', (output / "index.html").read_text())
+
+    def test_release_and_check_ignore_pacing_records(self):
+        with tempfile.TemporaryDirectory() as root:
+            unit = make_json_unit(root)
+            records = unit / "pacing-records"
+            records.mkdir()
+            (records / "x.json").write_text("{not a record", encoding="utf-8")
+            (records / "stray.html").write_text(
+                '<script src="https://example.com/x.js"></script><img src="../../x.png">',
+                encoding="utf-8",
+            )
+            self.assertEqual([], validate_unit(unit))
+            output = Path(root) / "release"
+            release_unit(unit, output)
+            released = [path.relative_to(output).as_posix() for path in output.rglob("*")]
+            self.assertNotIn("pacing-sink.js", [Path(name).name for name in released])
+            self.assertFalse([name for name in released if "pacing-records" in name], released)
+            for path in output.rglob("*"):
+                if path.is_file() and path.suffix in {".html", ".js", ".css", ".json"}:
+                    with self.subTest(path=path.name):
+                        self.assertNotIn(
+                            "__lecturedeck/pacing", path.read_text(encoding="utf-8")
+                        )
 
     def test_release_preserves_legacy_viewer_overrides(self):
         with tempfile.TemporaryDirectory() as root:
@@ -575,6 +600,63 @@ class LecturedeckTest(unittest.TestCase):
                 server.server_close.assert_called_once()
                 output.close()
 
+    def test_serve_pacing_records_flag_reaches_server_and_banner(self):
+        self.assertTrue(build_parser().parse_args(["serve", "sample-unit"]).pacing_records)
+        cases = (
+            ([], "  Pacing records: <unit>/pacing-records/ on scheduled dates "
+                 "(browser on this computer only)\n"),
+            (["--no-pacing-records"], "  Pacing records: off\n"),
+        )
+        for flags, line in cases:
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as root:
+                make_json_unit(root)
+                args = build_parser().parse_args(["serve", "--folder", root, *flags])
+                self.assertEqual(not flags, args.pacing_records)
+                output = StringIO()
+                server = Mock(server_address=("127.0.0.1", 48943))
+                server.serve_forever.side_effect = KeyboardInterrupt
+                with (
+                    patch(
+                        "lecturedeck.cli.make_available_server", return_value=(server, 48943)
+                    ) as factory,
+                    patch("lecturedeck.cli.sys.stdout", output),
+                ):
+                    self.assertEqual(0, serve(args))
+                self.assertIs(not flags, factory.call_args.kwargs["pacing_records"])
+                banner = output.getvalue()
+                self.assertIn(line, banner)
+                self.assertLess(banner.index("Access:"), banner.index("Pacing records:"))
+
+    def test_make_available_server_passes_pacing_records(self):
+        for selector, factory_name in ((False, "make_server"), (True, "make_selector_server")):
+            for enabled in (True, False):
+                with (
+                    self.subTest(selector=selector, enabled=enabled),
+                    patch(f"lecturedeck.cli.{factory_name}") as factory,
+                ):
+                    make_available_server(
+                        Path("root"), "127.0.0.1", 48943, False,
+                        auto_advance=False, selector=selector, pacing_records=enabled,
+                    )
+                    factory.assert_called_once_with(
+                        Path("root"), "127.0.0.1", 48943, False, pacing_records=enabled
+                    )
+        with tempfile.TemporaryDirectory() as root:
+            unit = make_json_unit(root)
+            server, _ = make_available_server(
+                unit, "127.0.0.1", 0, False, auto_advance=False, pacing_records=False
+            )
+            port = server.server_address[1]
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                connection.request("GET", "/__lecturedeck/version")
+                self.assertEqual("off", json.loads(connection.getresponse().read())["pacing"])
+                connection.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+
     def test_repository_selector_folder_is_persistent_and_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
@@ -618,6 +700,24 @@ class LecturedeckTest(unittest.TestCase):
             with self.assertRaisesRegex(FileExistsError, "already exists"):
                 export_pdf(unit, existing)
             self.assertEqual(b"keep", existing.read_bytes())
+
+    def test_pdf_export_server_never_offers_pacing_records(self):
+        playwright = types.ModuleType("playwright")
+        sync_api = types.ModuleType("playwright.sync_api")
+        sync_api.sync_playwright = Mock()
+        with tempfile.TemporaryDirectory() as root:
+            unit = make_json_unit(root)
+            with (
+                patch.dict(sys.modules, {"playwright": playwright,
+                                         "playwright.sync_api": sync_api}),
+                patch("lecturedeck.pdf.make_server", side_effect=RuntimeError("stop")) as fake,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "stop"):
+                    export_pdf(unit, Path(root) / "slides.pdf")
+            fake.assert_called_once_with(
+                unit, "127.0.0.1", 0, livereload=False, quiet=True, pacing_records=False
+            )
+            self.assertFalse((Path(root) / "slides.pdf").exists())
 
     def test_serve_default_port_is_automatic(self):
         args = build_parser().parse_args(["serve", "sample-unit"])
@@ -741,11 +841,33 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn("width: fit-content", styles)
         self.assertIn("justify-self: center", styles)
         self.assertIn(".body-copy table", styles)
+        # The viewer records, journals and reports pacing, and reaches disk only
+        # through the sink it looks up; any open dialog owns deck input.
+        self.assertIn("lecturedeckPacingSink", script)
+        self.assertIn("lecturedeck-pacing2:", script)
+        self.assertIn("dialog[open]", script)
+        self.assertIn("function summarizePacing", script)
+        self.assertIn(".pacing-dialog[open]", styles)
+        self.assertIn('[data-saved="failing"]', styles)
+        # Releases carry no write code: the endpoint lives only in the serve-only sink.
+        self.assertNotIn("__lecturedeck/pacing", script)
+        self.assertNotIn("__lecturedeck/pacing", index)
+        self.assertNotIn("pacing-sink.js", VIEWER_FILES)
+        sink = packaged_text("pacing-sink.js")
+        self.assertIn("X-Lecturedeck-Pacing", sink)
+        self.assertIn("navigator.webdriver", sink)
+        self.assertIn("window.lecturedeckPacingSink = Object.freeze", sink)
+        self.assertIn('credentials: "same-origin"', sink)
+        self.assertIn('"../__lecturedeck/pacing"', sink)
+        # The sink answers the server's own 413 itself: a refused large upload
+        # often reaches the browser as a network error, retried forever.
+        self.assertIn(f"const MAX_BODY = {pacing.MAX_BODY};", sink)
         adjust = packaged_text("adjust.js")
         self.assertIn("const spec = () => window.LECTUREDECK", adjust)
         self.assertIn("event.stopPropagation()", adjust)
         self.assertIn("overviewVisible", adjust)
         self.assertIn("MutationObserver", adjust)
+        self.assertIn('document.querySelector("dialog[open]")', adjust)
 
     def test_scaffold_has_no_course_specific_identity(self):
         with tempfile.TemporaryDirectory() as root:
@@ -841,6 +963,7 @@ class LecturedeckTest(unittest.TestCase):
                 self.assertEqual(200, status)
                 self.assertIn(b"lecturedeck.js", body)
                 self.assertIn(b"/__lecturedeck/adjust.js", body)
+                self.assertIn(b'/__lecturedeck/pacing-sink.js" data-unit="unit"', body)
                 self.assertEqual(200, request("/webdeck/lecturedeck.js", "HEAD")[0])
                 status, body, content_type, _ = request("/__lecturedeck/adjust.js")
                 self.assertEqual(200, status)
@@ -858,6 +981,8 @@ class LecturedeckTest(unittest.TestCase):
                 status, body, _, _ = request("/__lecturedeck/version")
                 self.assertEqual(200, status)
                 self.assertFalse(json.loads(body)["livereload"])
+                self.assertEqual("on", json.loads(body)["pacing"])
+                self.assertEqual(404, request("/pacing-records/")[0])
                 self.assertEqual(302, request("/")[0])
                 status, _, _, location = request("/webdeck")
                 self.assertEqual(302, status)

@@ -78,6 +78,13 @@ repositories. For each consumer that should adopt the change:
 4. commit only course-owned content or release artifacts according to that
    repository's policy.
 
+`serve` saves pacing records into a unit's `pacing-records/` on its scheduled
+dates. A scratch instance for a consumer Perimeter Walk therefore adds
+`--no-pacing-records` to its scratch `LAB_*` roots and spare port. Any
+demonstration of a written record uses a disposable copy of a unit in the OS
+temp folder, dated today with a slot around now, never the synchronized
+course tree (fleet `RULES.md` §12).
+
 Never copy or submodule the package source into lecture repositories. New and
 migrated consumer units are content-only: `deck.json` (or legacy `slides.js`),
 optional `deck.css`, and `assets/` belong to the unit, while the installed

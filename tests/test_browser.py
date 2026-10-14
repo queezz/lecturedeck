@@ -4,8 +4,9 @@ Runs only when the optional Playwright dev dependency and its Chromium
 browser are installed; otherwise every test is skipped. The suite asserts
 the mechanical contract — loading paths, navigation, wheel input, overview,
 fullscreen, theme, media attributes, iframe interaction, and the serve-only
-geometry-adjust guards. Visual density and pedagogical quality remain human
-judgment and are deliberately out of scope.
+geometry-adjust guards, and the pacing recorder: its window, journal,
+report and saving to disk through the serve-only sink. Visual density and
+pedagogical quality remain human judgment and are deliberately out of scope.
 """
 
 from __future__ import annotations
@@ -13,16 +14,21 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import struct
 import tempfile
 import threading
+import time
 import unittest
 import zlib
 from datetime import datetime, timezone
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from lecturedeck import __version__
 from lecturedeck.server import make_selector_server, make_server
+from lecturedeck.validation import release_unit
 
 try:
     from playwright.sync_api import sync_playwright
@@ -233,6 +239,44 @@ def build_legacy_unit(unit: Path) -> None:
     )
 
 
+def utc(hour: int, minute: int, second: int = 0) -> datetime:
+    return datetime(2026, 1, 1, hour, minute, second, tzinfo=timezone.utc)
+
+
+def epoch_ms(text: str) -> int:
+    return round(datetime.strptime(text, "%Y-%m-%dT%H:%M:%S.%f%z").timestamp() * 1000)
+
+
+def iso_ms(value: int) -> str:
+    moment = datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
+
+
+def visit_end(visit: dict) -> str:
+    return iso_ms(epoch_ms(visit["startedAt"]) + visit["durationMs"])
+
+
+def journal(page) -> list[dict]:
+    """Every schema-2 journal entry in the page's localStorage, oldest first."""
+    entries = page.evaluate(
+        """() => Object.keys(localStorage)
+          .filter(key => key.startsWith('lecturedeck-pacing2:'))
+          .map(key => ({key, ...JSON.parse(localStorage.getItem(key))}))"""
+    )
+    return sorted(entries, key=lambda e: min(
+        [v["startedAt"] for v in e["record"]["visits"]] or [e["record"]["window"]["from"]]
+    ))
+
+
+def set_visibility(page, state: str) -> None:
+    page.evaluate(
+        "state => { Object.defineProperty(document, 'visibilityState', "
+        "{configurable: true, value: state}); "
+        "document.dispatchEvent(new Event('visibilitychange')); }",
+        state,
+    )
+
+
 def build_broken_unit(unit: Path) -> None:
     webdeck = unit / "webdeck"
     (webdeck / "assets").mkdir(parents=True)
@@ -358,52 +402,84 @@ class BrowserSmokeTest(unittest.TestCase):
         page.wait_for_function("Boolean(window.LECTUREDECK_PRINT_READY)")
         self.assertEqual(clock.count(), 0)
 
-    def test_pacer_records_visits_only_in_slot_and_pauses_in_overview(self):
+    def test_pacer_records_window_phases_and_pauses(self):
         page = self.browser.new_page()
         self.addCleanup(page.close)
         timing = {"start": "09:00", "end": "09:01", "timeZone": "UTC",
                   "dates": ["2026-01-01"]}
         page.route("**/presentation-time.json", lambda route: route.fulfill(json=timing))
-        page.clock.install(time=datetime(2026, 1, 1, 8, 59, 58, tzinfo=timezone.utc))
+        page.clock.install(time=utc(8, 59, 50))
+        page.clock.pause_at(utc(8, 59, 50))
         page.goto(self.urls["json"])
         page.wait_for_selector("#pacing-button")
-        page.clock.run_for(2000)
+        # Ten minutes before the slot is inside the recording window.
+        self.assertEqual("true", page.get_attribute("#pacing-button", "data-recording"))
         page.clock.run_for(5000)
         page.keyboard.press("ArrowRight")
-        page.clock.run_for(3000)
+        page.clock.run_for(8000)  # crosses 09:00:00
         page.keyboard.press("o")
         page.clock.run_for(2000)
         page.keyboard.press("Escape")
         page.clock.run_for(2000)
-        page.evaluate("Object.defineProperty(document, 'visibilityState', "
-                      "{configurable:true, value:'hidden'}); "
-                      "document.dispatchEvent(new Event('visibilitychange'));")
+        set_visibility(page, "hidden")
         page.clock.run_for(3000)
-        self.assertEqual(page.locator("#pacing-button").get_attribute("data-recording"), "false")
-        page.evaluate("Object.defineProperty(document, 'visibilityState', "
-                      "{configurable:true, value:'visible'}); "
-                      "document.dispatchEvent(new Event('visibilitychange'));")
-        page.reload()
-        page.wait_for_selector("#pacing-button")
-        page.clock.run_for(4000)
+        self.assertEqual("false", page.get_attribute("#pacing-button", "data-recording"))
+        set_visibility(page, "visible")
+        page.clock.run_for(2000)
         page.locator("#controls-toggle").click()
         page.locator("#pacing-button").click()
-        self.assertTrue(page.locator("#pacing-dialog").is_visible())
+        page.clock.run_for(3000)
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#pacing-dialog", state="hidden")
+        page.clock.run_for(50000)  # crosses 09:01:00
+        entries = journal(page)
+        self.assertEqual(1, len(entries))
+        record = entries[0]["record"]
+        self.assertEqual((2, "lecturedeck-pacing-segment"), (record["schema"], record["kind"]))
+        self.assertEqual(
+            {"before": 30, "after": 60, "from": "2026-01-01T08:30:00.000Z",
+             "to": "2026-01-01T10:01:00.000Z"},
+            record["window"],
+        )
+        self.assertEqual("2026-01-01T09:00:00.000Z", record["slot"]["startAt"])
+        self.assertEqual("0859", record["opened"])
+        self.assertEqual(
+            {"s-title": {"number": 1, "label": "1", "title": "Smoke deck", "section": "Opening"},
+             "s-a": {"number": 2, "label": "2", "title": "Statement A", "section": "Opening"}},
+            record["slides"],
+        )
+        self.assertEqual(
+            [("s-title", "08:59:50", 5000, "before"), ("s-a", "08:59:55", 5000, "before"),
+             ("s-a", "09:00:00", 3000, "slot"), ("s-a", "09:00:05", 2000, "slot"),
+             ("s-a", "09:00:10", 2000, "slot"), ("s-a", "09:00:15", 45000, "slot"),
+             ("s-a", "09:01:00", 5000, "after")],
+            [(v["slideId"], v["startedAt"][11:19], v["durationMs"], v["phase"])
+             for v in record["visits"]],
+        )
+        self.assertEqual(
+            [("09:00:03", 2000, "overview"), ("09:00:07", 3000, "hidden"),
+             ("09:00:12", 3000, "report")],
+            [(p["startedAt"][11:19], p["durationMs"], p["why"]) for p in record["pauses"]],
+        )
+        self.assertEqual(0, record["fullscreenMs"])
+        page.locator("#pacing-button").click()
         with page.expect_download() as download:
             page.locator("#pacing-export").click()
-        data = json.loads(Path(download.value.path()).read_text())
-        total = sum(v["durationMs"] for v in data["visits"])
-        self.assertGreaterEqual(total, 14000)
-        self.assertLess(total, 15000)
-        self.assertEqual([v["number"] for v in data["visits"]
-                          if v["durationMs"] >= 1000], [1, 2, 2, 2])
-        # Without an appendix the exported visit shape is unchanged.
-        self.assertFalse(any("label" in v for v in data["visits"]))
-        page.clock.run_for(5000)
-        page.locator("#pacing-close").click()
-        page.clock.set_fixed_time(datetime(2026, 1, 1, 9, 1, tzinfo=timezone.utc))
-        page.clock.run_for(2000)
-        self.assertEqual(page.locator("#pacing-button").get_attribute("data-recording"), "false")
+        data = json.loads(Path(download.value.path()).read_text(encoding="utf-8"))
+        self.assertRegex(download.value.suggested_filename, r"^2026-01-01_\d{4}_.+_export\.json$")
+        self.assertTrue(download.value.suggested_filename.startswith(
+            f"2026-01-01_{data['segments'][0]['opened']}_"))
+        self.assertEqual((2, "lecturedeck-pacing-export"), (data["schema"], data["kind"]))
+        self.assertEqual([record["segment"]], [s["segment"] for s in data["segments"]])
+        self.assertEqual(
+            (10000, 52000, 5000),
+            (data["summary"]["beforeMs"], data["summary"]["inSlotMs"], data["summary"]["afterMs"]),
+        )
+        self.assertEqual(3000, data["summary"]["pausedInSlotByReason"]["report"])
+        page.keyboard.press("Escape")
+        page.clock.pause_at(utc(10, 1, 0))
+        page.clock.run_for(1000)
+        self.assertEqual("false", page.get_attribute("#pacing-button", "data-recording"))
 
     def test_pacer_does_not_record_non_teaching_date(self):
         page = self.browser.new_page()
@@ -547,19 +623,22 @@ class BrowserSmokeTest(unittest.TestCase):
         page.clock.run_for(2000)
         page.locator("#controls-toggle").click()
         page.locator("#pacing-button").click()
-        rows = page.locator("#pacing-dialog tbody tr td:first-child").all_inner_texts()
+        rows = page.locator(
+            ".pacing-slides tbody tr:not(.pacing-group) td:first-child"
+        ).all_text_contents()
         self.assertEqual(["3", "B1"], rows)
-        visits = page.evaluate(
-            """() => {
-              const key = Object.keys(localStorage)
-                .find(name => name.startsWith('lecturedeck-pacing:')
-                  && name.endsWith(':2026-01-01'));
-              return JSON.parse(localStorage.getItem(key)).visits;
-            }"""
-        )
         self.assertEqual(
-            [(3, "3", "a-three"), (4, "B1", "a-backup")],
-            [(v["number"], v["label"], v["slideId"]) for v in visits],
+            ["Opening", "Backup slides (B1)"],
+            page.locator(".pacing-sections tbody th").all_text_contents(),
+        )
+        (entry,) = journal(page)
+        record = entry["record"]
+        self.assertEqual(["a-three", "a-backup"], [v["slideId"] for v in record["visits"]])
+        self.assertEqual(
+            {"a-three": {"number": 3, "label": "3", "title": "Main three", "section": "Opening"},
+             "a-backup": {"number": 4, "label": "B1", "title": "Backup", "section": "Backup",
+                          "backup": True}},
+            record["slides"],
         )
 
     def test_selector_filters_and_opens_a_deck(self):
@@ -1270,6 +1349,1059 @@ class BrowserSmokeTest(unittest.TestCase):
         ))
         page.keyboard.press("Escape")
         page.wait_for_function("document.querySelector('#overview').hidden")
+
+
+PACING_DECK = {
+    "deck": 1,
+    "meta": {"title": "Pacing", "section": "PACING", "opening": "OPENING"},
+    "slides": [
+        {"id": "p-title", "type": "title", "title": "Pacing", "claim": "Opening slide."},
+        {"id": "p-figure", "title": "Part one",
+         "figure": {"id": "fig-1", "src": "assets/figure.png", "alt": "Figure"}},
+        {"id": "p-middle", "type": "section", "title": "Middle"},
+        {"id": "p-two", "title": "Part two", "claim": "Second part."},
+        {"id": "p-three", "title": "Part three", "claim": "Third part."},
+        {"id": "p-backup", "type": "section", "title": "Backup", "appendix": True},
+        {"id": "p-extra", "title": "Backup extra", "claim": "Backup slide."},
+    ],
+}
+PACING_TIME = {"start": "09:00", "end": "09:02", "timeZone": "UTC", "dates": ["2026-01-01"]}
+WEBDRIVER_OFF = "Object.defineProperty(Navigator.prototype, 'webdriver', {get: () => false})"
+RECORD_NAME = re.compile(r"^2026-01-01_\d{4}_pacing_[0-9a-f]{12}\.json$")
+
+# A stand-in for the serve-only sink, for policy tests that must not depend
+# on the server: it logs every save and answers what the test asks for.
+STUB_SINK = """(() => {
+  window.__pacingSent = [];
+  window.__pacingReply = null;
+  const sink = {
+    version: 1, unit: "pacing", inert: null,
+    probe: async () => ({ok: true, status: 200}),
+    save: async (record, options) => {
+      const reply = window.__pacingReply && window.__pacingReply(record);
+      window.__pacingSent.push({segment: record.segment, rev: record.rev, at: Date.now(),
+        keepalive: Boolean(options && options.keepalive), status: reply ? reply.status : 200});
+      return reply || {ok: true, status: 200, rev: record.rev, savedAt: new Date().toISOString(),
+        file: `pacing-records/${record.date}_${record.opened}_pacing_${record.segment}.json`};
+    },
+  };
+  Object.defineProperty(window, "lecturedeckPacingSink", {value: Object.freeze(sink)});
+})();"""
+
+
+def build_pacing_unit(unit: Path) -> None:
+    webdeck = unit / "webdeck"
+    (webdeck / "assets").mkdir(parents=True)
+    (webdeck / "assets" / "figure.png").write_bytes(png(320, 180, (131, 165, 152)))
+    (webdeck / "deck.json").write_text(json.dumps(PACING_DECK), encoding="utf-8")
+    (webdeck / "presentation-time.json").write_text(json.dumps(PACING_TIME), encoding="utf-8")
+
+
+def pacing_segment(**changes) -> dict:
+    """A valid live segment for 2026-01-01 on the pacing unit."""
+    record = {
+        "schema": 2, "kind": "lecturedeck-pacing-segment", "segment": "0123456789ab",
+        "rev": 3, "unit": "pacing", "path": "/webdeck/", "deck": "Pacing", "viewer": __version__,
+        "date": "2026-01-01", "opened": "0900", "timeZone": "UTC",
+        "slot": {"start": "09:00", "end": "09:02", "startAt": "2026-01-01T09:00:00.000Z",
+                 "endAt": "2026-01-01T09:02:00.000Z"},
+        "window": {"before": 30, "after": 60, "from": "2026-01-01T08:30:00.000Z",
+                   "to": "2026-01-01T10:02:00.000Z"},
+        "slides": {"p-title": {"number": 1, "label": "1", "title": "Pacing", "section": "Opening"}},
+        "visits": [{"slideId": "p-title", "startedAt": "2026-01-01T09:00:00.000Z",
+                    "durationMs": 5000, "phase": "slot"}],
+        "pauses": [],
+        "fullscreenMs": 0,
+    }
+    record.update(changes)
+    return record
+
+
+def lecture_segment() -> dict:
+    """A long synthetic lecture: 57 main slides in six sections, 92 backups."""
+    sections = ["Opening", "Part A", "Part B", "Part C", "Part D", "Part E"]
+    start = epoch_ms("2026-01-01T15:00:00.000Z")
+    slides, visits, t = {}, [], start
+    for n in range(1, 58):
+        slides[f"m{n}"] = {"number": n, "label": str(n), "title": f"Main slide {n}",
+                           "section": sections[min((n - 1) // 10, 5)]}
+        visits.append({"slideId": f"m{n}", "startedAt": iso_ms(t), "durationMs": 70000,
+                       "phase": "slot"})
+        t += 70000
+    for n in range(1, 93):
+        slides[f"b{n}"] = {"number": 57 + n, "label": f"B{n}", "title": f"Backup slide {n}",
+                           "section": "Backup", "backup": True}
+        visits.append({"slideId": f"b{n}", "startedAt": iso_ms(t), "durationMs": 3000,
+                       "phase": "slot"})
+        t += 3000
+    return pacing_segment(
+        segment="feedc0ffee00", rev=210, opened="1500",
+        slot={"start": "15:00", "end": "16:30", "startAt": "2026-01-01T15:00:00.000Z",
+              "endAt": "2026-01-01T16:30:00.000Z"},
+        window={"before": 30, "after": 60, "from": "2026-01-01T14:30:00.000Z",
+                "to": "2026-01-01T17:30:00.000Z"},
+        slides=slides, visits=visits,
+    )
+
+
+def seed_script(items: dict[str, object], once: str | None = None) -> str:
+    """An init script writing localStorage items, optionally only once."""
+    body = "".join(
+        f"localStorage.setItem({json.dumps(key)}, {json.dumps(json.dumps(value))});"
+        for key, value in items.items()
+    )
+    if once:
+        flag = json.dumps(once)
+        return f"if (!localStorage.getItem({flag})) {{ {body} localStorage.setItem({flag}, '1'); }}"
+    return body
+
+
+class QuietStaticHandler(SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):  # noqa: A002 - stdlib signature
+        pass
+
+
+@unittest.skipUnless(HAVE_PLAYWRIGHT, "playwright is not installed")
+class PacingBrowserTest(unittest.TestCase):
+    """The pacing recorder, its report, and saving through the serve-only sink.
+
+    It has its own temporary root, so the smoke suite's selector is unchanged.
+    Pages run on a paused Playwright clock: time moves only with run_for, so
+    every recorded instant is exact. Contexts report navigator.webdriver as
+    false unless a test is about automation, because the sink is inert under
+    automation.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._root = tempfile.TemporaryDirectory()
+        root = Path(cls._root.name)
+        cls.unit = root / "decks" / "pacing"
+        build_pacing_unit(cls.unit)
+        other = root / "other"
+        other.mkdir()
+        build_json_unit(other)
+        cls.servers = []
+
+        def start(server) -> str:
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            cls.servers.append(server)
+            return f"http://127.0.0.1:{server.server_address[1]}"
+
+        cls.origin = start(make_server(cls.unit, "127.0.0.1", 0, livereload=False, quiet=True))
+        cls.url = cls.origin + "/webdeck/"
+        cls.selector = start(
+            make_selector_server(root / "decks", "127.0.0.1", 0, livereload=False, quiet=True)
+        )
+        cls.other_origin = start(make_server(other, "127.0.0.1", 0, livereload=False, quiet=True))
+        original_cwd = Path.cwd()
+        try:
+            try:
+                os.chdir(root)
+                cls._playwright = sync_playwright().start()
+                cls.browser = cls._playwright.chromium.launch()
+            finally:
+                os.chdir(original_cwd)
+        except Exception as exc:  # browser binaries absent
+            cls._playwright.stop()
+            for server in cls.servers:
+                server.shutdown()
+                server.server_close()
+            cls._root.cleanup()
+            raise unittest.SkipTest(f"chromium is not installed ({exc})")
+
+    @classmethod
+    def tearDownClass(cls):
+        if hasattr(cls, "browser"):
+            cls.browser.close()
+            cls._playwright.stop()
+            for server in cls.servers:
+                server.shutdown()
+                server.server_close()
+            cls._root.cleanup()
+
+    def setUp(self):
+        shutil.rmtree(self.unit / "pacing-records", ignore_errors=True)
+
+    def context(self, automation: bool = False, **options):
+        context = self.browser.new_context(**options)
+        self.addCleanup(context.close)
+        if not automation:
+            context.add_init_script(WEBDRIVER_OFF)
+        return context
+
+    def open_at(self, context, moment: datetime | None, url: str | None = None, *, sink: str = ""):
+        """A page whose clock is paused at `moment` before the deck loads.
+
+        The clock belongs to the context: a second page passes None and
+        shares it, since installing it again would step the first page's
+        clock backwards.
+        """
+        page = context.new_page()
+        if sink:
+            # Keep the real sink out; the stub stands in for it.
+            page.route("**/__lecturedeck/pacing-sink.js",
+                       lambda route: route.fulfill(body="", content_type="text/javascript"))
+            page.add_init_script(sink)
+        if moment is not None:
+            page.clock.install(time=moment)
+            page.clock.pause_at(moment)
+        page.goto(url or self.url)
+        page.wait_for_selector("#pacing-button", state="attached")
+        return page
+
+    def open_report(self, page) -> None:
+        page.evaluate("document.querySelector('#pacing-button').click()")
+        page.wait_for_selector("#pacing-dialog[open]")
+
+    def disk(self, page) -> list[dict]:
+        """Records on disk for the segments in `page`'s journal.
+
+        A closing page from the previous test may still land a keepalive
+        save after setUp cleared the folder, so tests never count files
+        they did not record.
+        """
+        mine = {entry["record"]["segment"] for entry in journal(page)}
+        folder = self.unit / "pacing-records"
+        if not folder.is_dir():
+            return []
+        records = []
+        for path in sorted(folder.glob("*.json")):
+            if path.stem.rsplit("_", 1)[-1] in mine:
+                records.append(json.loads(path.read_text(encoding="utf-8")) | {"_name": path.name})
+        return records
+
+    def wait_disk(self, page, predicate, timeout: float = 10.0) -> list[dict]:
+        deadline = time.monotonic() + timeout
+        while True:
+            records = self.disk(page)
+            if predicate(records):
+                return records
+            if time.monotonic() > deadline:
+                found = [(record["segment"], record["rev"]) for record in records]
+                self.fail(f"pacing-records never matched: {found}")
+            time.sleep(0.1)
+
+    def sent(self, page) -> list[dict]:
+        return page.evaluate("window.__pacingSent")
+
+    def sends(self, page, count: int) -> None:
+        """Wait for exactly `count` stub saves, then confirm no more followed."""
+        page.wait_for_function(f"window.__pacingSent.length >= {count}")
+        self.assertEqual(count, len(self.sent(page)))
+
+    def status(self, page) -> tuple[str, str]:
+        return (page.get_attribute("#pacing-status", "data-state"),
+                page.text_content("#pacing-status"))
+
+    def test_pacer_saves_to_disk_without_a_button(self):
+        page = self.open_at(self.context(), utc(8, 59, 50))
+        downloads = []
+        page.on("download", lambda download: downloads.append(download))
+        page.clock.run_for(10_000)
+        page.keyboard.press("ArrowRight")
+        with page.expect_response(lambda r: r.request.method == "POST"):
+            page.clock.run_for(140_000)  # 20 s past 09:02
+        (record,) = self.wait_disk(
+            page,
+            lambda records: len(records) == 1
+            and any(v["phase"] == "after" and v["durationMs"] for v in records[0]["visits"]),
+        )
+        self.assertTrue(record["_name"].startswith("2026-01-01_0859_pacing_"), record["_name"])
+        self.assertRegex(record["_name"], RECORD_NAME)
+        self.assertEqual(f"2026-01-01_0859_pacing_{record['segment']}.json", record["_name"])
+        self.assertEqual(
+            ("pacing", "/webdeck/", "0859"), (record["unit"], record["path"], record["opened"])
+        )
+        self.assertIn("savedBy", record)
+        visits = record["visits"]
+        self.assertEqual(
+            ["before", "slot", "after"], list(dict.fromkeys(v["phase"] for v in visits))
+        )
+        # Unbroken: each visit ends exactly where the next one starts.
+        for first, second in zip(visits, visits[1:]):
+            self.assertEqual(visit_end(first), second["startedAt"])
+        before = [v for v in visits if v["phase"] == "before"]
+        slot = [v for v in visits if v["phase"] == "slot"]
+        after = [v for v in visits if v["phase"] == "after"]
+        self.assertEqual("2026-01-01T09:00:00.000Z", visit_end(before[-1]))
+        self.assertEqual("2026-01-01T09:00:00.000Z", slot[0]["startedAt"])
+        self.assertEqual("2026-01-01T09:02:00.000Z", visit_end(slot[-1]))
+        self.assertEqual("2026-01-01T09:02:00.000Z", after[0]["startedAt"])
+        span = epoch_ms(visit_end(visits[-1])) - epoch_ms(visits[0]["startedAt"])
+        self.assertAlmostEqual(span, sum(v["durationMs"] for v in visits), delta=1000)
+        self.assertEqual([], downloads)
+
+    def test_pacer_window_edges(self):
+        page = self.open_at(self.context(), utc(8, 29, 58))
+        recording = lambda: page.get_attribute("#pacing-button", "data-recording")  # noqa: E731
+        page.clock.run_for(1000)
+        self.assertEqual("false", recording())  # 08:29:59
+        page.clock.run_for(1000)
+        self.assertEqual("true", recording())  # 08:30:00
+        page.clock.pause_at(utc(10, 1, 50))
+        page.clock.run_for(9000)
+        self.assertEqual("true", recording())  # 10:01:59
+        page.clock.run_for(1000)
+        self.assertEqual("false", recording())  # 10:02:00
+        (entry,) = journal(page)
+        record = entry["record"]
+        self.assertEqual("2026-01-01T08:30:00.000Z", record["window"]["from"])
+        self.assertEqual("2026-01-01T10:02:00.000Z", record["window"]["to"])
+        self.assertEqual("2026-01-01T08:30:00.000Z", record["visits"][0]["startedAt"])
+        self.assertEqual(record["window"]["to"], visit_end(record["visits"][-1]))
+        self.assertEqual("after", record["visits"][-1]["phase"])
+        page.clock.run_for(5000)
+        self.assertEqual(record["rev"], journal(page)[0]["record"]["rev"])
+
+    def test_pacer_gaps_are_never_credited(self):
+        page = self.open_at(self.context(), utc(8, 40))
+        page.clock.run_for(3000)
+        page.clock.fast_forward(5 * 60_000)  # a closed lid: both clocks jump
+        page.clock.run_for(2000)
+        page.clock.set_system_time(utc(9, 45, 5))  # a clock step: only Date jumps
+        page.clock.run_for(3000)
+        (entry,) = journal(page)
+        record = entry["record"]
+        self.assertEqual(
+            [("08:40:00", 3000, "before"), ("08:45:03", 2000, "before"),
+             ("09:45:06", 2000, "after")],
+            [(v["startedAt"][11:19], v["durationMs"], v["phase"]) for v in record["visits"]],
+        )
+        self.assertEqual(
+            [("08:40:03", 300_000, "suspended"), ("08:45:05", 3_601_000, "clock")],
+            [(p["startedAt"][11:19], p["durationMs"], p["why"]) for p in record["pauses"]],
+        )
+        # A closed lid while the overview is open is still a suspension: the
+        # overview pause ends at the gap and starts again on waking.
+        page = self.open_at(self.context(), utc(8, 50, 10))
+        page.clock.run_for(3000)
+        page.keyboard.press("o")
+        page.clock.run_for(1000)
+        page.clock.fast_forward(5 * 60_000)
+        page.clock.run_for(2000)
+        (entry,) = journal(page)
+        self.assertEqual(
+            [("08:50:13", 1000, "overview"), ("08:50:14", 300_000, "suspended"),
+             ("08:55:14", 2000, "overview")],
+            [(p["startedAt"][11:19], p["durationMs"], p["why"]) for p in entry["record"]["pauses"]],
+        )
+        self.assertEqual([("08:50:10", 3000)], [
+            (v["startedAt"][11:19], v["durationMs"]) for v in entry["record"]["visits"]])
+
+    def test_pacer_reload_and_abrupt_close_recover(self):
+        context = self.context()
+        page = self.open_at(context, utc(9, 0, 10))
+        page.clock.run_for(5000)
+        page.reload()
+        page.wait_for_selector("#pacing-button", state="attached")
+        page.clock.run_for(5000)
+        first, second = self.wait_disk(page, lambda records: len(records) == 2)
+        self.assertNotEqual(first["segment"], second["segment"])
+        # A crash: nothing reaches the server, then the tab dies without
+        # running beforeunload.
+        page.route("**/__lecturedeck/pacing", lambda route: route.abort())
+        page.clock.run_for(20_000)
+        segment = journal(page)[-1]["record"]["segment"]
+        page.close()
+        # The next page in the same browser uploads the journal's tail.
+        recovering = self.open_at(context, utc(12, 0))
+        (entry,) = [e for e in journal(recovering) if e["record"]["segment"] == segment]
+        rev = entry["record"]["rev"]
+        records = self.wait_disk(
+            recovering,
+            lambda records: any(r["segment"] == segment and r["rev"] == rev for r in records),
+        )
+        self.assertEqual(2, len(records))
+        self.assertEqual(20_000 + 5_000, sum(v["durationMs"] for v in records[
+            [r["segment"] for r in records].index(segment)]["visits"]))
+
+    def test_pacing_headline_measures_overrun(self):
+        page = self.open_at(self.context(), utc(8, 58))
+        page.clock.run_for(5000)
+        page.keyboard.press("ArrowRight")  # a change before the slot
+        page.clock.run_for((4 * 60 + 15) * 1000)  # 09:02:20
+        page.keyboard.press("ArrowRight")
+        page.clock.run_for(5000)
+        self.open_report(page)
+        headline = page.locator("#pacing-headline")
+        self.assertEqual("20000", headline.get_attribute("data-overrun-ms"))
+        self.assertEqual("true", headline.get_attribute("data-over"))
+        self.assertIn("+0:20 past 09:02", headline.text_content())
+        self.assertEqual("120000", headline.get_attribute("data-in-slot-ms"))
+        self.assertIn("Started 08:58:05 (first slide change)", headline.text_content())
+        self.assertEqual("2:00", page.text_content('[data-tile="before"] .pacing-tile-value'))
+        self.assertIn("1 slide change", page.text_content('[data-tile="before"]'))
+        self.assertEqual("0:25", page.text_content('[data-tile="after"] .pacing-tile-value'))
+        self.assertEqual("true", page.get_attribute('[data-tile="after"]', "data-over"))
+        timeline = page.text_content("details.pacing-timeline")
+        self.assertIn("— 09:00 scheduled start —", timeline)
+        self.assertIn("— 09:02 scheduled end —", timeline)
+        until = int(headline.get_attribute("data-on-screen-until"))
+        page.keyboard.press("Escape")
+        page.clock.run_for(5 * 60_000)
+        self.open_report(page)
+        self.assertEqual("20000", headline.get_attribute("data-overrun-ms"))
+        grown = int(headline.get_attribute("data-on-screen-until"))
+        self.assertEqual(5 * 60_000, grown - until)
+
+    def test_pacing_report_controls_stay_reachable(self):
+        record = lecture_segment()
+        key = f"lecturedeck-pacing2:/webdeck/:2026-01-01:{record['segment']}"
+        sync = {"rev": record["rev"], "file": "pacing-records/x.json",
+                "at": "2026-01-01T16:41:07.000Z", "state": "saved", "error": None}
+        for width, height in ((1280, 720), (375, 812)):
+            with self.subTest(width=width, height=height):
+                context = self.context(viewport={"width": width, "height": height})
+                context.add_init_script(seed_script({key: {"record": record, "sync": sync}}))
+                page = self.open_at(context, utc(12, 0))
+                self.open_report(page)
+                self.assertIsNone(page.get_attribute("details.pacing-slides", "open"))
+                self.assertIsNone(page.get_attribute("details.pacing-timeline", "open"))
+                self.assertEqual(
+                    ["Opening", "Part A", "Part B", "Part C", "Part D", "Part E",
+                     "Backup slides (B1–B92)"],
+                    page.locator(".pacing-sections tbody th").all_text_contents(),
+                )
+                self.assertIn("Not shown: slides 1–5 (5 main slides)",
+                              page.text_content(".pacing-not-shown"))
+                self.assertIn("Per-slide time · 149 slides · 149 visits",
+                              page.text_content("details.pacing-slides summary"))
+                page.locator("details.pacing-slides summary").click()
+                body = page.locator(".pacing-body")
+                self.assertGreater(body.evaluate("b => b.scrollHeight - b.clientHeight"), 500)
+                body.evaluate("b => { b.scrollTop = b.scrollHeight; }")
+                for selector in ("#pacing-close", "#pacing-export"):
+                    box = page.locator(selector).bounding_box()
+                    self.assertIsNotNone(box, selector)
+                    self.assertGreaterEqual(box["x"], 0, selector)
+                    self.assertGreaterEqual(box["y"], 0, selector)
+                    self.assertLessEqual(box["x"] + box["width"], width, selector)
+                    self.assertLessEqual(box["y"] + box["height"], height, selector)
+                    self.assertTrue(page.locator(selector).is_enabled(), selector)
+                self.assertEqual(0, page.evaluate(
+                    "document.documentElement.scrollWidth - innerWidth"))
+
+    def test_dialogs_swallow_deck_input(self):
+        page = self.open_at(self.context(viewport={"width": 1280, "height": 720}), utc(9, 0, 30))
+        index = lambda: page.evaluate(  # noqa: E731
+            "Number(document.querySelector('#deck .slide-frame').dataset.index)")
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(1, index())
+        page.locator("#controls-toggle").click()
+        page.locator("#pacing-button").click()
+        page.wait_for_selector("#pacing-dialog[open]")
+        for key in ("ArrowRight", "PageDown", "Space", "ArrowLeft", "End", "o", "f"):
+            page.keyboard.press(key)
+        page.mouse.move(640, 360)
+        for _ in range(3):
+            page.mouse.wheel(0, 120)
+            page.wait_for_timeout(80)
+        self.assertEqual(1, index())
+        self.assertTrue(page.evaluate("document.querySelector('#overview').hidden"))
+        self.assertFalse(page.evaluate("document.body.classList.contains('pseudo-fullscreen')"))
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#pacing-dialog", state="hidden")
+        self.assertTrue(page.evaluate("document.querySelector('#overview').hidden"))
+        self.assertEqual("pacing-button", page.evaluate("document.activeElement.id"))
+        # A click on the backdrop closes it too.
+        page.locator("#pacing-button").click()
+        page.wait_for_selector("#pacing-dialog[open]")
+        page.mouse.click(8, 8)
+        page.wait_for_selector("#pacing-dialog", state="hidden")
+        self.assertEqual(1, index())
+        # The Appearance dialog: the wheel and the adjust HUD's G stay out.
+        page.keyboard.press("t")
+        page.wait_for_selector("#appearance-dialog[open]")
+        page.mouse.move(640, 360)
+        page.mouse.wheel(0, 120)
+        page.wait_for_timeout(80)
+        page.keyboard.press("g")
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(1, index())
+        self.assertTrue(page.evaluate("document.querySelector('.lecturedeck-adjust-hud').hidden"))
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#appearance-dialog", state="hidden")
+        self.assertTrue(page.evaluate("document.querySelector('#overview').hidden"))
+        page.keyboard.press("g")  # the HUD still works once the dialog is gone
+        page.wait_for_selector(".lecturedeck-adjust-hud:not([hidden])")
+        page.keyboard.press("g")
+        # Escape that ends fullscreen behind a dialog must not open the overview.
+        page.keyboard.press("f")
+        page.wait_for_function(
+            "Boolean(document.fullscreenElement)"
+            " || document.body.classList.contains('pseudo-fullscreen')"
+        )
+        native = page.evaluate("Boolean(document.fullscreenElement)")
+        self.open_report(page)
+        if native:
+            # The browser's own Escape ends native fullscreen and leaves the
+            # dialog open; the exit must not open the overview behind it.
+            page.evaluate("document.exitFullscreen()")
+            page.wait_for_function(
+                "document.querySelector('#fullscreen-button').textContent === 'Full screen'"
+            )
+            self.assertTrue(page.evaluate("document.querySelector('#pacing-dialog').open"))
+            self.assertTrue(page.evaluate("document.querySelector('#overview').hidden"))
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#pacing-dialog", state="hidden")
+        if not native:
+            # Escape closed the dialog and left the presentation alone.
+            self.assertTrue(page.evaluate("document.body.classList.contains('pseudo-fullscreen')"))
+        self.assertTrue(page.evaluate("document.querySelector('#overview').hidden"))
+        self.assertEqual(1, index())
+
+    def test_two_windows_record_separately(self):
+        context = self.context()
+        first = self.open_at(context, utc(9, 0, 0))
+        first.clock.run_for(5_000)
+        second = self.open_at(context, None)  # opens at 09:00:05 on the shared clock
+        context.clock.run_for(5_000)
+        records = self.wait_disk(second, lambda records: len(records) == 2)
+        self.assertEqual(2, len({r["segment"] for r in records}))
+        self.open_report(second)
+        notes = second.text_content(".pacing-notes")
+        self.assertIn("Two windows recorded at once for 0:05", notes)
+        self.assertIn("2 recordings merged (1 other window).", notes)
+        # 09:00:00-09:00:10 once, not the 15 s the two windows add up to.
+        self.assertEqual("10000", second.get_attribute("#pacing-headline", "data-in-slot-ms"))
+
+    def test_idle_window_does_not_take_over_at_the_boundaries(self):
+        # Both windows split their visits at 09:00 and 09:02 to the same
+        # millisecond. The window opened later but never touched must not win
+        # those splits from the one being presented.
+        context = self.context()
+        presenting = self.open_at(context, utc(8, 59, 0))
+        context.clock.run_for(5_000)
+        self.open_at(context, None, self.url + "#/3")  # 08:59:05 on Part two, left alone
+        context.clock.run_for(15_000)
+        presenting.keyboard.press("ArrowRight")  # 08:59:20 Part one
+        context.clock.run_for(70_000)
+        presenting.keyboard.press("ArrowRight")  # 09:00:30 Middle
+        context.clock.run_for(120_000)  # 09:02:30
+        self.open_report(presenting)
+        headline = presenting.locator("#pacing-headline")
+        self.assertEqual("-90000", headline.get_attribute("data-overrun-ms"))
+        self.assertIn("Last main-slide change 09:00:30 · 1:30 before 09:02",
+                      headline.text_content())
+        rows = {
+            row.locator("th").text_content(): row.locator("td").all_text_contents()
+            for row in presenting.locator(".pacing-sections tbody tr").all()
+        }
+        # Section | Entered | Slides shown | In slot | Outside slot
+        self.assertEqual("0:30", rows["Opening"][2])  # Part one, 09:00:00-09:00:30
+        self.assertEqual("1:30", rows["Middle"][2])  # Middle, 09:00:30-09:02:00
+        # Opening the second window is its change: Part two holds 08:59:05-08:59:20.
+        self.assertEqual("0:45 before", rows["Opening"][3])
+        self.assertEqual("0:15 before · 0:30 after", rows["Middle"][3])
+
+    def test_headline_counts_only_real_slide_changes(self):
+        # One early-finish recording, closed at 09:03:10, then the deck opened
+        # again after class to read the report. Neither opening a page nor
+        # coming back from the backup to the closing slide is a slide change.
+        def seed(last: str) -> str:
+            info = {
+                "p-title": (1, "1", "Pacing", "Opening"),
+                "p-figure": (2, "2", "Part one", "Opening"),
+                "p-two": (4, "4", "Part two", "Middle"),
+                "p-three": (5, "5", "Part three", "Middle"),
+                "p-extra": (7, "B2", "Backup extra", "Backup"),
+            }
+            slides = {slide: {"number": n, "label": label, "title": title, "section": section}
+                      for slide, (n, label, title, section) in info.items()}
+            slides["p-extra"]["backup"] = True
+            visits = [
+                ("p-title", "08:59:50.000", 10_000, "before"),
+                ("p-title", "09:00:00.000", 10_000, "slot"),
+                ("p-figure", "09:00:10.000", 25_150, "slot"),
+                ("p-three", "09:00:35.150", 84_850, "slot"),  # the real last change
+                ("p-three", "09:02:00.000", 30_000, "after"),
+                ("p-extra", "09:02:30.000", 30_000, "after"),  # a question from the backup
+                (last, "09:03:00.000", 10_000, "after"),
+            ]
+            record = pacing_segment(segment="5eed00000001", rev=7, slides=slides, visits=[
+                {"slideId": slide, "startedAt": f"2026-01-01T{at}Z", "durationMs": ms,
+                 "phase": phase} for slide, at, ms, phase in visits])
+            sync = {"rev": 7, "file": "pacing-records/x.json", "at": "2026-01-01T09:03:10.000Z",
+                    "state": "saved", "error": None}
+            return seed_script({"lecturedeck-pacing2:/webdeck/:2026-01-01:5eed00000001":
+                                {"record": record, "sync": sync}})
+
+        def report(moment: datetime, script: str = ""):
+            context = self.context()
+            if script:
+                context.add_init_script(script)
+            page = self.open_at(context, moment)
+            page.clock.run_for(3000)
+            self.open_report(page)
+            headline = page.locator("#pacing-headline")
+            return (page, headline.get_attribute("data-overrun-ms"),
+                    headline.get_attribute("data-over"), headline.text_content())
+
+        page, overrun, over, text = report(utc(9, 20), seed("p-three"))
+        self.assertEqual(("-84850", None), (overrun, over))
+        # Whole seconds, like the wall times: 09:00:35.150 is 1:25 before 09:02.
+        self.assertIn("Last main-slide change 09:00:35 · 1:25 before 09:02", text)
+        self.assertIn("Started 09:00:10 (first slide change)", text)
+        self.assertIn("2 recordings merged (1 page reload).", page.text_content(".pacing-notes"))
+        # From the backup to another main slide is a change.
+        _, overrun, over, text = report(utc(9, 20), seed("p-two"))
+        self.assertEqual(("60000", "true"), (overrun, over))
+        self.assertIn("Last main-slide change 09:03:00 · +1:00 past 09:02", text)
+        # A deck opened after class and never paged changed nothing.
+        _, overrun, over, text = report(utc(9, 5))
+        self.assertEqual(("", None), (overrun, over))
+        self.assertIn("No main-slide change recorded", text)
+        self.assertIn("No slide change yet", text)
+
+    def test_older_refused_entries_never_block_the_live_lecture(self):
+        # On a single-unit serve every unit shares /webdeck/. An entry another
+        # unit left behind, or one for a date since dropped from the schedule,
+        # is refused (422) and stays pending; today's lecture still saves.
+        pending = {"rev": 0, "file": None, "at": None, "state": "pending", "error": None}
+        stale = [pacing_segment(segment="0000000000a1", unit="other"),
+                 pacing_segment(segment="0000000000a2", date="2025-12-31")]
+        context = self.context()
+        context.add_init_script(seed_script({
+            f"lecturedeck-pacing2:/webdeck/:{record['date']}:{record['segment']}":
+                {"record": record, "sync": pending} for record in stale
+        }, once="seeded"))
+        page = self.open_at(context, utc(9, 0, 10))
+        page.wait_for_function(
+            """() => ['0000000000a1', '0000000000a2'].every(segment => Object.keys(localStorage)
+              .some(key => key.endsWith(':' + segment)
+                && JSON.parse(localStorage.getItem(key)).sync.error))"""
+        )
+        page.clock.run_for(30_000)
+        errors = {e["record"]["segment"]: (e["sync"]["state"], e["sync"]["error"])
+                  for e in journal(page)}
+        self.assertEqual(("pending", "wrong-unit"), errors.pop("0000000000a1"))
+        self.assertEqual(("pending", "not-scheduled"), errors.pop("0000000000a2"))
+        ((live, _),) = errors.items()
+        (entry,) = [e for e in journal(page) if e["record"]["segment"] == live]
+        rev = entry["record"]["rev"]
+        self.assertGreater(rev, 20)
+        self.wait_disk(page, lambda records: any(
+            r["segment"] == live and r["rev"] == rev for r in records))
+        self.assertEqual("disk", page.get_attribute("#pacing-button", "data-saved"))
+        self.open_report(page)
+        self.assertEqual("ok", self.status(page)[0])
+
+    def test_pacer_waits_for_a_v1_record_still_being_recorded(self):
+        # A tab still running the old viewer writes its schema-1 record every
+        # second of the slot; converting it then would freeze it half-way.
+        def v1(date: str, visits: int) -> dict:
+            start = epoch_ms(f"{date}T09:00:00.000Z")
+            return {
+                "schema": 1, "date": date, "timeZone": "UTC", "start": "09:00", "end": "09:02",
+                "deck": "Pacing", "path": "/webdeck/",
+                "visits": [{"slideId": "p-title", "number": 1, "title": "Pacing",
+                            "section": "Opening", "startedAt": iso_ms(start + 30_000 * i),
+                            "durationMs": 30_000} for i in range(visits)],
+            }
+
+        today = "lecturedeck-pacing:/webdeck/:2026-01-01"
+        context = self.context()
+        context.add_init_script(seed_script(
+            {today: v1("2026-01-01", 1), "lecturedeck-pacing:/webdeck/:2025-12-31":
+             v1("2025-12-31", 1)}, once="seeded"))
+        page = self.open_at(context, utc(9, 1))
+
+        def migrated() -> dict:
+            return {e["record"]["date"]: len(e["record"]["visits"])
+                    for e in journal(page) if e["record"].get("migratedFrom") == 1}
+
+        # The ended record converts at once, so the conversion has run.
+        page.wait_for_function("Object.keys(localStorage).some(key =>"
+                               " key.startsWith('lecturedeck-pacing2-migrated:'))")
+        self.assertEqual({"2025-12-31": 1}, migrated())
+        # The old tab goes on writing until the slot ends.
+        page.evaluate("([key, value]) => localStorage.setItem(key, value)",
+                      [today, json.dumps(v1("2026-01-01", 3))])
+        page.clock.run_for(65_000)  # 09:02:05
+        page.reload()
+        page.wait_for_selector("#pacing-button", state="attached")
+        page.wait_for_function(
+            f"Boolean(localStorage.getItem('lecturedeck-pacing2-migrated:{today}'))")
+        self.assertEqual({"2025-12-31": 1, "2026-01-01": 3}, migrated())
+
+    def test_oversized_entry_is_refused_without_blocking_newer_ones(self):
+        # A long schema-1 record converts to one segment over the server's
+        # 256 KiB. The sink answers 413 itself, so the entry is refused at
+        # once and the newer one behind it still uploads.
+        pending = {"rev": 0, "file": None, "at": None, "state": "pending", "error": None}
+        big = pacing_segment(segment="0000000000b1", visits=[])
+        small = pacing_segment(segment="0000000000b2")
+        key = "lecturedeck-pacing2:/webdeck/:2026-01-01:"
+        context = self.context()
+        context.add_init_script(
+            "if (!localStorage.getItem('seeded')) {"
+            f" const big = {json.dumps(big)};"
+            " big.visits = Array.from({length: 12000}, () => ({slideId: 'p-title',"
+            " startedAt: '2026-01-01T08:30:00.000Z', durationMs: 1, phase: 'before'}));"
+            f" localStorage.setItem({json.dumps(key + big['segment'])},"
+            f" JSON.stringify({{record: big, sync: {json.dumps(pending)}}}));"
+            f" localStorage.setItem({json.dumps(key + small['segment'])},"
+            f" {json.dumps(json.dumps({'record': small, 'sync': pending}))});"
+            " localStorage.setItem('seeded', '1'); }"
+        )
+        bodies = []
+        context.on("request", lambda request: bodies.append(len(request.post_data_buffer or b""))
+                   if request.method == "POST" else None)
+        page = self.open_at(context, utc(12, 0))
+        self.wait_disk(page, lambda records: [r["segment"] for r in records] == ["0000000000b2"])
+        page.wait_for_function(
+            f"JSON.parse(localStorage.getItem({json.dumps(key + big['segment'])})).sync.state"
+            " === 'refused'"
+        )
+        (entry,) = [e for e in journal(page) if e["record"]["segment"] == "0000000000b1"]
+        self.assertEqual(("refused", "too-large"), (entry["sync"]["state"], entry["sync"]["error"]))
+        self.assertTrue(bodies)
+        self.assertLessEqual(max(bodies), 262144)
+
+    def test_pacer_migrates_v1_records(self):
+        def v1(path: str, deck: str) -> dict:
+            return {
+                "schema": 1, "date": "2026-01-01", "timeZone": "UTC", "start": "09:00",
+                "end": "09:02", "deck": deck, "path": path,
+                "visits": [
+                    {"slideId": "p-title", "number": 1, "title": "Pacing", "section": "Opening",
+                     "startedAt": "2026-01-01T09:00:00.000Z", "durationMs": 30_000},
+                    {"slideId": "p-extra", "number": 7, "label": "B2", "title": "Backup extra",
+                     "section": "Backup", "startedAt": "2026-01-01T09:00:30.000Z",
+                     "durationMs": 60_000},
+                ],
+            }
+
+        seeded = {
+            "lecturedeck-pacing:/webdeck/:2026-01-01": v1("/webdeck/", "Pacing"),
+            "lecturedeck-pacing:/webdeck/:latest": "lecturedeck-pacing:/webdeck/:2026-01-01",
+            "lecturedeck-pacing:/webdeck/index.html:2026-01-01": v1("/webdeck/index.html", "Other"),
+        }
+        context = self.context()
+        context.add_init_script(
+            seed_script(
+                {k: v for k, v in seeded.items() if not k.endswith(":latest")}, once="seeded"
+            )
+            + "if (!localStorage.getItem('lecturedeck-pacing:/webdeck/:latest')) "
+            "localStorage.setItem('lecturedeck-pacing:/webdeck/:latest', "
+            "'lecturedeck-pacing:/webdeck/:2026-01-01');"
+        )
+        page = self.open_at(context, utc(12, 0))
+        (record,) = self.wait_disk(page, lambda records: len(records) == 1)
+        self.assertEqual(1, record["migratedFrom"])
+        self.assertEqual(
+            ("pacing", "0900", None, []),
+            (record["unit"], record["opened"], record["fullscreenMs"], record["pauses"]),
+        )
+        self.assertEqual({"before": 0, "after": 0, "from": "2026-01-01T09:00:00.000Z",
+                          "to": "2026-01-01T09:02:00.000Z"}, record["window"])
+        self.assertEqual(["slot", "slot"], [v["phase"] for v in record["visits"]])
+        self.assertEqual({"number": 7, "label": "B2", "title": "Backup extra", "section": "Backup",
+                          "backup": True}, record["slides"]["p-extra"])
+        page.reload()
+        page.wait_for_selector("#pacing-button", state="attached")
+        page.wait_for_timeout(500)
+        self.assertEqual(1, len(self.disk(page)))
+        stored = page.evaluate("Object.keys(localStorage)")
+        for key in seeded:
+            self.assertIn(key, stored)
+        others = [e for e in journal(page) if e["record"]["deck"] == "Other"]
+        self.assertEqual(1, len(others))
+        self.assertEqual(
+            ("pending", None), (others[0]["sync"]["state"], others[0]["record"]["unit"])
+        )
+        self.assertEqual(2, len(journal(page)))
+
+    def test_static_release_records_in_browser_only(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = release_unit(self.unit, Path(folder) / "release")
+            self.assertFalse((output / "pacing-sink.js").exists())
+            server = ThreadingHTTPServer(
+                ("127.0.0.1", 0), partial(QuietStaticHandler, directory=str(output))
+            )
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+            context = self.context()
+            requests = []
+            context.on("request", lambda request: requests.append(request.url))
+            page = self.open_at(context, utc(9, 0, 10), f"http://127.0.0.1:{server.server_address[1]}/")
+            page.clock.run_for(5000)
+            self.open_report(page)
+            page.wait_for_function(
+                "document.querySelector('#pacing-status').textContent.includes('static copy')"
+            )
+            self.assertEqual("warn", page.get_attribute("#pacing-status", "data-state"))
+            self.assertEqual("browser", page.get_attribute("#pacing-button", "data-saved"))
+            with page.expect_download() as download:
+                page.locator("#pacing-export").click()
+            data = json.loads(Path(download.value.path()).read_text(encoding="utf-8"))
+            self.assertEqual(f"2026-01-01_{data['segments'][0]['opened']}_pacing_export.json",
+                             download.value.suggested_filename)
+            self.assertEqual(2, data["schema"])
+            self.assertEqual([2], [segment["schema"] for segment in data["segments"]])
+            self.assertFalse([url for url in requests if "__lecturedeck/pacing" in url])
+
+    def test_pacer_inert_under_automation(self):
+        context = self.context(automation=True)
+        posts = []
+        context.on("request", lambda r: posts.append(r.url) if r.method == "POST" else None)
+        page = self.open_at(context, utc(9, 0, 10))
+        page.clock.run_for(20_000)
+        self.assertIs(True, page.evaluate("navigator.webdriver"))
+        self.assertEqual("automation", page.evaluate("window.lecturedeckPacingSink?.inert ?? null"))
+        self.open_report(page)
+        self.assertEqual(
+            ("warn", "Saved in this browser only — automated browser"), self.status(page)
+        )
+        self.assertEqual("browser", page.get_attribute("#pacing-button", "data-saved"))
+        self.assertEqual([], posts)
+        self.assertEqual([], self.disk(page))
+
+    def test_pacer_states_why_not_on_disk(self):
+        context = self.context()
+        page = context.new_page()
+        page.route("**/__lecturedeck/pacing", lambda route: route.fulfill(
+            status=403, json={"error": "not-same-machine"}))
+        page.clock.install(time=utc(9, 0, 10))
+        page.clock.pause_at(utc(9, 0, 10))
+        page.goto(self.url)
+        page.wait_for_function(
+            "document.querySelector('#pacing-button')?.dataset.saved === 'browser'"
+        )
+        page.clock.run_for(5000)
+        self.assertEqual("true", page.get_attribute("#pacing-button", "data-recording"))
+        self.open_report(page)
+        self.assertEqual(
+            ("warn", "Saved in this browser only — only a browser on the computer serving the deck"
+             " saves to disk"),
+            self.status(page),
+        )
+        self.assertGreater(journal(page)[0]["record"]["rev"], 1)
+        port = self.origin.rsplit(":", 1)[1]
+        local = context.new_page()
+        local.route(
+            "**/__lecturedeck/pacing-sink.js", lambda route: route.fulfill(status=404, body="")
+        )
+        local.route("**/__lecturedeck/version", lambda route: route.fulfill(
+            json={"version": "0", "livereload": False, "pacing": "use-local-address"}))
+        local.goto(f"http://localhost:{port}/webdeck/")  # the context's clock is already paused
+        local.wait_for_selector("#pacing-button", state="attached")
+        self.open_report(local)
+        local.wait_for_function(
+            "document.querySelector('#pacing-status').textContent.includes('127.0.0.1')"
+        )
+        self.assertEqual(
+            ("warn", f"Saved in this browser only — open the deck at http://127.0.0.1:{port}"
+             " to save to disk"),
+            self.status(local),
+        )
+
+    def test_cross_origin_cannot_write(self):
+        page = self.context().new_page()
+        page.goto(self.other_origin + "/webdeck/")
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        outcome = page.evaluate(
+            """async ({url, body}) => {
+              const result = {};
+              try {
+                await fetch(url, {method: "POST", body, headers: {
+                  "Content-Type": "application/json", "X-Lecturedeck-Pacing": "2"}});
+                result.preflighted = "sent";
+              } catch (_) { result.preflighted = "rejected"; }
+              try {
+                const response = await fetch(url, {method: "POST", mode: "no-cors", body,
+                  headers: {"Content-Type": "text/plain"}});
+                result.simple = response.type;
+              } catch (_) { result.simple = "rejected"; }
+              return result;
+            }""",
+            {"url": self.origin + "/__lecturedeck/pacing", "body": json.dumps(pacing_segment())},
+        )
+        self.assertEqual("rejected", outcome["preflighted"])
+        self.assertIn(outcome["simple"], ("opaque", "rejected"))
+        time.sleep(0.3)
+        folder = self.unit / "pacing-records"
+        self.assertEqual([], list(folder.glob("*_0123456789ab.json")) if folder.is_dir() else [])
+
+    def test_sink_send_policy(self):
+        page = self.open_at(self.context(), utc(9, 0, 30), sink=STUB_SINK)
+        page.wait_for_function("window.__pacingSent.length === 1")  # the segment opens
+        page.clock.run_for(1000)
+        self.assertEqual(1, len(self.sent(page)))
+        # Paging through several slides becomes one send, 2 s after the last.
+        for _ in range(3):
+            page.keyboard.press("ArrowRight")
+        page.clock.run_for(1999)
+        self.assertEqual(1, len(self.sent(page)))
+        page.clock.run_for(1)
+        self.assertEqual(2, len(self.sent(page)))
+        # A heartbeat every 15 s while recording.
+        page.clock.run_for(14_000)
+        self.assertEqual(2, len(self.sent(page)))
+        page.clock.run_for(1000)
+        self.assertEqual(3, len(self.sent(page)))
+        # Opening the report sends at once; so does closing it.
+        self.open_report(page)
+        self.sends(page, 4)
+        self.assertEqual("ok", self.status(page)[0])
+        self.assertIn("Saved to disk 09:00:48 · pacing-records/2026-01-01_0900_pacing_",
+                      self.status(page)[1])
+        page.keyboard.press("Escape")
+        self.sends(page, 5)
+        # A hidden tab saves with keepalive.
+        page.clock.run_for(1000)
+        set_visibility(page, "hidden")
+        self.sends(page, 6)
+        self.assertTrue(self.sent(page)[-1]["keepalive"])
+        set_visibility(page, "visible")
+        self.sends(page, 7)
+        self.assertFalse(self.sent(page)[-1]["keepalive"])
+        (entry,) = journal(page)
+        self.assertEqual("saved", entry["sync"]["state"])
+        self.assertEqual(entry["record"]["rev"], entry["sync"]["rev"])
+        self.assertEqual("disk", page.get_attribute("#pacing-button", "data-saved"))
+        # A stale answer counts as saved up to the server's revision.
+        page.evaluate(
+            "() => { window.__pacingReply = r => ({ok: false, status: 409, error: 'stale',"
+            " rev: r.rev}); }"
+        )
+        page.clock.run_for(15_000)
+        (entry,) = journal(page)
+        self.assertEqual(("saved", None), (entry["sync"]["state"], entry["sync"]["error"]))
+        # A refusal rolls to a new segment once; a second one stops disk saving.
+        page.evaluate(
+            "() => { window.__pacingReply = () => ({ok: false, status: 400, error: 'invalid'}); }"
+        )
+        page.clock.run_for(15_000)
+        segments = list(dict.fromkeys(s["segment"] for s in self.sent(page)))
+        self.assertEqual(2, len(segments))
+        page.wait_for_function("new Set(window.__pacingSent.map(s => s.segment)).size === 2")
+        page.clock.run_for(15_000)
+        count = len(self.sent(page))
+        page.clock.run_for(30_000)
+        self.assertEqual(count, len(self.sent(page)))
+        states = {e["record"]["segment"]: e["sync"]["state"] for e in journal(page)}
+        self.assertEqual(["refused", "refused"], [states[s] for s in segments])
+        self.assertEqual("true", page.get_attribute("#pacing-button", "data-recording"))
+        self.assertEqual("failing", page.get_attribute("#pacing-button", "data-saved"))
+        self.open_report(page)
+        self.assertEqual(("error", "Disk refused this recording: invalid"), self.status(page))
+        # Every second is still in the report, merged across both segments;
+        # the second continues this page load, so it is no reload.
+        self.assertIn("2 recordings merged (1 continued in a new file).",
+                      page.text_content(".pacing-notes"))
+        self.assertEqual(0, page.locator(".pacing-reload").count())
+
+    def test_sink_failures_retry_and_explain(self):
+        page = self.open_at(self.context(), utc(9, 0, 30), sink=STUB_SINK.replace(
+            "window.__pacingReply = null;",
+            "window.__pacingReply = () => ({ok: false, status: 503, error: 'write-failed'});"))
+        page.wait_for_function("window.__pacingSent.length === 1")
+        times = lambda: [s["at"] for s in self.sent(page)]  # noqa: E731
+        for _ in range(40):
+            page.clock.run_for(1000)
+        start = epoch_ms("2026-01-01T09:00:30.000Z")
+        offsets = [t - start for t in times()]
+        self.assertEqual(4, len(offsets), offsets)
+        # Backoff 5, 10 and 20 s, within the one-second sampling step.
+        gaps = [later - earlier for earlier, later in zip(offsets, offsets[1:])]
+        for expected, gap in zip((5000, 10000, 20000), gaps):
+            self.assertAlmostEqual(expected, gap, delta=1000)
+        self.assertEqual("failing", page.get_attribute("#pacing-button", "data-saved"))
+        self.open_report(page)
+        self.assertEqual(
+            ("error", "Disk save failing since 09:00:30 (server could not write) — retrying;"
+             " every second is kept in this browser"),
+            self.status(page),
+        )
+        page.keyboard.press("Escape")
+        page.evaluate("() => { window.__pacingReply = null; }")
+        for _ in range(40):
+            page.clock.run_for(1000)
+        self.assertEqual("disk", page.get_attribute("#pacing-button", "data-saved"))
+        (entry,) = journal(page)
+        self.assertEqual("saved", entry["sync"]["state"])
+        # A forbidden page stops at once and says why.
+        page.evaluate(
+            "() => { window.__pacingReply = () => ({ok: false, status: 403, error: 'host'}); }"
+        )
+        page.clock.run_for(15_000)
+        count = len(self.sent(page))
+        page.clock.run_for(30_000)
+        self.assertEqual(count, len(self.sent(page)))
+        self.assertEqual("browser", page.get_attribute("#pacing-button", "data-saved"))
+        self.open_report(page)
+        port = self.origin.rsplit(":", 1)[1]
+        self.assertEqual(
+            ("warn", f"Saved in this browser only — open the deck at http://127.0.0.1:{port}"
+             " to save to disk"),
+            self.status(page),
+        )
+
+    def test_sink_probe_reports_ready_before_class(self):
+        page = self.open_at(self.context(), utc(7, 50), sink=STUB_SINK)
+        self.assertEqual("false", page.get_attribute("#pacing-button", "data-recording"))
+        self.open_report(page)
+        page.wait_for_function(
+            "document.querySelector('#pacing-status').textContent.startsWith('Disk saving ready')"
+        )
+        self.assertEqual(
+            ("neutral", "Disk saving ready on this computer · records from 08:30"),
+            self.status(page),
+        )
+        self.assertIn("No recorded lecture yet", page.text_content(".pacing-body"))
+        self.assertTrue(page.locator("#pacing-export").is_disabled())
+        self.assertEqual([], self.sent(page))
+
+    def test_report_held_open_stays_saved(self):
+        # Read after class inside the window: the report pause keeps growing,
+        # and the heartbeat carries it to disk, so the footer stays true.
+        page = self.open_at(self.context(), utc(9, 0, 30), sink=STUB_SINK)
+        page.wait_for_function("window.__pacingSent.length === 1")
+        self.open_report(page)
+        self.sends(page, 2)
+        for _ in range(4):
+            page.clock.run_for(10_000)
+            self.assertEqual("ok", self.status(page)[0], self.status(page))
+        self.assertEqual(4, len(self.sent(page)))  # heartbeats at 09:00:45 and 09:01:00
+        self.assertIn("Saved to disk 09:01:00 · pacing-records/", self.status(page)[1])
+        (entry,) = journal(page)
+        self.assertEqual(("09:00:30", "report"), (entry["record"]["pauses"][-1]["startedAt"][11:19],
+                                                  entry["record"]["pauses"][-1]["why"]))
+
+    def test_probe_ready_despite_entries_this_server_will_not_take(self):
+        # An old record of a unit this server no longer serves gets 404 for
+        # good. It stays pending for another server but must not hide the
+        # pre-class check behind a "retrying" warning.
+        old = {
+            "schema": 1, "date": "2025-12-31", "timeZone": "UTC", "start": "09:00",
+            "end": "09:02", "deck": "Lecture 2", "path": "/decks/lecture-02/webdeck/",
+            "visits": [{"slideId": "s1", "number": 1, "title": "Opening", "section": "Opening",
+                        "startedAt": "2025-12-31T09:00:00.000Z", "durationMs": 60_000}],
+        }
+        context = self.context()
+        context.add_init_script(seed_script(
+            {"lecturedeck-pacing:/decks/lecture-02/webdeck/:2025-12-31": old}, once="seeded"))
+        page = self.open_at(context, utc(7, 50), self.selector + "/decks/pacing/webdeck/")
+        page.wait_for_function(
+            """() => Object.keys(localStorage).some(key => key.startsWith('lecturedeck-pacing2:')
+              && JSON.parse(localStorage.getItem(key)).sync.error === 'not-found')"""
+        )
+        self.open_report(page)
+        page.wait_for_function(
+            "document.querySelector('#pacing-status').textContent.startsWith('Disk saving ready')"
+        )
+        self.assertEqual(
+            ("neutral", "Disk saving ready on this computer · records from 08:30 · 1 older"
+             " recording not accepted by this server (not-found)"),
+            self.status(page),
+        )
+        (entry,) = journal(page)
+        self.assertEqual(
+            ("pending", "lecture-02"), (entry["sync"]["state"], entry["record"]["unit"])
+        )
 
 
 if __name__ == "__main__":

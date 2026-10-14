@@ -181,6 +181,46 @@ non-concern once a passkey is required. Guardrails that still hold:
 - Every write lands in a file under git so edits arrive as reviewable diffs.
 - Releases contain no write code and no endpoints.
 
+## 4a. Pacing records (shipped 0.24.0)
+
+Lecture pacing used to live only in the presenting browser, and getting it
+into the course meant pressing Export at the end of a long list and fishing
+the file out of the downloads folder. A lecture's record stayed in the
+browser that way. Since 0.24.0, `serve` saves each page load's pacing segment
+itself, to `<unit>/pacing-records/`. This is a narrower write than §4, and it
+does not follow §4's model:
+
+- It is append-only telemetry, not deck content: one machine-written file per
+  segment, rebuilt by the server from a strict whitelist, replaced only by a
+  higher revision of itself, and never deleted. It never touches `webdeck/`,
+  so live reload, the LAN-visible tree and releases are unaffected.
+- It is on by default. A second switch to remember is how a lecture's record
+  stayed in the browser, and the gate below makes the default safe.
+  `serve --no-pacing-records` turns it off.
+- The gate is the same-machine check instead of the §4 passkey. The peer must
+  be loopback or the connection's own local address, the `Host` must be
+  `localhost` or an IP literal on the server's port (no DNS names, so no
+  rebinding), the `Origin` must match exactly, the custom header and the JSON
+  content type force a CORS preflight that always fails, and proxy headers
+  are refused. Every header gate runs before any byte of the body is read.
+  A passkey sent over plain HTTP is weaker than "the browser sits at the
+  serving computer", and it would need a step before each lecture. This
+  follows fleet `RULES.md` §16 (amended 2026-08-13): a loopback connection
+  is the stronger proof. Not using the passkey is deliberate.
+- The write code is a separate, serve-only `pacing-sink.js`, injected only
+  for a browser that passes the gate and never listed in `VIEWER_FILES`. The
+  packaged viewer holds the recorder, journal and report but no endpoint and
+  no POST code; a test checks that `lecturedeck.js` never names the endpoint.
+  Releases, PDF exports, LAN viewers and automated browsers
+  (`navigator.webdriver`) never write.
+- The date must be listed in the unit's own `presentation-time.json`, and a
+  unit gets at most 100 segment files per date.
+
+The exception covers pacing records only. Any write-back of deck content
+still follows §4: off by default, a passkey on every write, whitelisted
+surfaces. A later change must not reuse the same-machine gate for content
+without a fresh owner decision.
+
 ## 5. Compatibility promise (decided 2026-07-18)
 
 The shared installation replaces per-course source pins, so compatibility is a
@@ -299,6 +339,11 @@ catalog or a new release format.
   validation, and the adjustment protocol.
 - Not building: a WYSIWYG editor, drag-and-drop layout, or any edit that
   persists DOM state instead of source data.
+- Pacing records (§4a) are the only serve-time write. They are telemetry, not
+  deck content. They are gated by the same-machine and same-origin checks
+  rather than the §4 passkey, and they never touch `webdeck/`. Releases and
+  PDF exports contain no write code or endpoint. Any content write-back still
+  follows §4.
 
 ## Suggested order
 

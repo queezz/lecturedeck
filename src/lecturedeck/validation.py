@@ -144,6 +144,9 @@ def validate_unit(unit_root: Path) -> list[str]:
 
 
 def release_unit(unit_root: Path, output: Path) -> Path:
+    # Only webdeck/ is copied: <unit>/pacing-records/ (serve-time telemetry) is
+    # deliberately outside the bundle, and the serve-only pacing-sink.js is
+    # deliberately not in VIEWER_FILES, so a release holds no write code.
     errors = validate_unit(unit_root)
     if errors:
         raise ValueError("; ".join(errors))

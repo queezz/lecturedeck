@@ -56,7 +56,39 @@ must remain thin pointers and must not duplicate the recipes.
 - Runtime dependencies remain Python standard library only.
 - A checked release is self-contained and works offline.
 - External source links are allowed; external runtime scripts/styles are not.
-- `lecturedeck` reads and copies only a unit's `webdeck/` directory.
+- `lecturedeck` reads and copies only a unit's `webdeck/` directory, with one
+  exception: while serving, it writes pacing records to
+  `<unit>/pacing-records/<YYYY-MM-DD>_<HHMM>_<unit>_<segment>.json`, beside
+  `webdeck/` and never inside it. It writes only when all of these hold:
+  - serving was not started with `--no-pacing-records`;
+  - the request is a same-origin JSON POST carrying the `X-Lecturedeck-Pacing`
+    header;
+  - it comes from a browser on the serving machine: a loopback peer, or the
+    connection's own local address; a `localhost` or IP-literal `Host` on the
+    server's port; an exactly matching `Origin`; and no proxy headers;
+  - the body is at most 256 KiB and passes the pacing-record schema;
+  - the date is listed in that unit's `webdeck/presentation-time.json`;
+  - no stored record for that segment has an equal or higher revision.
+
+  The server chooses the path itself from validated fields and writes
+  atomically (temp file, fsync, replace). It never deletes, and it reads back
+  only the one file it is about to replace. The pacing write script is
+  injected only for such browsers. `pacing-records/` is never served, checked,
+  released, copied or hashed for live reload. Static releases and PDF exports
+  contain no write code and no write endpoint.
+- A pacing record contains only:
+  - the unit name, deck path and deck title;
+  - the schedule;
+  - the viewer version;
+  - a random segment id;
+  - per slide: id, number, label, title, section and backup flag;
+  - per visit: slide id, start, duration and phase;
+  - pauses, with start, duration and reason;
+  - time in fullscreen;
+  - the server's save time, host name and version.
+
+  It never contains page input, free text beyond slide and section titles, or
+  anything about the audience.
 - `pyproject.toml`, `src/lecturedeck/__init__.py`, and the `VIEWER_VERSION`
   constant in `src/lecturedeck/assets/lecturedeck.js` carry the same version.
 - Do not create git tags unless the user explicitly requests one.

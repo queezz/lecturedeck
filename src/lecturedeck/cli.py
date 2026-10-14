@@ -98,6 +98,7 @@ def make_available_server(
     *,
     auto_advance: bool,
     selector: bool = False,
+    pacing_records: bool = True,
 ):
     """Bind the requested port, optionally advancing past occupied ports."""
     attempts = PORT_SEARCH_ATTEMPTS if auto_advance else 1
@@ -105,7 +106,10 @@ def make_available_server(
     server_factory = make_selector_server if selector else make_server
     for candidate in range(port, min(port + attempts, 65536)):
         try:
-            return server_factory(root, host, candidate, livereload), candidate
+            server = server_factory(
+                root, host, candidate, livereload, pacing_records=pacing_records
+            )
+            return server, candidate
         except OSError as exc:
             if not auto_advance or not port_unavailable(exc):
                 raise
@@ -141,6 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     serve.add_argument("--livereload", action="store_true", help="reload when deck files change")
+    serve.add_argument(
+        "--no-pacing-records",
+        action="store_false",
+        dest="pacing_records",
+        help="do not save scheduled pacing records to <unit>/pacing-records/",
+    )
     serve.add_argument(
         "--open",
         action="store_true",
@@ -386,6 +396,7 @@ def serve(args: argparse.Namespace) -> int:
             args.livereload,
             auto_advance=args.port is None,
             selector=selector,
+            pacing_records=args.pacing_records,
         )
     except OSError as exc:
         print(f"ERROR: cannot listen on {bind_host}:{requested_port} ({exc})", file=sys.stderr)
@@ -424,6 +435,13 @@ def serve(args: argparse.Namespace) -> int:
         else:
             print(f"  LAN:   http://<this-computer-ip>:{selected_port}{start_path}")
     print(f"  Access: {access}")
+    if args.pacing_records:
+        print(
+            "  Pacing records: <unit>/pacing-records/ on scheduled dates "
+            "(browser on this computer only)"
+        )
+    else:
+        print("  Pacing records: off")
     print(f"  Source: {root}")
     if args.livereload:
         print("  Live reload: on")

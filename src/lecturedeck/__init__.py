@@ -1,3 +1,3 @@
 """Local server and static-release tooling for web lecture decks."""
 
-__version__ = "0.23.2"
+__version__ = "0.24.0"
