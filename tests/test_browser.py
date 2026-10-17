@@ -2,11 +2,12 @@
 
 Runs only when the optional Playwright dev dependency and its Chromium
 browser are installed; otherwise every test is skipped. The suite asserts
-the mechanical contract — loading paths, navigation, wheel input, overview,
-fullscreen, theme, media attributes, iframe interaction, and the serve-only
-geometry-adjust guards, and the pacing recorder: its window, journal,
-report and saving to disk through the serve-only sink. Visual density and
-pedagogical quality remain human judgment and are deliberately out of scope.
+the mechanical contract — loading paths, navigation, step-by-step reveals,
+wheel input, overview, fullscreen, theme, media attributes, iframe
+interaction, and the serve-only geometry-adjust guards, and the pacing
+recorder: its window, journal, report and saving to disk through the
+serve-only sink. Visual density and pedagogical quality remain human
+judgment and are deliberately out of scope.
 """
 
 from __future__ import annotations
@@ -172,6 +173,49 @@ APPENDIX_DECK = {
         {"id": "a-derivation", "title": "Backup derivation", "claim": "Backup two."},
     ],
 }
+
+
+STEPS_DECK = {
+    "deck": 1,
+    "meta": {"title": "Steps deck", "section": "SMOKE", "opening": "OPENING"},
+    "slides": [
+        {"id": "st-plain", "type": "title", "title": "Steps deck",
+         "claim": 'No steps here; <a id="st-jump" href="#/1.2">all of slide two</a>.'},
+        {"id": "st-copy", "title": "Copy steps", "claim": "Always shown.",
+         "body": '<p data-step="1" id="st-one">First point.</p>'
+                 '<p data-step="2" id="st-two-a">Second point.</p>'
+                 '<p data-step="2" id="st-two-b">Shown with it, <a id="st-link" href="#/0">'
+                 "a link</a>.</p>"},
+        {"id": "st-figure", "title": "Figure step",
+         "claim": '<span data-step="1" id="st-claim">Look here.</span>',
+         "figure": {"id": "fig-step", "src": "assets/figure.png", "alt": "Figure", "step": 2}},
+        {"id": "st-cards", "title": "Card steps", "cards": [
+            {"value": "Always"}, {"value": "One", "step": 1}, {"value": "Two", "step": 2}]},
+        {"id": "st-demo", "title": "Demo step",
+         "claim": '<span data-step="1" id="st-after-demo">Revealed by the demo.</span>',
+         "interactive": {"src": "assets/demo/index.html", "title": "Demo"}},
+        {"id": "st-video", "title": "Video step",
+         "video": {"src": "assets/clip.mp4", "type": "video/mp4", "poster": "assets/poster.png",
+                   "title": "Clip", "step": 1,
+                   "caption": '<span data-step="2" id="st-caption">After the clip.</span>'}},
+        {"id": "st-backup", "type": "section", "title": "Backup", "appendix": True,
+         "claim": '<span data-step="1" id="st-backup-step">Backup detail.</span>'},
+    ],
+}
+
+STEP_STATE = """() => {
+  const frame = document.querySelector('#deck .slide-frame');
+  const dots = document.querySelector('#step-indicator');
+  const name = node => node.id || node.dataset.figureId || node.textContent.trim();
+  return {
+    index: Number(frame.dataset.index),
+    hash: location.hash,
+    hidden: [...frame.querySelectorAll('.step-hidden')].map(name),
+    current: [...frame.querySelectorAll('.step-current')].map(name),
+    counter: document.querySelector('#counter').textContent,
+    dots: dots.hidden ? null : dots.textContent,
+  };
+}"""
 
 
 def crowded_link_deck() -> dict:
@@ -1349,6 +1393,639 @@ class BrowserSmokeTest(unittest.TestCase):
         ))
         page.keyboard.press("Escape")
         page.wait_for_function("document.querySelector('#overview').hidden")
+
+    # Step-by-step reveals ------------------------------------------------
+
+    def open_steps_deck(self, fragment: str = "", **context):
+        # The smoke unit's assets (figure, demo, clip) under a stepped deck.
+        page = self.browser.new_page(**context)
+        self.addCleanup(page.close)
+        page.route("**/deck.json", lambda route: route.fulfill(json=STEPS_DECK))
+        page.goto(self.urls["json"] + fragment)
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        return page
+
+    def steps(self, page) -> dict:
+        return page.evaluate(STEP_STATE)
+
+    def box(self, page, selector: str) -> dict:
+        return page.evaluate(
+            "s => { const r = document.querySelector(s).getBoundingClientRect();"
+            " return {x: r.x, y: r.y, w: r.width, h: r.height}; }",
+            selector,
+        )
+
+    def test_steps_reveal_on_next_and_hide_on_previous(self):
+        page = self.open_steps_deck("#/1")
+        state = self.steps(page)
+        self.assertEqual(
+            {"index": 1, "hash": "#/1", "hidden": ["st-one", "st-two-a", "st-two-b"],
+             "current": [], "counter": "2 / 6", "dots": "○○"},
+            state,
+        )
+        late = self.box(page, "#st-two-b")
+        self.assertEqual("hidden", page.evaluate(
+            "getComputedStyle(document.querySelector('#st-one')).visibility"))
+        self.assertEqual("true", page.get_attribute("#st-one", "aria-hidden"))
+        self.assertIsNotNone(page.get_attribute("#st-one", "inert"))
+        # A hidden step's link cannot take focus.
+        focused = "s => { document.querySelector(s).focus(); return document.activeElement.id; }"
+        self.assertNotEqual("st-link", page.evaluate(focused, "#st-link"))
+        self.assertEqual(
+            ["2", "0", "0"],
+            page.evaluate("(({stepCount, stepShown, stepCurrent}) => [stepCount, stepShown,"
+                          " stepCurrent])(document.querySelector('.slide-frame').dataset)"),
+        )
+
+        page.keyboard.press("ArrowRight")
+        state = self.steps(page)
+        self.assertEqual((1, "#/1.1", ["st-two-a", "st-two-b"], ["st-one"], "●○"), (
+            state["index"], state["hash"], state["hidden"], state["current"], state["dots"]))
+        self.assertIsNone(page.get_attribute("#st-one", "aria-hidden"))
+        self.assertIsNone(page.get_attribute("#st-one", "inert"))
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('#st-one')).opacity === '1'")
+        # Elements sharing a number appear together.
+        page.keyboard.press(" ")
+        state = self.steps(page)
+        self.assertEqual(("#/1.2", [], ["st-two-a", "st-two-b"], "●●", "2 / 6"), (
+            state["hash"], state["hidden"], state["current"], state["dots"], state["counter"]))
+        self.assertEqual(late, self.box(page, "#st-two-b"))  # nothing reflowed
+        self.assertEqual("st-link", page.evaluate(focused, "#st-link"))
+        page.evaluate("document.activeElement.blur()")
+
+        # A fully shown slide advances; the next one arrives bare.
+        page.keyboard.press("PageDown")
+        state = self.steps(page)
+        self.assertEqual((2, "#/2", ["st-claim", "fig-step"], "3 / 6"), (
+            state["index"], state["hash"], state["hidden"], state["counter"]))
+        # Previous on a bare slide goes back, and arrives fully revealed.
+        page.keyboard.press("ArrowLeft")
+        state = self.steps(page)
+        self.assertEqual((1, "#/1.2", []), (state["index"], state["hash"], state["hidden"]))
+        page.keyboard.press("PageUp")
+        self.assertEqual("#/1.1", self.steps(page)["hash"])
+        page.locator("#previous-button").evaluate("button => button.click()")
+        state = self.steps(page)
+        self.assertEqual(("#/1", 3), (state["hash"], len(state["hidden"])))
+        page.keyboard.press("ArrowUp")
+        state = self.steps(page)
+        self.assertEqual((0, "#/0", None), (state["index"], state["hash"], state["dots"]))
+
+        # The Next control, a wheel notch and a swipe step too.
+        page.keyboard.press("ArrowDown")
+        page.locator("#next-button").evaluate("button => button.click()")
+        self.assertEqual("#/1.1", self.steps(page)["hash"])
+        page.mouse.move(400, 300)
+        page.mouse.wheel(0, 120)
+        page.wait_for_timeout(90)
+        self.assertEqual("#/1.2", self.steps(page)["hash"])
+        self.swipe(page, [500, 300], [380, 300])
+        self.assertEqual("#/2", self.steps(page)["hash"])
+        self.swipe(page, [380, 300], [500, 300])
+        self.assertEqual("#/1.2", self.steps(page)["hash"])
+
+    def test_step_deep_links_reload_and_hash_changes(self):
+        # A plain #/N deep link opens the slide with none of its steps shown.
+        bare = self.open_steps_deck("#/1")
+        self.assertEqual(3, len(self.steps(bare)["hidden"]))
+        page = self.open_steps_deck("#/1.1")
+        self.assertEqual(["st-two-a", "st-two-b"], self.steps(page)["hidden"])
+        # A step beyond the last one shows the whole slide, named exactly.
+        page = self.open_steps_deck("#/1.9")
+        state = self.steps(page)
+        self.assertEqual(("#/1.2", []), (state["hash"], state["hidden"]))
+        page.reload()  # live reload reloads the same way
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        state = self.steps(page)
+        self.assertEqual(("#/1.2", []), (state["hash"], state["hidden"]))
+        page.evaluate("location.hash = '#/2.1'")
+        page.wait_for_function("location.hash === '#/2.1' && "
+                               "document.querySelector('.slide-frame').dataset.index === '2'")
+        self.assertEqual(["fig-step"], self.steps(page)["hidden"])
+        page.evaluate("location.hash = '#/2'")  # same slide, back to its first state
+        page.wait_for_function("document.querySelectorAll('.step-hidden').length === 2")
+        # An in-deck link to #/N.k jumps there.
+        page.keyboard.press("Home")
+        page.click("#st-jump")
+        page.wait_for_function("location.hash === '#/1.2'")
+        self.assertEqual([], self.steps(page)["hidden"])
+
+    def test_figure_card_and_video_steps_come_from_step_fields(self):
+        page = self.open_steps_deck("#/2")
+        figure = page.locator(".figure-card")
+        self.assertEqual(("2", "fig-step"), (
+            figure.get_attribute("data-step"), figure.get_attribute("data-figure-id")))
+        before = self.box(page, ".figure-card")
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(["fig-step"], self.steps(page)["hidden"])
+        page.keyboard.press("ArrowRight")
+        state = self.steps(page)
+        self.assertEqual(([], ["fig-step"]), (state["hidden"], state["current"]))
+        self.assertEqual(before, self.box(page, ".figure-card"))
+
+        page.keyboard.press("ArrowRight")
+        state = self.steps(page)
+        self.assertEqual((3, ["One", "Two"]), (state["index"], state["hidden"]))
+        self.assertIsNone(page.locator(".concept-card").first.get_attribute("data-step"))
+        page.keyboard.press("ArrowRight")
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(["Two"], self.steps(page)["current"])
+
+        # A video stepped back out of view stops playing.
+        video = self.open_steps_deck("#/5")
+        video.evaluate("""() => { window.__paused = 0;
+          HTMLMediaElement.prototype.pause = function () { window.__paused += 1; }; }""")
+        card, caption = video.locator(".video-card"), video.locator(".video-card > figcaption")
+        self.assertEqual("1", card.get_attribute("data-step"))
+        self.assertIsNotNone(card.get_attribute("inert"))
+        # A step that is a caption's whole content takes the caption box with
+        # it, so no empty bar waits on screen.
+        self.assertEqual(("2", "step-hidden"), (
+            caption.get_attribute("data-step"), caption.get_attribute("class")))
+        video.keyboard.press("ArrowRight")
+        self.assertIsNone(card.get_attribute("inert"))
+        self.assertEqual("hidden", caption.evaluate("c => getComputedStyle(c).visibility"))
+        video.keyboard.press("ArrowRight")
+        video.wait_for_function("getComputedStyle(document.querySelector("
+                                "'.video-card > figcaption')).opacity === '1'")
+        video.keyboard.press("ArrowLeft")
+        video.keyboard.press("ArrowLeft")
+        self.assertGreaterEqual(video.evaluate("window.__paused"), 1)
+        self.assertEqual((5, "#/5"), (self.steps(video)["index"], self.steps(video)["hash"]))
+        # Only the live slide lends a step to its box; overview thumbnails never.
+        video.keyboard.press("o")
+        video.wait_for_selector(".overview-card")
+        self.assertEqual(0, video.locator("#overview figcaption[data-step]").count())
+
+    def test_interactive_navigate_messages_step_first(self):
+        page = self.open_steps_deck("#/4")
+        page.wait_for_selector(".interactive-frame iframe")
+        demo = page.frame_locator(".interactive-frame iframe")
+        demo.locator("#next").click()
+        page.wait_for_function("location.hash === '#/4.1'")
+        self.assertEqual([], self.steps(page)["hidden"])
+        demo.locator("#next").click()
+        page.wait_for_function("location.hash === '#/5'")
+        page.evaluate("location.hash = '#/4.1'")
+        page.wait_for_function("document.querySelector('.slide-frame').dataset.index === '4'")
+        page.wait_for_selector(".interactive-frame iframe")
+        frame = next(f for f in page.frames if f.url.endswith("/assets/demo/index.html"))
+        frame.wait_for_load_state()
+        back = "parent.postMessage({type: 'lecturedeck:navigate', direction: -1}, '*')"
+        frame.evaluate(back)
+        page.wait_for_function("location.hash === '#/4'")
+        frame.evaluate(back)
+        page.wait_for_function("location.hash === '#/3.2'")
+
+    def test_overview_print_and_dialogs_show_every_step(self):
+        page = self.open_steps_deck("#/1")
+        page.keyboard.press("o")
+        page.wait_for_selector(".overview-card")
+        self.assertGreater(page.locator("#overview [data-step]").count(), 0)
+        self.assertEqual(0, page.locator("#overview .step-hidden").count())
+        self.assertEqual(
+            [], page.locator("#overview [data-step]").evaluate_all(
+                "nodes => nodes.filter(n => getComputedStyle(n).visibility !== 'visible'"
+                " || n.hasAttribute('inert') || n.hasAttribute('aria-hidden')).map(n => n.id)"),
+        )
+        # Closing the overview returns to the step the slide was left on.
+        page.keyboard.press("Escape")
+        page.wait_for_function("document.querySelector('#overview').hidden")
+        state = self.steps(page)
+        self.assertEqual(("#/1", 3), (state["hash"], len(state["hidden"])))
+        page.keyboard.press("ArrowRight")
+        page.keyboard.press("o")
+        page.wait_for_selector(".overview-card")
+        page.keyboard.press("Escape")
+        page.wait_for_function("document.querySelector('#overview').hidden")
+        self.assertEqual("#/1.1", self.steps(page)["hash"])
+        # A jump from the overview opens another slide bare.
+        page.keyboard.press("o")
+        page.locator(".overview-card[data-index='2']").click()
+        state = self.steps(page)
+        self.assertEqual(("#/2", 2), (state["hash"], len(state["hidden"])))
+        # The Appearance dialog leaves the slide's steps as they were.
+        page.keyboard.press("ArrowRight")
+        page.keyboard.press("t")
+        page.wait_for_selector("#appearance-dialog[open]")
+        page.keyboard.press("ArrowRight")
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#appearance-dialog", state="hidden")
+        self.assertEqual("#/2.1", self.steps(page)["hash"])
+        # Printing a live page never drops a hidden step.
+        page.emulate_media(media="print")
+        self.assertEqual("visible", page.evaluate(
+            "getComputedStyle(document.querySelector('.figure-card')).visibility"))
+        page.emulate_media(media="screen")
+
+        printed = self.browser.new_page(viewport={"width": 1280, "height": 720})
+        self.addCleanup(printed.close)
+        printed.route("**/deck.json", lambda route: route.fulfill(json=STEPS_DECK))
+        printed.goto(self.urls["json"] + "?print=1#/1.1")
+        printed.wait_for_function("window.LECTUREDECK_PRINT_READY === true")
+        self.assertEqual(7, printed.locator("#deck > .slide-frame").count())
+        self.assertEqual(0, printed.locator(
+            "#deck .step-hidden, #deck [inert], #deck [aria-hidden='true']").count())
+        self.assertEqual(
+            [], printed.locator("#deck [data-step]").evaluate_all(
+                "nodes => nodes.filter(n => getComputedStyle(n).visibility !== 'visible'"
+                " || getComputedStyle(n).opacity !== '1').map(n => n.id)"),
+        )
+        self.assertEqual("#slide-1", printed.get_attribute("#st-jump", "href"))
+
+    def test_reduced_motion_drops_the_step_fade(self):
+        duration = (
+            "s => getComputedStyle(document.querySelector(s)).transitionDuration"
+            ".split(',').map(d => parseFloat(d))"
+        )
+        page = self.open_steps_deck("#/1")
+        self.assertGreater(max(page.evaluate(duration, "#st-one")), 0)
+        # Arriving at a slide sets its hidden steps at once, with no fade.
+        page.keyboard.press("Home")
+        page.keyboard.press("ArrowRight")
+        self.assertEqual("0", page.evaluate(
+            "getComputedStyle(document.querySelector('#st-one')).opacity"))
+        still = self.open_steps_deck("#/1", reduced_motion="reduce")
+        self.assertEqual(0, max(still.evaluate(duration, "#st-one")))
+        still.keyboard.press("ArrowRight")
+        self.assertEqual("1", still.evaluate(
+            "getComputedStyle(document.querySelector('#st-one')).opacity"))
+
+    def test_home_end_buttons_and_backup_numbering_with_steps(self):
+        page = self.open_steps_deck()
+        self.assertTrue(page.locator("#previous-button").is_disabled())
+        page.keyboard.press("End")  # the deck's last state: the final slide whole
+        state = self.steps(page)
+        self.assertEqual((6, "#/6.1", [], "B1 / 1", "●"), (
+            state["index"], state["hash"], state["hidden"], state["counter"], state["dots"]))
+        self.assertTrue(page.locator("#next-button").is_disabled())
+        self.assertTrue(page.evaluate("document.body.classList.contains('in-appendix')"))
+        page.keyboard.press("ArrowLeft")
+        state = self.steps(page)
+        self.assertEqual(("#/6", ["st-backup-step"], "B1 / 1", "○"), (
+            state["hash"], state["hidden"], state["counter"], state["dots"]))
+        self.assertFalse(page.locator("#next-button").is_disabled())
+        page.keyboard.press("ArrowRight")
+        page.keyboard.press("ArrowRight")  # nothing beyond the last step
+        self.assertEqual("#/6.1", self.steps(page)["hash"])
+        page.keyboard.press("Home")
+        self.assertEqual("#/0", self.steps(page)["hash"])
+
+    def test_adjust_mode_reads_step_hashes_and_ghosts_a_hidden_figure(self):
+        page = self.open_steps_deck("#/2")
+        page.keyboard.press("ArrowRight")
+        self.assertEqual("#/2.1", self.steps(page)["hash"])
+        page.keyboard.press("g")
+        page.wait_for_selector(".lecturedeck-adjust-hud:not([hidden])")
+        self.assertIn("figure 1/1", page.text_content(".lecturedeck-adjust-hud"))
+        ghost = page.evaluate(
+            "() => { const s = getComputedStyle(document.querySelector('.figure-card'));"
+            " return [s.visibility, s.opacity]; }")
+        self.assertEqual(["visible", "0.45"], ghost)
+        page.keyboard.press("ArrowRight")
+        self.assertIn("shift: [2, 0]", page.text_content(".lecturedeck-adjust-hud code"))
+        self.assertEqual("#/2.1", self.steps(page)["hash"])
+        page.keyboard.press("Escape")
+        page.wait_for_selector(".lecturedeck-adjust-hud", state="hidden")
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('.figure-card')).visibility === 'hidden'")
+
+    def test_unchecked_decks_never_get_a_dead_press(self):
+        # check rejects both slides; a legacy or unchecked deck still never
+        # spends a press on a step nobody can see.
+        deck = {"deck": 1, "meta": {"title": "Unchecked"}, "slides": [
+            {"id": "u-demo", "chrome": False, "claim": '<b data-step="1" id="u-hidden">x</b>',
+             "interactive": {"src": "assets/demo/index.html", "title": "Demo"}},
+            {"id": "u-odd", "title": "Odd values",
+             "body": '<p data-step="0" id="u-zero">zero</p><p data-step="x" id="u-x">x</p>'},
+        ]}
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.route("**/deck.json", lambda route: route.fulfill(json=deck))
+        page.goto(self.urls["json"])
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        # The never-shown copy waits hidden, but it is no step: no dots, and
+        # the first press changes slide.
+        self.assertIsNone(self.steps(page)["dots"])
+        self.assertEqual("none", page.evaluate(
+            "getComputedStyle(document.querySelector('.slide-frame .copy')).display"))
+        page.keyboard.press("ArrowRight")
+        state = self.steps(page)
+        self.assertEqual((1, "#/1", [], None), (
+            state["index"], state["hash"], state["hidden"], state["dots"]))
+        self.assertEqual(["visible", "visible"], page.evaluate(
+            "() => ['#u-zero', '#u-x'].map(s =>"
+            " getComputedStyle(document.querySelector(s)).visibility)"))
+
+    def test_decks_without_steps_are_unchanged(self):
+        page = self.open_deck("json")
+        self.assertTrue(page.locator("#step-indicator").is_hidden())
+        for index in range(11):
+            with self.subTest(index=index):
+                self.assertEqual(index, self.current_index(page))
+                self.assertEqual(f"#/{index}", page.evaluate("location.hash"))
+                self.assertEqual(0, page.locator(
+                    "[data-step], .step-hidden, .step-current, [data-step-count], .step-cue,"
+                    " [data-step-src]").count())
+                self.assertTrue(page.locator("#step-indicator").is_hidden())
+                page.keyboard.press("ArrowRight")
+        for index in range(10, 7, -1):
+            page.keyboard.press("ArrowLeft")
+            self.assertEqual(index - 1, self.current_index(page))
+        # Previous lands on the slide as before, and only on the slide.
+        self.assertEqual("#/7", page.evaluate("location.hash"))
+
+    def test_pacer_records_slides_not_steps(self):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.route("**/deck.json", lambda route: route.fulfill(json=STEPS_DECK))
+        page.route("**/presentation-time.json", lambda route: route.fulfill(
+            json={"start": "09:00", "end": "10:00", "timeZone": "UTC",
+                  "dates": ["2026-01-01"]}
+        ))
+        page.clock.install(time=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc))
+        page.goto(self.urls["json"] + "#/1")
+        page.wait_for_selector("#pacing-button")
+        for _ in range(3):  # two steps, then the next slide
+            page.clock.run_for(2000)
+            page.keyboard.press("ArrowRight")
+        page.clock.run_for(2000)
+        page.keyboard.press("ArrowLeft")  # back onto the whole slide
+        page.clock.run_for(2000)
+        (entry,) = journal(page)
+        visits = entry["record"]["visits"]
+        # One visit per slide shown, however many steps it revealed; the
+        # record keeps its schema (no per-step field).
+        self.assertEqual(["st-copy", "st-figure", "st-copy"], [v["slideId"] for v in visits])
+        self.assertEqual({"slideId", "startedAt", "durationMs", "phase"}, set(visits[0]))
+        self.assertGreaterEqual(visits[0]["durationMs"], 5000)
+
+    def open_stepped(self, deck: dict, fragment: str = "", css: str | None = None, **context):
+        page = self.browser.new_page(**context)
+        self.addCleanup(page.close)
+        page.route("**/deck.json", lambda route: route.fulfill(json=deck))
+        if css is not None:
+            page.route("**/deck.css", lambda route: route.fulfill(
+                body=css, content_type="text/css"))
+        page.goto(self.urls["json"] + fragment)
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        return page
+
+    def demo_frame(self, page):
+        """The live slide's demo page, once it has loaded."""
+        page.frame_locator(".interactive-frame iframe").locator("#next").wait_for()
+        return next(f for f in page.frames if f.url.endswith("/assets/demo/index.html"))
+
+    def visibility(self, page, selector: str) -> str:
+        return page.evaluate(
+            "s => getComputedStyle(document.querySelector(s)).visibility", selector)
+
+    def test_part_and_course_labels_step_only_their_own_slide(self):
+        # check rejects the meta steps; the viewer still never lets a label
+        # shown on many slides hide part of them.
+        deck = {"deck": 1, "meta": {
+            "title": "Labels", "section": '<span data-step="1">COURSE</span>',
+            "opening": '<span data-step="1">START</span>'}, "slides": [
+            {"id": "open", "title": "Opening slide"},
+            {"id": "part", "type": "section",
+             "title": '<span data-step="1" class="part-name">Part A</span>'},
+            {"id": "plain", "title": "Plain slide", "claim": "Nothing stepped here."},
+        ]}
+        page = self.open_stepped(deck)
+        state = self.steps(page)
+        self.assertEqual((None, []), (state["dots"], state["hidden"]))
+        self.assertEqual(0, page.locator("#deck [data-step]").count())
+        self.assertEqual(("START", "COURSE"), (
+            page.text_content(".slide-frame .eyebrow"),
+            page.text_content(".slide-frame .course-name")))
+        # The section slide keeps its step, in its title and in the eyebrow
+        # that repeats it.
+        page.keyboard.press("ArrowRight")
+        state = self.steps(page)
+        self.assertEqual((1, "○", 2), (state["index"], state["dots"], len(state["hidden"])))
+        page.keyboard.press("ArrowRight")
+        self.assertEqual([], self.steps(page)["hidden"])
+        # The slide after it inherits the label whole.
+        page.keyboard.press("ArrowRight")
+        state = self.steps(page)
+        self.assertEqual((2, "#/2", None, []), (
+            state["index"], state["hash"], state["dots"], state["hidden"]))
+        self.assertEqual("Part A", page.text_content(".slide-frame .eyebrow"))
+        self.assertEqual(0, page.locator("#deck [data-step]").count())
+
+    def test_a_step_nested_in_a_later_one_appears_with_it(self):
+        # check warns about both; every press still shows something.
+        deck = {"deck": 1, "meta": {"title": "Nest"}, "slides": [
+            {"id": "nest", "title": "Nest", "claim": '<span data-step="1" id="first">First.</span>',
+             "body": '<div data-step="2" id="outer">Outer <span data-step="1" id="inner">'
+                     "inner</span></div>",
+             "figure": {"id": "late", "src": "assets/figure.png", "alt": "F", "step": 3,
+                        "caption": '<b data-step="2" id="early-caption">Caption.</b>'}},
+        ]}
+        page = self.open_stepped(deck)
+        self.assertEqual("○○○", self.steps(page)["dots"])
+        self.assertIsNone(page.get_attribute("#inner", "data-step"))
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(("#/0.1", "visible", "hidden"), (
+            self.steps(page)["hash"], self.visibility(page, "#first"),
+            self.visibility(page, "#inner")))
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(("#/0.2", "visible", "hidden"), (
+            self.steps(page)["hash"], self.visibility(page, "#inner"),
+            self.visibility(page, "#early-caption")))
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(("#/0.3", "visible", "visible"), (
+            self.steps(page)["hash"], self.visibility(page, ".figure-card"),
+            self.visibility(page, "#early-caption")))
+
+    def test_same_slide_addresses_are_normalised(self):
+        page = self.open_steps_deck("#/1.2")
+        page.evaluate("location.hash = '#/1.9'")
+        page.wait_for_function("location.hash === '#/1.2'")
+        self.assertEqual([], self.steps(page)["hidden"])
+
+    def test_overview_pages_whole_slides(self):
+        page = self.open_steps_deck("#/1")
+        current = "document.querySelector('.overview-card[aria-current=\"true\"]').dataset.index"
+        page.keyboard.press("o")
+        page.wait_for_selector(".overview-card")
+        page.keyboard.press("ArrowRight")
+        self.assertEqual("2", page.evaluate(current))
+        page.keyboard.press("Escape")
+        page.wait_for_function("document.querySelector('#overview').hidden")
+        self.assertEqual(("#/2", 2), (self.steps(page)["hash"], len(self.steps(page)["hidden"])))
+        page.keyboard.press("o")
+        page.wait_for_selector(".overview-card")
+        page.keyboard.press("ArrowLeft")
+        self.assertEqual("1", page.evaluate(current))
+        page.keyboard.press("Escape")
+        page.wait_for_function("document.querySelector('#overview').hidden")
+        self.assertEqual(("#/1.2", []), (self.steps(page)["hash"], self.steps(page)["hidden"]))
+
+    def test_shift_pages_whole_slides_past_steps(self):
+        page = self.open_steps_deck("#/1")
+        page.keyboard.press("Shift+ArrowRight")
+        state = self.steps(page)
+        self.assertEqual(("#/2", 2), (state["hash"], len(state["hidden"])))
+        page.keyboard.press("Shift+ArrowLeft")
+        self.assertEqual(("#/1.2", []), (self.steps(page)["hash"], self.steps(page)["hidden"]))
+        page.keyboard.press("Shift+PageUp")
+        self.assertEqual("#/0", self.steps(page)["hash"])
+        page.keyboard.press("Shift+PageDown")
+        page.keyboard.press("Shift+ArrowDown")
+        self.assertEqual("#/2", self.steps(page)["hash"])
+
+    def test_footer_step_cue_follows_the_live_slide(self):
+        page = self.open_steps_deck("#/1")
+        cue = ".slide-frame .footer-nav > .step-cue"
+        marks = f"{cue} > i"
+        self.assertEqual(("true", 2, 0), (
+            page.get_attribute(cue, "aria-hidden"), page.locator(marks).count(),
+            page.locator(f"{marks}.shown").count()))
+        number = self.box(page, ".slide-frame .page-number")
+        width = self.box(page, cue)["w"]
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(1, page.locator(f"{marks}.shown").count())
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(2, page.locator(f"{marks}.shown").count())
+        # Stepping never moves the footer.
+        self.assertEqual((number, width), (
+            self.box(page, ".slide-frame .page-number"), self.box(page, cue)["w"]))
+        page.keyboard.press("Home")
+        self.assertEqual(0, page.locator(".step-cue").count())
+        page.keyboard.press("o")
+        page.wait_for_selector(".overview-card")
+        self.assertEqual(0, page.locator(".step-cue").count())
+
+    def test_style_guide_dimming_example(self):
+        # The STYLE_GUIDE's own deck.css example, as published.
+        guide = (Path(__file__).resolve().parents[1] / "STYLE_GUIDE.md").read_text(
+            encoding="utf-8").split("## Step reveals", 1)[1]
+        css = re.search(r"```css\n(.*?)```", guide, re.S).group(1)
+        opacity = "s => getComputedStyle(document.querySelector(s)).opacity"
+        settled = ("([s, o]) => getComputedStyle(document.querySelector(s)).opacity === o")
+        page = self.open_stepped(STEPS_DECK, "#/5", css=css)
+        page.keyboard.press("ArrowRight")
+        page.keyboard.press("ArrowRight")
+        caption = page.locator(".video-card > figcaption")
+        # A caption the step took over is the current step, never dimmed.
+        self.assertEqual(("step-current", None), (
+            caption.get_attribute("class"), page.get_attribute("#st-caption", "data-step")))
+        page.wait_for_function(settled, arg=[".video-card > figcaption", "1"])
+        self.assertEqual("1", page.evaluate(opacity, "#st-caption"))
+        self.assertEqual("1", page.evaluate(opacity, ".video-card"))  # media stay bright
+        page.evaluate("location.hash = '#/1.2'")
+        page.wait_for_function(settled, arg=["#st-one", "0.6"])
+        self.assertEqual("1", page.evaluate(opacity, "#st-two-a"))
+        page.emulate_media(media="print")
+        page.wait_for_function(settled, arg=["#st-one", "1"])
+
+    def test_steps_follow_theme_and_width_changes(self):
+        # One twin of a dark/light figure pair shows per theme, and a block
+        # appears only on wide screens: each is hidden until its step.
+        deck = {"deck": 1, "meta": {"title": "Twins"}, "slides": [
+            {"id": "twins", "title": "Twins", "claim": "Claim.", "layout": "figures",
+             "body": '<p data-step="2" id="wide-only">Wide only.</p>',
+             "figures": [
+                 {"id": "dark-twin", "src": "assets/figure.png", "alt": "Dark", "step": 1},
+                 {"id": "light-twin", "src": "assets/figure.png", "alt": "Light", "step": 1}]},
+        ]}
+        css = (
+            "body:not(.light-theme) [data-figure-id='light-twin'],"
+            " body.light-theme [data-figure-id='dark-twin'] { display: none; }"
+            " @media (max-width: 700px) { #wide-only { display: none; } }"
+        )
+        shown = """() => [...document.querySelectorAll('.slide-frame .figure-card')]
+          .filter(n => n.checkVisibility() && getComputedStyle(n).visibility === 'visible')
+          .map(n => n.dataset.figureId)"""
+        page = self.open_stepped(deck, css=css, viewport={"width": 1280, "height": 720})
+        self.assertEqual(("○○", []), (self.steps(page)["dots"], page.evaluate(shown)))
+        page.keyboard.press("t")
+        page.wait_for_selector("#appearance-dialog[open]")
+        page.get_by_label("Light", exact=True).check()
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#appearance-dialog", state="hidden")
+        # The next arrow key pages the deck at once, though focus may still
+        # sit on a radio of the closed dialog; it then moves to a control
+        # that can take it (the controls strip is collapsed here).
+        # The light twin that just appeared waits for its step.
+        self.assertEqual(("#/0", []), (self.steps(page)["hash"], page.evaluate(shown)))
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(
+            ("#/0.1", ["light-twin"]), (self.steps(page)["hash"], page.evaluate(shown)))
+        page.wait_for_function(
+            "!document.querySelector('#appearance-dialog').contains(document.activeElement)")
+        # Narrow, the wide-only block is no step; wide again, it waits for one.
+        page.set_viewport_size({"width": 600, "height": 400})
+        page.wait_for_function("document.querySelector('#step-indicator').textContent === '●'")
+        page.set_viewport_size({"width": 1280, "height": 720})
+        page.wait_for_function("document.querySelector('#step-indicator').textContent === '●○'")
+        self.assertEqual("hidden", self.visibility(page, "#wide-only"))
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(("#/0.2", "visible"), (
+            self.steps(page)["hash"], self.visibility(page, "#wide-only")))
+
+    def test_stepped_interactive_loads_when_it_appears(self):
+        deck = {"deck": 1, "meta": {"title": "Demo"}, "slides": [
+            {"id": "before", "title": "Before"},
+            {"id": "demo", "title": "Demo", "claim": "Always.",
+             "interactive": {"src": "assets/demo/index.html", "title": "Demo", "step": 1}},
+            {"id": "after", "title": "After"},
+        ]}
+        page = self.open_stepped(deck)
+        iframe = page.locator(".interactive-frame iframe")
+        demo = "/assets/demo/index.html"
+        page.keyboard.press("ArrowRight")
+        # On screen bare, the page is not loaded at all.
+        self.assertEqual((None, "assets/demo/index.html"), (
+            iframe.get_attribute("src"), iframe.get_attribute("data-step-src")))
+        self.assertFalse(any(f.url.endswith(demo) for f in page.frames))
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(("assets/demo/index.html", None), (
+            iframe.get_attribute("src"), iframe.get_attribute("data-step-src")))
+        frame = page.frame_locator(".interactive-frame iframe")
+        frame.locator("#next").wait_for()
+        # Stepped back, it stays loaded.
+        page.keyboard.press("ArrowLeft")
+        self.assertEqual("assets/demo/index.html", iframe.get_attribute("src"))
+        self.assertTrue(any(f.url.endswith(demo) for f in page.frames))
+        # A slide reached by Previous arrives whole, and loads at once.
+        page.keyboard.press("End")
+        page.keyboard.press("ArrowLeft")
+        self.assertEqual(("#/1.1", "assets/demo/index.html"), (
+            self.steps(page)["hash"], iframe.get_attribute("src")))
+
+    def test_interactive_focus_and_home_end_messages(self):
+        deck = {"deck": 1, "meta": {"title": "Demo"}, "slides": [
+            {"id": "before", "title": "Before"},
+            {"id": "demo", "title": "Demo", "claim": "Always.",
+             "interactive": {"src": "assets/demo/index.html", "title": "Demo", "step": 1}},
+            {"id": "after", "title": "After", "claim": '<b data-step="1">Late.</b>'},
+        ]}
+        page = self.open_stepped(deck, "#/1.1")
+        frame = self.demo_frame(page)
+        frame.focus("#next")
+        # The page's own Back hides it: focus leaves the now inert frame, so
+        # the keyboard and a clicker keep driving the deck.
+        frame.evaluate("parent.postMessage({type: 'lecturedeck:navigate', direction: -1}, '*')")
+        page.wait_for_function("location.hash === '#/1'")
+        self.assertEqual("BODY", page.evaluate("document.activeElement.tagName"))
+        page.keyboard.press("ArrowRight")
+        self.assertEqual("#/1.1", self.steps(page)["hash"])
+        # A page's Home and End act as the deck's.
+        frame.evaluate("parent.postMessage({type: 'lecturedeck:navigate', to: 'last'}, '*')")
+        page.wait_for_function("location.hash === '#/2.1'")
+        page.evaluate("location.hash = '#/1.1'")
+        frame = self.demo_frame(page)
+        frame.evaluate("parent.postMessage({type: 'lecturedeck:navigate', to: 'first'}, '*')")
+        page.wait_for_function("location.hash === '#/0'")
+        # Anything else in `to` is ignored.
+        page.evaluate("location.hash = '#/1.1'")
+        frame = self.demo_frame(page)
+        frame.evaluate("parent.postMessage({type: 'lecturedeck:navigate', to: 'middle'}, '*')")
+        page.wait_for_timeout(150)
+        self.assertEqual("#/1.1", self.steps(page)["hash"])
 
 
 PACING_DECK = {

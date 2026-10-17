@@ -238,6 +238,28 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 .kind-title .slide-title { font-size: 68px; }
 .kind-title .claim { font-size: 31px; color: var(--muted); }
 
+/* Step-by-step reveals. A hidden step keeps its box, so nothing moves when
+   it appears; it fades in, and fades out when stepped back. The viewer sets
+   step-hidden only on the live slide, so the overview, print and PDF pages
+   always show every step. steps-settling holds the fade while a slide
+   arrives, and reduced motion drops it. */
+.slide-frame [data-step] { transition: opacity .28s ease, visibility 0s linear 0s; }
+.slide-frame .step-hidden { opacity: 0; visibility: hidden; transition: opacity .2s ease, visibility 0s linear .2s; }
+.slide-frame.steps-settling [data-step] { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .slide-frame [data-step], .slide-frame .step-hidden { transition: none; }
+}
+/* The live slide's step dots, after its page number: filled for steps
+   shown, open for steps to come. Fixed-size marks, so the footer never
+   moves while stepping. deck.css may hide them: .step-cue { display: none; } */
+.footer-nav .step-cue { display: inline-flex; gap: 5px; align-self: center; color: var(--faint); }
+.footer-nav .step-cue i { width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px currentColor; }
+.footer-nav .step-cue i.shown { background: currentColor; }
+@media print {
+  .slide-frame .step-hidden { opacity: 1; visibility: visible; transition: none; }
+  .footer-nav .step-cue { display: none; }
+}
+
 /* Laser pointer. A solid core in the current slide's accent, set from script,
    inside a white contrast ring: the core carries on a white source figure and
    the ring carries on a dark slide, so the dot survives both. The element
@@ -265,6 +287,9 @@ body.laser-active .interactive-frame iframe { pointer-events: none; }
 /* Collapsing clips the tools; items must not shrink and wrap into taller rows. */
 .controls-tools > * { flex: none; white-space: nowrap; }
 .controls-tools .viewer-version { color: var(--faint); font-size: 12px; white-space: nowrap; }
+/* Step dots beside the counter, only on a slide with steps. */
+.controls-tools .step-indicator { color: var(--muted); font-size: 11px; letter-spacing: .2em; line-height: 1; }
+.controls-tools .step-indicator[hidden] { display: none; }
 .deck-chrome.has-safe-space .controls-toggle { display: none; }
 .deck-chrome.has-safe-space .controls-tools, .deck-chrome.is-expanded .controls-tools { max-width: min(780px, calc(100vw - 90px)); opacity: 1; pointer-events: auto; }
 body.immersive-slide.pseudo-fullscreen .deck-chrome,

@@ -1,5 +1,53 @@
 # Changelog — shipped version history
 
+## 0.25.0
+
+Owner, 2026-10-17: "We can dev step by step reveal." A slide must have one
+obvious reading path, and a screen that shows every block at once does not
+say where to look first.
+
+- Step-by-step reveals. Any element of slide HTML with `data-step="N"`, and
+  a figure, each `figures` item, each card, an object `formula`, an
+  `interactive` or a `video` with a numeric `step`, waits hidden until its
+  step. Elements sharing a number appear together; content without one is
+  always on screen. Next (keys, the Next control, wheel, swipe, clicker, an
+  interactive page's direction `1`) shows the next number still hidden and
+  then changes slide; Previous hides the last one and then goes back, where
+  the previous slide arrives whole. `Shift` with the arrow and page keys
+  moves by whole slides, for rewinding, and while the overview is open
+  every press moves by whole slides. Decks without steps behave as before.
+- A hidden step keeps its place, so nothing moves when it appears; it fades
+  in over about a quarter of a second, at once under reduced motion. It is
+  hidden from screen readers and cannot hold focus: focus inside it, also
+  inside an embedded page, leaves as it hides, so the keyboard and the
+  clicker keep driving the deck. A caption, quote or gloss item that is all
+  one step takes its box with it. A video stepped back out of view pauses,
+  and a stepped interactive page loads only when its step first appears, so
+  an animation starts in front of the audience instead of finishing unseen.
+- Only what the layout shows counts. One twin of a dark/light figure pair,
+  or a block `deck.css` drops below some width, waits hidden; switching the
+  theme mid-slide or resizing no longer shows the other twin early or spends
+  a press on nothing. A step nested in a later one appears with it. A
+  section slide's stepped title steps only that slide, never the eyebrow of
+  the slides after it.
+- The address reads `#/N.k` once steps up to `k` are shown, so reload and
+  live reload keep the step; `#/N` and overview jumps open a slide bare,
+  `End` shows the last slide whole. Small dots after the page number in the
+  slide footer (and beside the counter) show the steps shown and to come,
+  where the presenter looks even with the controls strip collapsed. The
+  overview, print, `lecturedeck pdf`, the narration skeleton and the dialogs
+  always show every step; pacing records keep one visit per slide.
+- `check` rejects a step that is not a positive integer, a step in content
+  the slide never shows, and a `data-step` in `meta.section` or
+  `meta.opening`; it prints a `WARNING:` for a gap in a slide's numbers and
+  for a step nested in a later one.
+- An interactive page's `{type: "lecturedeck:navigate", to: "first"}` or
+  `to: "last"` now acts as the deck's `Home` or `End`; the deck used to
+  ignore it.
+- Closing the Appearance dialog while the controls strip is collapsed no
+  longer leaves the next arrow key on one of its radios: that press used to
+  be lost, a dead key right after a theme switch.
+
 ## 0.24.0
 
 Owner, 2026-10-14, after the lecture of 13 October: "the timings save button was on the

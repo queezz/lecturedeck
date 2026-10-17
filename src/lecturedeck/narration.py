@@ -27,13 +27,10 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 from . import __version__
-from .deckdata import _ID, validate_deck_file
+from .deckdata import _ID, FIGURE_LAYOUTS, effective_layout, validate_deck_file
 
 OUTLINE_SCHEMA = 1
 LEGACY_REFUSAL = "narration needs deck.json; this slides.js is not a plain JSON literal"
-
-# Layouts whose renderer draws the slide's figure block (lecturedeck.js).
-FIGURE_LAYOUTS = frozenset({"figure", "figure-dominant", "figure-stage", "title", "figures"})
 
 _BOM = b"\xef\xbb\xbf"
 _LEGACY_PREFIX = re.compile(r"\s*window\.LECTUREDECK\s*=\s*")
@@ -280,12 +277,19 @@ def skeleton(data: dict, *, unit: str, digest: str) -> str:
     ]
 
     def nav(target: str) -> tuple[str, str] | None:
-        if not target.isdigit() or not target.isascii():
+        # "#/N" names a slide; "#/N.k" also names the step it opens at.
+        number, dot, step = target.partition(".")
+        if not number.isdigit() or not number.isascii():
             return None
-        position = int(target)
+        if dot and (not step.isdigit() or not step.isascii()):
+            return None
+        position = int(number)
         if position >= len(slides):
             return None
-        return _string(slides[position].get("id")), marks.label(position)
+        label = marks.label(position)
+        if dot and int(step):
+            label += f", step {int(step)}"
+        return _string(slides[position].get("id")), label
 
     markdown = _Markdown(nav=nav)
     labels = _part_labels(slides, meta)
@@ -316,29 +320,6 @@ def _part_labels(slides: list, meta: dict) -> list[str]:
         else:
             inherited.append(part)
     return inherited
-
-
-def _effective_layout(slide: dict) -> str:
-    """lecturedeck.js slideMarkup's layout inference."""
-    layout = slide.get("layout")
-    if isinstance(layout, str) and layout:
-        return layout
-    figures = _figures(slide)
-    if slide.get("interactive"):
-        return "interactive"
-    if slide.get("video"):
-        return "video"
-    if len(figures) > 1:
-        return "figures"
-    if figures:
-        return "figure"
-    if slide.get("type") == "title":
-        return "title"
-    if isinstance(slide.get("cards"), list) and slide["cards"]:
-        return "cards"
-    if slide.get("formula"):
-        return "equation"
-    return "statement"
 
 
 def _figures(slide: dict) -> list[dict]:
@@ -373,7 +354,7 @@ def _slide_text(slide: dict, markdown: _Markdown, inherited: str, chapter: str) 
 
 
 def _layout_blocks(slide: dict, markdown: _Markdown) -> list[str]:
-    layout = _effective_layout(slide)
+    layout = effective_layout(slide)
     if layout in FIGURE_LAYOUTS:
         return _figure_blocks(_figures(slide), markdown)
     if layout == "cards" and isinstance(slide.get("cards"), list):

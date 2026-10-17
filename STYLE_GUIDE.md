@@ -66,6 +66,41 @@ distinct can style the hooks from `deck.css`:
 body.in-appendix #counter { font-style: italic; }
 ```
 
+## Step reveals
+
+A slide with `data-step` elements or `step` fields (see the README's
+step-by-step reveals) gives one obvious reading path: each press shows the
+next piece. The viewer only fades steps in and out, in place. Use steps for
+the order of an argument, not to animate every line; a slide that needs
+many steps is usually two slides.
+
+Number the steps in the order the eye meets them on the screen, which is
+the order the layout draws the blocks, not the order of the fields in
+`deck.json`. Where the picture sits beside a claim, keep the picture on
+screen from the start and step the formula and the gloss after it; a
+`deck.css` layout that draws cards above the body wants the cards first.
+
+The live slide exposes hooks for unit styling. Its frame carries
+`data-step-count`, `data-step-shown` and `data-step-current`, hidden steps
+carry `step-hidden`, and the most recently revealed ones `step-current`. The
+overview and print pages never carry them, so a rule scoped to
+`[data-step-count]` touches only the live slide. For example, to dim the
+text said before the newest step, leaving figures, videos and interactive
+pages at full strength:
+
+```css
+@media screen {
+  .slide-frame[data-step-count] [data-step]:not(.step-current):not(.step-hidden):not(.figure-card):not(.video-card):not(.interactive-frame) { opacity: .6; }
+}
+```
+
+Such a rule also dims a slide that arrives whole through Previous, every
+step but the last one. The viewer fades a step with `transition` on
+`.slide-frame [data-step]`, so a `deck.css` transition on a stepped element
+replaces that fade unless it also lists `opacity` and `visibility`. The
+step dots after the page number carry `step-cue`; hide them with
+`.step-cue { display: none; }` when the audience should not see them.
+
 ## Accents
 
 Set `accent` on a slide or section to choose its semantic highlight color. The

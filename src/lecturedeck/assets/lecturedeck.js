@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.24.0";
+  const VIEWER_VERSION = "0.25.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -38,6 +38,17 @@
   ].filter(Boolean);
 
   const escapeHtml = (value = "") => String(value).replace(/[&<>\"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[char]));
+
+  // "#/N" opens slide N (zero-based) with none of its steps shown; "#/N.k"
+  // also reveals every step numbered k or lower. Returns null when the hash
+  // names no slide at all.
+  function parseSlideHash(hash) {
+    const text = String(hash || "");
+    const match = /^#\/(\d+)(?:\.(\d+))?$/.exec(text);
+    if (match) return {index: Number(match[1]), step: match[2] ? Number(match[2]) : 0};
+    const loose = Math.trunc(Number(text.replace("#/", "")));
+    return Number.isFinite(loose) ? {index: loose, step: 0} : null;
+  }
 
   function setTheme(theme, persist = true) {
     const light = theme === "light";
@@ -78,7 +89,13 @@
     setPresentationStyle("default", false);
   }
   appearanceButton?.addEventListener("click", () => appearanceDialog?.showModal());
-  appearanceDialog?.addEventListener("close", () => appearanceButton?.focus());
+  // Focus returns to the Appearance button. While a collapsed controls strip
+  // makes it inert, focus leaves the closed dialog instead of staying on one
+  // of its radios (the deck's key handler also ignores such a radio).
+  appearanceDialog?.addEventListener("close", () => {
+    appearanceButton?.focus();
+    if (appearanceDialog.contains(document.activeElement)) document.activeElement.blur();
+  });
   colorModeInputs.forEach(input => input.addEventListener("change", () => {
     if (input.checked) setTheme(input.value);
   }));
@@ -1707,7 +1724,17 @@
     const numbering = slideNumbering(spec.slides);
     setFavicon(spec.meta.favicon);
     window.LECTUREDECK = spec;
-    let index = Math.max(0, Math.min(spec.slides.length - 1, Number(location.hash.replace("#/", "")) || 0));
+    const clampIndex = value => Math.max(0, Math.min(spec.slides.length - 1, value));
+    const requested = parseSlideHash(location.hash) || {index: 0, step: 0};
+    let index = clampIndex(requested.index);
+    // Step-by-step reveals on the slide shown. stepItems are its rendered
+    // [data-step] elements, stepLevels the distinct step numbers among them
+    // in ascending order, and revealed how many of those levels are shown.
+    let stepItems = [];
+    let stepLevels = [];
+    let revealed = 0;
+    let stepIndicator = null;
+    const stepOriginal = new WeakMap();
     let deckFullscreenWasActive = false;
     let deliberateNativeFullscreenExit = false;
     let controlsExpanded = false;
@@ -1736,12 +1763,16 @@
       };
     }
 
+    // A viewer-rendered object (figure, card, formula, interactive, video)
+    // joins a step through its own `step` field; slide HTML uses data-step.
+    const stepAttribute = item => Number.isInteger(item?.step) && item.step > 0 ? ` data-step="${item.step}"` : "";
+
     function figureMarkup(figure, figureIndex) {
       const caption = figure.caption || figure.source ? `<figcaption>${figure.caption || ""}${figure.source ? `<strong>${figure.source}</strong>` : ""}</figcaption>` : "";
       const geometry = figureGeometry(figure);
       const style = geometry.x || geometry.y || geometry.scale !== 1 ? ` style="transform: translate(${geometry.x}px, ${geometry.y}px) scale(${geometry.scale});"` : "";
       const id = figure.id ? ` data-figure-id="${escapeHtml(figure.id)}"` : "";
-      return `<figure class="figure-card" data-figure-index="${figureIndex}"${id}${style}><img src="${escapeHtml(figure.src)}" alt="${escapeHtml(figure.alt || figure.caption || "Lecture figure")}">${caption}</figure>`;
+      return `<figure class="figure-card" data-figure-index="${figureIndex}"${id}${stepAttribute(figure)}${style}><img src="${escapeHtml(figure.src)}" alt="${escapeHtml(figure.alt || figure.caption || "Lecture figure")}">${caption}</figure>`;
     }
 
     function formulaMarkup(formula) {
@@ -1749,19 +1780,23 @@
       if (typeof formula === "string") return `<div class="formula formula-plain">${escapeHtml(formula)}</div>`;
       const math = formula.mathml || formula.html || "";
       const gloss = (formula.gloss || []).map(item => `<span>${item}</span>`).join("");
-      return `<div class="formula formula-structured">${formula.label ? `<p class="formula-label">${escapeHtml(formula.label)}</p>` : ""}<div class="formula-math">${math}</div>${gloss ? `<div class="formula-gloss">${gloss}</div>` : ""}</div>`;
+      return `<div class="formula formula-structured"${stepAttribute(formula)}>${formula.label ? `<p class="formula-label">${escapeHtml(formula.label)}</p>` : ""}<div class="formula-math">${math}</div>${gloss ? `<div class="formula-gloss">${gloss}</div>` : ""}</div>`;
     }
 
     function cardsMarkup(cards = []) {
       if (!cards.length) return "";
-      return `<div class="concept-cards count-${Math.min(cards.length, 3)}">${cards.map(card => `<div class="concept-card">${card.label ? `<p class="card-label">${card.label}</p>` : ""}<p class="card-value">${card.value || ""}</p>${card.detail ? `<p class="card-detail">${card.detail}</p>` : ""}</div>`).join("")}</div>`;
+      return `<div class="concept-cards count-${Math.min(cards.length, 3)}">${cards.map(card => `<div class="concept-card"${stepAttribute(card)}>${card.label ? `<p class="card-label">${card.label}</p>` : ""}<p class="card-value">${card.value || ""}</p>${card.detail ? `<p class="card-detail">${card.detail}</p>` : ""}</div>`).join("")}</div>`;
     }
 
     function interactiveMarkup(interactive, thumbnail = false) {
       if (!interactive) return "";
       const title = interactive.title || "Interactive demonstration";
       if (thumbnail) return `<div class="interactive-placeholder">${escapeHtml(title)}</div>`;
-      return `<div class="interactive-frame"><iframe src="${escapeHtml(interactive.src)}" title="${escapeHtml(title)}" loading="eager" referrerpolicy="no-referrer"></iframe></div>`;
+      // A stepped page loads when its step appears (applySteps), so an
+      // animation starts in front of the audience instead of running unseen.
+      const step = stepAttribute(interactive);
+      const source = `${step ? "data-step-src" : "src"}="${escapeHtml(interactive.src)}"`;
+      return `<div class="interactive-frame"${step}><iframe ${source} title="${escapeHtml(title)}" loading="eager" referrerpolicy="no-referrer"></iframe></div>`;
     }
 
     function videoMarkup(video, thumbnail = false) {
@@ -1777,16 +1812,36 @@
       const trackMarkup = (video.tracks || []).map(track => `<track src="${escapeHtml(track.src)}" kind="${escapeHtml(track.kind || "captions")}" srclang="${escapeHtml(track.srclang || "en")}" label="${escapeHtml(track.label || track.srclang || "Captions")}"${track.default ? " default" : ""}>`).join("");
       const originalLink = video.originalUrl ? `<a class="video-original-link" href="${escapeHtml(video.originalUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(video.originalLabel || "Open the original video")}</a>` : "";
       const caption = video.caption || video.source || originalLink ? `<figcaption>${video.caption || ""}${video.source ? `<strong>${video.source}</strong>` : ""}${originalLink}</figcaption>` : "";
-      return `<figure class="video-card"><video class="lecture-video" controls playsinline preload="metadata" aria-label="${escapeHtml(title)}"${poster}${video.muted ? " muted" : ""}${video.loop ? " loop" : ""}>${sourceMarkup}${trackMarkup}<p>Your browser cannot play this local video.</p></video>${caption}</figure>`;
+      return `<figure class="video-card"${stepAttribute(video)}><video class="lecture-video" controls playsinline preload="metadata" aria-label="${escapeHtml(title)}"${poster}${video.muted ? " muted" : ""}${video.loop ? " loop" : ""}>${sourceMarkup}${trackMarkup}<p>Your browser cannot play this local video.</p></video>${caption}</figure>`;
     }
 
+    // Slide HTML with every data-step dropped: for markup shown on slides
+    // other than the one that wrote it, where a step would hide part of an
+    // unrelated slide.
+    function withoutSteps(html) {
+      const text = String(html ?? "");
+      if (!/data-step/i.test(text)) return text;
+      const template = document.createElement("template");
+      template.innerHTML = text;
+      template.content.querySelectorAll("[data-step]").forEach(node => node.removeAttribute("data-step"));
+      return template.innerHTML;
+    }
+
+    // The part label of slide i: the eyebrow or title of the last section
+    // slide at or before it. A section slide keeps its own steps in it (its
+    // eyebrow repeats its stepped title); later slides and the opening label
+    // never inherit them.
     function partLabel(i) {
       let label = spec.meta.opening || "OPENING";
+      let from = -1;
       for (let j = 0; j <= i; j += 1) {
         const candidate = spec.slides[j];
-        if (candidate.type === "section") label = candidate.eyebrow || candidate.title || label;
+        if (candidate.type === "section" && (candidate.eyebrow || candidate.title)) {
+          label = candidate.eyebrow || candidate.title;
+          from = j;
+        }
       }
-      return label;
+      return from === i ? label : withoutSteps(label);
     }
 
     function partAccent(i) {
@@ -1809,7 +1864,7 @@
       const copy = `<div class="copy">${slide.claim ? `<p class="claim">${slide.claim}</p>` : ""}${formulaMarkup(slide.formula)}${slide.body ? `<div class="body-copy">${slide.body}</div>` : ""}${slide.quote ? `<div class="quote">${slide.quote}</div>` : ""}</div>`;
       const body = ["figure", "figure-dominant", "figure-stage", "title", "figures"].includes(layout) ? `${copy}${figureBlock}` : layout === "cards" ? `${copy}${cardBlock}` : layout === "interactive" ? `${copy}${interactiveBlock}` : layout === "video" ? `${copy}${videoBlock}` : copy;
       const header = chromeFree ? "" : `<header class="slide-head"><p class="eyebrow">${slide.eyebrow || partLabel(i)}</p><h1 class="slide-title">${slide.title || ""}</h1></header>`;
-      const footer = chromeFree ? "" : `<footer class="slide-foot"><span class="source">${slide.source || ""}</span><span class="footer-nav"><span class="course-name">${spec.meta.section || ""}</span><span class="page-number">${numbering.position(i)}</span></span></footer>`;
+      const footer = chromeFree ? "" : `<footer class="slide-foot"><span class="source">${slide.source || ""}</span><span class="footer-nav"><span class="course-name">${withoutSteps(spec.meta.section || "")}</span><span class="page-number">${numbering.position(i)}</span></span></footer>`;
       const slideId = slide.id ? ` data-slide-id="${escapeHtml(slide.id)}"` : "";
       const appendix = numbering.inAppendix(i) ? ` data-appendix="true"` : "";
       return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${slide.className ? ` ${escapeHtml(slide.className)}` : ""}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || partAccent(i))}" data-index="${i}"${slideId}${appendix} aria-label="${numbering.ariaLabel(i, escapeHtml(slideTitleText(slide, i)))}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
@@ -1916,21 +1971,209 @@
       positionControls(scale, frameWidth, frameHeight);
     }
 
-    function render() {
+    // ---------------------------------------------------------------
+    // Step-by-step reveals. Any element of the live slide carrying
+    // data-step="N" (N a positive integer) is a step; everything else is
+    // always shown. Next reveals the next step number still hidden, then
+    // advances; Previous hides the last one shown, then goes back. A hidden
+    // step keeps its box (visibility, not display), so nothing reflows. The
+    // overview, print, the narration skeleton and every dialog never hide
+    // anything: only the live slide is ever stepped.
+    const STEP_VALUE = /^[1-9]\d*$/;
+    const isShown = node => typeof node.checkVisibility === "function"
+      ? node.checkVisibility() : node.getClientRects().length > 0;
+    const shownStep = () => revealed ? stepLevels[revealed - 1] : 0;
+    // Boxes the viewer draws around authored HTML, each with its own
+    // background, rule or divider.
+    const STEP_BOXES = ".figure-card > figcaption, .video-card > figcaption, .copy > .quote, .formula-gloss > span";
+
+    // A step that is the whole content of such a box takes the box with it,
+    // so no empty caption bar or gloss divider waits on screen. The number
+    // moves to the box, so styling hooks see one step, not two.
+    function stepBox(node, value) {
+      const box = node.parentElement;
+      if (!box?.matches(STEP_BOXES) || box.hasAttribute("data-step")) return node;
+      const alone = [...box.childNodes].every(child => child === node
+        || (child.nodeType === Node.TEXT_NODE && !child.textContent.trim()));
+      if (!alone) return node;
+      box.setAttribute("data-step", value);
+      node.removeAttribute("data-step");
+      return box;
+    }
+
+    // Every element of the live slide with a valid data-step is a step item,
+    // whether or not the layout shows it right now: deck.css may show one
+    // twin of a dark/light figure pair per theme, or drop a block below some
+    // width, and that item must already be hidden when it appears. A step
+    // nested in a later one cannot show before it, so it simply appears with
+    // it and is no step of its own.
+    function collectSteps(frame) {
+      stepItems = [];
+      const effective = new Map();
+      const enclosing = node => {
+        for (let up = node.parentElement?.closest("[data-step]"); up; up = up.parentElement?.closest("[data-step]")) {
+          if (effective.has(up)) return effective.get(up);
+        }
+        return 0;
+      };
+      for (const node of frame ? frame.querySelectorAll("[data-step]") : []) {
+        const value = (node.getAttribute("data-step") || "").trim();
+        // check rejects other values; the viewer simply shows them.
+        if (!STEP_VALUE.test(value)) continue;
+        if (Number(value) <= enclosing(node)) {
+          node.removeAttribute("data-step");
+          continue;
+        }
+        const target = stepBox(node, value);
+        effective.set(target, Number(value));
+        stepOriginal.set(target, {ariaHidden: target.getAttribute("aria-hidden"), inert: target.hasAttribute("inert")});
+        stepItems.push({node: target, step: Number(value)});
+      }
+      countSteps();
+    }
+
+    // The levels a press can reveal: the numbers of the items the layout
+    // shows right now (checkVisibility ignores visibility, so a hidden step
+    // still counts). Content the layout never shows (a full-canvas
+    // interactive hides its copy, deck.css may set display: none) is no
+    // level: a press must always reveal something. A frame that is not laid
+    // out at all (the deck behind the overview) cannot tell, and counts all.
+    function countSteps() {
+      const frame = deck.querySelector(".slide-frame");
+      const measurable = Boolean(frame) && frame.getClientRects().length > 0;
+      const live = measurable ? stepItems.filter(item => isShown(item.node)) : stepItems;
+      stepLevels = [...new Set(live.map(item => item.step))].sort((a, b) => a - b);
+    }
+
+    // A theme switch, a resize or another body class can show or hide
+    // stepped content: recount the levels, keeping the step on screen.
+    function refreshSteps() {
+      if (!overview.hidden || !stepItems.length) return;
+      const through = shownStep();
+      const before = stepLevels.join();
+      countSteps();
+      if (stepLevels.join() === before) return;
+      revealed = stepLevels.filter(level => level <= through).length;
+      applySteps();
+      updateNavigation();
+    }
+
+    function pauseMedia(node) {
+      const media = node.matches("video, audio") ? [node] : [];
+      media.push(...node.querySelectorAll("video, audio"));
+      for (const element of media) {
+        try { element.pause(); } catch (_) { /* nothing is playing */ }
+      }
+    }
+
+    function applySteps() {
+      const through = shownStep();
+      for (const {node, step} of stepItems) {
+        const hidden = step > through;
+        node.classList.toggle("step-hidden", hidden);
+        node.classList.toggle("step-current", !hidden && step === through);
+        const original = stepOriginal.get(node) || {ariaHidden: null, inert: false};
+        if (hidden) {
+          // Focus leaves a step as it hides, also from inside an embedded
+          // page: an inert iframe would keep the keyboard and the clicker.
+          if (node.contains(document.activeElement)) document.activeElement.blur();
+          node.setAttribute("aria-hidden", "true");
+          if (node instanceof HTMLElement) node.setAttribute("inert", "");
+          // A step stepped back out of view must not keep playing sound.
+          pauseMedia(node);
+        } else {
+          if (original.ariaHidden === null) node.removeAttribute("aria-hidden");
+          else node.setAttribute("aria-hidden", original.ariaHidden);
+          if (node instanceof HTMLElement) node.toggleAttribute("inert", original.inert);
+          // A stepped interactive page loads the first time it appears and
+          // stays loaded when stepped back.
+          const pending = node.matches(".interactive-frame") ? node.querySelector(":scope > iframe[data-step-src]") : null;
+          if (pending) {
+            pending.src = pending.getAttribute("data-step-src");
+            pending.removeAttribute("data-step-src");
+          }
+        }
+      }
+      const frame = deck.querySelector(".slide-frame");
+      if (!frame) return;
+      if (stepLevels.length) {
+        frame.dataset.stepCount = String(stepLevels.length);
+        frame.dataset.stepShown = String(revealed);
+        frame.dataset.stepCurrent = String(through);
+      } else {
+        delete frame.dataset.stepCount;
+        delete frame.dataset.stepShown;
+        delete frame.dataset.stepCurrent;
+      }
+    }
+
+    // Buttons, the address and the step dots follow the slide and its step.
+    function updateNavigation() {
+      const open = !overview.hidden;
+      previousButton.disabled = open || (index === 0 && revealed === 0);
+      nextButton.disabled = open || (index === spec.slides.length - 1 && revealed === stepLevels.length);
+      const through = shownStep();
+      history.replaceState(null, "", through ? `#/${index}.${through}` : `#/${index}`);
+      // The same dots in the live slide's footer, beside the page number,
+      // where the presenter looks: the controls strip is often collapsed.
+      // Drawn as fixed-size marks, so stepping never moves the footer.
+      const footerNav = deck.querySelector(".slide-frame .footer-nav");
+      let cue = footerNav?.querySelector(":scope > .step-cue") || null;
+      if (!stepLevels.length) cue?.remove();
+      else if (footerNav) {
+        if (!cue) {
+          cue = document.createElement("span");
+          cue.className = "step-cue";
+          cue.setAttribute("aria-hidden", "true");
+          footerNav.append(cue);
+        }
+        cue.innerHTML = stepLevels.map((_, n) => `<i${n < revealed ? ' class="shown"' : ""}></i>`).join("");
+      }
+      if (!stepIndicator) return;
+      stepIndicator.hidden = !stepLevels.length;
+      if (!stepLevels.length) return;
+      // Filled dots for steps shown, open ones for steps to come.
+      stepIndicator.textContent = "\u25cf".repeat(revealed) + "\u25cb".repeat(stepLevels.length - revealed);
+      const label = `Step ${revealed} of ${stepLevels.length}`;
+      stepIndicator.setAttribute("aria-label", label);
+      stepIndicator.title = label;
+    }
+
+    function setRevealed(count) {
+      const next = Math.max(0, Math.min(stepLevels.length, count));
+      // Same count: still rewrite the address, so "#/N.9" on a whole slide
+      // reads "#/N.2" whichever way it arrived.
+      if (next === revealed) { updateNavigation(); return; }
+      revealed = next;
+      applySteps();
+      updateNavigation();
+    }
+
+    // stepTarget reveals every step numbered at or below it: 0 shows only
+    // the unstepped content, Infinity shows the whole slide.
+    function render(stepTarget = 0) {
       if (!spec.slides.length) return;
       document.body.classList.toggle("immersive-slide", spec.slides[index].chrome === false);
       deck.innerHTML = slideMarkup(spec.slides[index], index);
+      const frame = deck.querySelector(".slide-frame");
+      // Steps take their first state without a fade.
+      frame?.classList.add("steps-settling");
+      collectSteps(frame);
+      revealed = stepLevels.filter(step => step <= stepTarget).length;
+      applySteps();
       fitFormulas(deck);
       counter.textContent = numbering.position(index);
       if (numbering.hasAppendix) document.body.classList.toggle("in-appendix", numbering.inAppendix(index));
-      previousButton.disabled = index === 0;
-      nextButton.disabled = index === spec.slides.length - 1;
       document.title = typeof spec.meta.tabTitle === "string" && spec.meta.tabTitle.trim()
         ? spec.meta.tabTitle.trim()
         : `${slideTitleText(spec.slides[index], index)} · ${spec.meta.title || "Lecturedeck"}`;
-      history.replaceState(null, "", `#/${index}`);
+      updateNavigation();
       if (!overview.hidden) overview.querySelectorAll(".overview-card").forEach(card => card.setAttribute("aria-current", String(Number(card.dataset.index) === index)));
       scaleCurrent();
+      if (frame) {
+        void frame.offsetWidth; // commit the settled state before fades return
+        frame.classList.remove("steps-settling");
+      }
       // Keep a lit laser on the accent of the slide it is now over.
       if (laserOn) paintLaser();
     }
@@ -1943,7 +2186,7 @@
       // them as jumps inside the document instead of dead localhost URLs.
       deck.querySelectorAll(":scope > .slide-frame").forEach(frame => { frame.id = `slide-${frame.dataset.index}`; });
       deck.querySelectorAll('a[href^="#/"]').forEach(link => {
-        const target = Math.max(0, Math.min(spec.slides.length - 1, Number(link.getAttribute("href").slice(2)) || 0));
+        const target = clampIndex(parseSlideHash(link.getAttribute("href"))?.index || 0);
         link.setAttribute("href", `#slide-${target}`);
       });
       document.title = spec.meta.tabTitle?.trim() || spec.meta.title || "Lecturedeck";
@@ -1961,12 +2204,54 @@
       window.LECTUREDECK_PRINT_READY = true;
     }
 
-    function go(next) {
-      const clamped = Math.max(0, Math.min(spec.slides.length - 1, next));
-      if (clamped === index) return;
-      index = clamped;
-      render();
+    // A jump (Home, End, the overview, a #/N link) lands on a slide with the
+    // steps numbered at or below `step` shown; staying on the same slide
+    // only moves its step.
+    function show(target, step = 0) {
+      const clamped = clampIndex(target);
+      if (clamped !== index) {
+        index = clamped;
+        render(step);
+      } else {
+        setRevealed(stepLevels.filter(level => level <= step).length);
+      }
     }
+
+    // Whole slides, steps ignored (Shift with the paging keys, and every
+    // press while the overview is open): the next slide opens bare, the
+    // previous one whole.
+    function nextSlide() {
+      if (index < spec.slides.length - 1) show(index + 1, 0);
+    }
+
+    function previousSlide() {
+      if (index > 0) show(index - 1, Infinity);
+    }
+
+    // Next reveals the next step; on a fully shown slide it advances, and
+    // the next slide opens with none of its steps shown. The overview pages
+    // whole slides: a press there never changes a slide nobody can see.
+    function next() {
+      if (!overview.hidden) nextSlide();
+      else if (revealed < stepLevels.length) setRevealed(revealed + 1);
+      else if (index < spec.slides.length - 1) {
+        index += 1;
+        render(0);
+      }
+    }
+
+    // Previous hides the last step shown; on a bare slide it goes back, and
+    // the previous slide opens fully revealed, as it was left.
+    function previous() {
+      if (!overview.hidden) previousSlide();
+      else if (revealed > 0) setRevealed(revealed - 1);
+      else if (index > 0) {
+        index -= 1;
+        render(Infinity);
+      }
+    }
+
+    const turn = direction => (direction > 0 ? next() : previous());
 
     function isNativeFullscreen() {
       return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
@@ -2051,10 +2336,11 @@
         touchOverviewButton.textContent = open ? "Close overview" : "Overview";
         touchOverviewButton.setAttribute("aria-expanded", String(open));
       }
-      previousButton.disabled = open || index === 0;
-      nextButton.disabled = open || index === spec.slides.length - 1;
       deck.hidden = open;
-      if (!open) { render(); return; }
+      // Closing the overview returns to the slide at the step it was left on.
+      if (!open) { render(shownStep()); return; }
+      updateNavigation();
+      // Thumbnails are never stepped: the overview shows every slide whole.
       overview.innerHTML = spec.slides.map((slide, i) => `<button class="overview-card" type="button" data-index="${i}" aria-current="${i === index}"><div class="overview-thumb">${slideMarkup(slide, i, true)}</div><span class="overview-label">${numbering.label(i)}. ${slideTitleText(slide, i)}</span></button>`).join("");
       fitFormulas(overview);
       scaleOverviewThumbs();
@@ -2105,29 +2391,47 @@
     addEventListener("blur", () => { if (laserOn) laser.hidden = true; });
     laserButton?.addEventListener("click", () => setLaser(!laserOn));
 
-    addEventListener("resize", () => { scaleCurrent(); scaleOverviewThumbs(); });
+    addEventListener("resize", () => { scaleCurrent(); scaleOverviewThumbs(); refreshSteps(); });
+    // The theme, the presentation style and other body classes may show or
+    // hide stepped content through deck.css.
+    new MutationObserver(refreshSteps).observe(document.body, {
+      attributes: true, attributeFilter: ["class", "data-presentation-style"],
+    });
     addEventListener("hashchange", () => {
-      const requested = Number(location.hash.replace("#/", ""));
-      if (Number.isFinite(requested) && requested !== index) go(requested);
+      const requested = parseSlideHash(location.hash);
+      if (requested && (requested.index !== index || requested.step !== shownStep())) {
+        show(requested.index, requested.step);
+      }
     });
     addEventListener("message", event => {
       const iframe = deck.querySelector(".interactive-frame iframe");
       if (!iframe || event.source !== iframe.contentWindow || event.data?.type !== "lecturedeck:navigate") return;
+      // `to` is the page's Home or End: the deck's first or last state.
+      if (event.data.to === "first") { show(0, 0); return; }
+      if (event.data.to === "last") { show(spec.slides.length - 1, Infinity); return; }
       const direction = Number(event.data.direction);
-      if (direction === 1 || direction === -1) go(index + direction);
+      // The page asks for the deck's own Next or Previous, steps included.
+      if (direction === 1 || direction === -1) turn(direction);
     });
     // While any dialog is open, keys, the wheel and swipes belong to it:
     // they scroll the dialog and never page, open or exit the deck.
     addEventListener("keydown", event => {
       if (modalOpen()) return;
-      const target = event.target instanceof Element ? event.target : null;
+      // Focus can linger on a control of a dialog that just closed (its
+      // close event comes a task later); such a key belongs to the deck.
+      const target = event.target instanceof Element && !event.target.closest("dialog:not([open])") ? event.target : null;
       if (target && target.closest("video, audio, input, textarea, select, [contenteditable]")) return;
       // Buttons and links keep Space/Enter activation but still allow deck paging.
       const onControl = Boolean(target && target.closest("button, a"));
-      if (["ArrowRight", "ArrowDown", "PageDown"].includes(event.key) || (event.key === " " && !onControl)) { event.preventDefault(); go(index + 1); }
-      else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(event.key)) { event.preventDefault(); go(index - 1); }
-      else if (event.key === "Home") go(0);
-      else if (event.key === "End") go(spec.slides.length - 1);
+      const forward = ["ArrowRight", "ArrowDown", "PageDown"].includes(event.key);
+      const backward = ["ArrowLeft", "ArrowUp", "PageUp"].includes(event.key);
+      // Shift pages whole slides past their steps, for rewinding.
+      if (event.shiftKey && (forward || backward)) { event.preventDefault(); if (forward) nextSlide(); else previousSlide(); }
+      else if (forward || (event.key === " " && !onControl)) { event.preventDefault(); next(); }
+      else if (backward) { event.preventDefault(); previous(); }
+      // Home is the deck's first state, End its last: the final slide whole.
+      else if (event.key === "Home") show(0, 0);
+      else if (event.key === "End") show(spec.slides.length - 1, Infinity);
       else if (event.key === "Escape" && overview.hidden && document.body.classList.contains("pseudo-fullscreen")) toggleFullscreen();
       else if (event.key.toLowerCase() === "o" || event.key === "Escape") toggleOverview();
       else if (event.key.toLowerCase() === "f") toggleFullscreen();
@@ -2151,7 +2455,7 @@
         // A discrete wheel notch always turns one slide, with no lock-out.
         wheelStreak = 0;
         wheelHoldUntil = now + 150;
-        go(index + direction);
+        turn(direction);
         return;
       }
       // Smooth pixel stream: trackpad glide or a high-resolution wheel.
@@ -2164,7 +2468,7 @@
       if (Math.abs(wheelStreak) < 60) return;
       wheelStreak = 0;
       wheelHoldUntil = now + 150;
-      go(index + direction);
+      turn(direction);
     }, {passive: true});
     let swipe = null;
     addEventListener("touchstart", event => {
@@ -2189,18 +2493,22 @@
         scaleCurrent();
       } else if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.3) {
         if (touchReview.matches) controlsExpanded = false;
-        go(index + (dx < 0 ? 1 : -1));
+        turn(dx < 0 ? 1 : -1);
       }
     }, {passive: true});
     addEventListener("touchcancel", () => { swipe = null; }, {passive: true});
     overview.addEventListener("click", event => {
       const card = event.target.closest("[data-index]");
       if (!card) return;
-      const next = Number(card.dataset.index);
+      const target = Number(card.dataset.index);
       // Overview jumps are bookmarks, unlike ordinary next/previous paging.
-      // Preserve the departure screen so Back can return to it.
-      if (next !== index) history.pushState(null, "", `#/${next}`);
-      index = next;
+      // Preserve the departure screen so Back can return to it. A jump to
+      // another slide opens it with none of its steps shown.
+      if (target !== index) {
+        history.pushState(null, "", `#/${target}`);
+        index = target;
+        revealed = 0;
+      }
       toggleOverview(false);
     });
     document.querySelector("#overview-button").addEventListener("click", () => toggleOverview());
@@ -2217,13 +2525,21 @@
       controlsExpanded = !controlsExpanded;
       scaleCurrent();
     });
-    previousButton.addEventListener("click", () => go(index - 1));
-    nextButton.addEventListener("click", () => go(index + 1));
+    previousButton.addEventListener("click", previous);
+    nextButton.addEventListener("click", next);
     fullscreenButtons.forEach(button => button.addEventListener("click", toggleFullscreen));
     addEventListener("fullscreenchange", updateFullscreenButtons);
     addEventListener("webkitfullscreenchange", updateFullscreenButtons);
     updateFullscreenButtons();
-    render();
+    // The step dots sit beside the counter and appear only on a slide with
+    // steps. Built here, so a legacy unit-local index.html gets them too.
+    stepIndicator = document.createElement("span");
+    stepIndicator.id = "step-indicator";
+    stepIndicator.className = "step-indicator";
+    stepIndicator.setAttribute("role", "img");
+    stepIndicator.hidden = true;
+    counter.after(stepIndicator);
+    render(requested.step);
   }
 
   let reloadVersion = null;

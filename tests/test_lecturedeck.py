@@ -15,14 +15,22 @@ from lecturedeck import __version__, pacing, scaffold
 from lecturedeck.cli import (
     DEFAULT_PORT,
     build_parser,
+    main,
     make_available_server,
     selector_folder,
     serve,
 )
+from lecturedeck.deckdata import deck_warnings, html_step_values
 from lecturedeck.pdf import export_pdf
 from lecturedeck.scaffold import refresh_unit, runtime_hash, scaffold_unit
 from lecturedeck.server import discover_decks, make_selector_server, make_server, selector_page
-from lecturedeck.validation import VIEWER_FILES, deck_entry, release_unit, validate_unit
+from lecturedeck.validation import (
+    VIEWER_FILES,
+    deck_entry,
+    release_unit,
+    unit_warnings,
+    validate_unit,
+)
 
 LEGACY_SLIDES = """window.LECTUREDECK = {
   meta: { title: "Legacy deck", section: "COURSE TITLE", opening: "OPENING" },
@@ -381,6 +389,243 @@ class LecturedeckTest(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as root:
                     unit = make_json_unit(root, base_deck(slides=deck_slides))
                     self.assertHasError(validate_unit(unit), fragment)
+
+    def stepped_unit(self, root, slides: list) -> Path:
+        unit = make_json_unit(root, base_deck(slides=slides))
+        assets = unit / "webdeck" / "assets"
+        for name in ("a.png", "b.png", "clip.mp4"):
+            (assets / name).write_bytes(b"x")
+        (assets / "demo").mkdir()
+        (assets / "demo" / "index.html").write_text("<!doctype html><title>d</title>")
+        return unit
+
+    def test_step_reveals_validate_everywhere_a_slide_shows_them(self):
+        slides = [
+            {
+                "id": "copy-steps",
+                "title": 'Title <span data-step="4">later</span>',
+                "eyebrow": "Part",
+                "claim": 'One <span data-step="1">two</span>',
+                "body": '<p data-step="2">three</p><p data-step="2">together</p>',
+                "quote": '<em data-step="4">quoted</em>',
+                "source": '<span data-step="4">credit</span>',
+                "formula": {
+                    "mathml": "<math><mi data-step='3'>x</mi></math>",
+                    "step": 3,
+                    "gloss": ['<span data-step="3">gloss</span>'],
+                },
+            },
+            {
+                "id": "figure-steps",
+                "layout": "figures",
+                "figures": [
+                    {"src": "assets/a.png", "step": 1},
+                    {"src": "assets/b.png", "step": 2, "caption": '<b data-step="3">c</b>'},
+                ],
+            },
+            {
+                "id": "card-steps",
+                "cards": [
+                    {"value": "always"},
+                    {"value": "first", "step": 1},
+                    {"label": '<span data-step="2">L</span>', "value": "second", "step": 2},
+                ],
+            },
+            {"id": "video-step", "video": {"src": "assets/clip.mp4", "step": 1}},
+            {
+                "id": "demo-step",
+                "claim": '<b data-step="2">after the demo</b>',
+                "interactive": {"src": "assets/demo/index.html", "step": 1},
+            },
+            {
+                "id": "full-canvas",
+                "chrome": False,
+                "interactive": {"src": "assets/demo/index.html", "step": 1},
+            },
+            {"id": "bare-demo", "chrome": False, "claim": '<b data-step="1">shown</b>'},
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            unit = self.stepped_unit(root, slides)
+            self.assertEqual([], validate_unit(unit))
+            self.assertEqual([], unit_warnings(unit))
+
+    def test_step_reveal_rejections(self):
+        cases = [
+            ({"id": "a", "figure": {"src": "assets/a.png", "step": 0}},
+             "slides[0].figure.step must be a positive integer"),
+            ({"id": "a", "figure": {"src": "assets/a.png", "step": -1}}, "figure.step must"),
+            ({"id": "a", "figure": {"src": "assets/a.png", "step": "2"}}, "figure.step must"),
+            ({"id": "a", "figure": {"src": "assets/a.png", "step": True}}, "figure.step must"),
+            ({"id": "a", "figure": {"src": "assets/a.png", "step": 1.0}}, "figure.step must"),
+            ({"id": "a", "cards": [{"value": "v", "step": 1.5}]},
+             "slides[0].cards[0].step must be a positive integer"),
+            ({"id": "a", "video": {"src": "assets/clip.mp4", "step": None}}, "video.step must"),
+            ({"id": "a", "interactive": {"src": "assets/demo/index.html", "step": [1]}},
+             "interactive.step must"),
+            ({"id": "a", "formula": {"mathml": "<math/>", "step": 0}}, "formula.step must"),
+            ({"id": "a", "claim": '<span data-step="0">x</span>'},
+             "slides[0].claim has data-step='0'; data-step must be a positive integer"),
+            ({"id": "a", "body": '<p data-step="two">x</p>'}, "body has data-step='two'"),
+            ({"id": "a", "body": "<p data-step>x</p>"}, "body has an empty data-step"),
+            ({"id": "a", "body": '<p data-step="01">x</p>'}, "data-step='01'"),
+            ({"id": "a", "body": '<p data-step=" 2">x</p>'}, "data-step=' 2'"),
+            ({"id": "a", "claim": '<p DATA-STEP="-1">x</p>'}, "data-step='-1'"),
+            ({"id": "a", "figure": {"src": "assets/a.png", "caption": "<i data-step=1.5>c</i>"}},
+             "figure.caption has data-step='1.5'"),
+            ({"id": "a", "figure": {"src": "assets/a.png", "steps": 1}}, "unknown field 'steps'"),
+            (
+                {"id": "a", "chrome": False, "claim": '<b data-step="1">x</b>',
+                 "interactive": {"src": "assets/demo/index.html"}},
+                "slides[0].claim has a step this slide never shows: a full-canvas interactive "
+                "slide (chrome: false) hides its claim, formula, body and quote",
+            ),
+            (
+                {"id": "a", "chrome": False, "formula": {"mathml": "<math/>", "step": 1},
+                 "interactive": {"src": "assets/demo/index.html"}},
+                "slides[0].formula.step has a step this slide never shows",
+            ),
+            (
+                {"id": "a", "chrome": False, "title": '<b data-step="1">x</b>'},
+                "slides[0].title has a step this slide never shows: chrome: false drops",
+            ),
+            (
+                {"id": "a", "chrome": False, "source": '<b data-step="1">x</b>'},
+                "slides[0].source has a step this slide never shows",
+            ),
+            (
+                {"id": "a", "layout": "statement", "figure": {"src": "assets/a.png", "step": 1}},
+                "slides[0].figure.step has a step this slide never shows: layout 'statement' "
+                "does not show the figure",
+            ),
+            (
+                {"id": "a", "layout": "equation", "cards": [{"value": "v", "step": 1}]},
+                "does not show the cards",
+            ),
+            (
+                {"id": "a", "layout": "figure", "video": {"src": "assets/clip.mp4", "step": 1}},
+                "does not show the video",
+            ),
+        ]
+        for slide, fragment in cases:
+            with self.subTest(fragment=fragment):
+                with tempfile.TemporaryDirectory() as root:
+                    unit = self.stepped_unit(root, [slide])
+                    self.assertHasError(validate_unit(unit), fragment)
+        # One error per field, however many hidden steps it holds.
+        with tempfile.TemporaryDirectory() as root:
+            unit = self.stepped_unit(root, [{
+                "id": "a", "chrome": False, "interactive": {"src": "assets/demo/index.html"},
+                "body": '<p data-step="1">x</p><p data-step="2">y</p>',
+            }])
+            self.assertEqual(1, sum("never shows" in error for error in validate_unit(unit)))
+
+    def test_step_gaps_warn_without_failing_check(self):
+        slides = [
+            {"id": "plain", "title": "No steps"},
+            {"id": "gappy", "claim": '<b data-step="1">a</b>', "body": '<p data-step="3">c</p>'},
+            {"id": "stray", "body": '<p data-step="900">late</p>'},
+            {"id": "runs", "cards": [{"value": "a", "step": 2}, {"value": "b", "step": 5}]},
+            {"id": "contiguous", "claim": '<b data-step="2">b</b><b data-step="1">a</b>'},
+        ]
+        self.assertEqual(
+            [
+                "deck.json: slides[1] (gappy) skips step 2 (uses 1, 3); "
+                "each press still reveals the next number used",
+                "deck.json: slides[2] (stray) skips step 1-899 (uses 900); "
+                "each press still reveals the next number used",
+                "deck.json: slides[3] (runs) skips step 1, 3-4 (uses 2, 5); "
+                "each press still reveals the next number used",
+            ],
+            deck_warnings(base_deck(slides=slides)),
+        )
+        self.assertEqual([], deck_warnings({"slides": "not a list"}))
+        self.assertEqual(["1", "x", None], html_step_values(
+            '<p data-step="1">a</p><img DATA-STEP="x"/><b data-step>c</b><i>none</i>'
+        ))
+        with tempfile.TemporaryDirectory() as root:
+            unit = Path(root) / "Studio" / "work" / "presentations" / "steps"
+            unit.parent.mkdir(parents=True)
+            unit.mkdir()
+            scaffold_unit(unit, "Steps")
+            write_deck(unit, base_deck(slides=slides))
+            stderr, stdout = StringIO(), StringIO()
+            with redirect_stderr(stderr), patch("sys.stdout", stdout):
+                code = main(["check", "steps", "--repo", root])
+            self.assertEqual(0, code)
+            self.assertIn("OK: steps", stdout.getvalue())
+            self.assertEqual(3, stderr.getvalue().count("WARNING: deck.json: slides["))
+            self.assertNotIn("ERROR", stderr.getvalue())
+            # Errors and warnings print together; errors still fail check.
+            write_deck(unit, base_deck(slides=[*slides, {"id": "bad", "body": "<p data-step=0>"}]))
+            stderr = StringIO()
+            with redirect_stderr(stderr), patch("sys.stdout", StringIO()):
+                code = main(["check", "steps", "--repo", root])
+            self.assertEqual(2, code)
+            self.assertIn("ERROR: deck.json: slides[5].body has data-step='0'", stderr.getvalue())
+            self.assertIn("WARNING: deck.json: slides[1] (gappy)", stderr.getvalue())
+
+    def test_a_step_nested_in_a_later_one_warns(self):
+        slides = [
+            {"id": "html", "body": '<div data-step="2"><img src="assets/a.png" data-step="3">'
+                                   '<span data-step="1">early</span></div><p data-step="1">a</p>'},
+            {"id": "caption", "figure": {"src": "assets/a.png", "step": 2,
+                                         "caption": '<b data-step="1">read first</b>'}},
+            {"id": "card", "cards": [{"value": '<i data-step="1">v</i>', "step": 3}]},
+            {"id": "formula", "formula": {
+                "mathml": "<math><mi data-step='1'>x</mi></math>", "step": 2,
+                "gloss": ['<span data-step="2">same</span>',
+                          '<div data-step="3"><b data-step="1">z</b></div>']}},
+            {"id": "video", "video": {"src": "assets/clip.mp4", "step": 1,
+                                      "caption": '<span data-step="2">after</span>'}},
+            # Equal or later numbers inside a step are fine; void elements
+            # and closed elements enclose nothing.
+            {"id": "fine", "body": '<p data-step="1"><b data-step="1">a</b>'
+                                   '<i data-step="2">b</i></p><br data-step="3"><p>c</p>'},
+        ]
+        nested = [w for w in deck_warnings(base_deck(slides=slides)) if " inside " in w]
+        self.assertEqual(
+            [
+                'deck.json: slides[0].body has data-step="1" inside a data-step="2" element; '
+                "it appears with step 2, not before it",
+                'deck.json: slides[1].figure.caption has data-step="1" inside '
+                "slides[1].figure (step 2); it appears with step 2, not before it",
+                'deck.json: slides[2].cards[0].value has data-step="1" inside '
+                "slides[2].cards[0] (step 3); it appears with step 3, not before it",
+                'deck.json: slides[3].formula.mathml has data-step="1" inside '
+                "slides[3].formula (step 2); it appears with step 2, not before it",
+                'deck.json: slides[3].formula.gloss[1] has data-step="1" inside a '
+                'data-step="3" element; it appears with step 3, not before it',
+            ],
+            nested,
+        )
+        # The gap check counts the steps a press reveals: the nested step
+        # is no level of its own.
+        self.assertIn(
+            "deck.json: slides[1] (caption) skips step 1 (uses 2); "
+            "each press still reveals the next number used",
+            deck_warnings(base_deck(slides=slides)),
+        )
+        with tempfile.TemporaryDirectory() as root:
+            unit = self.stepped_unit(root, slides)
+            self.assertEqual([], validate_unit(unit))
+
+    def test_course_and_opening_labels_cannot_hold_steps(self):
+        for key, shown in (("section", "every slide's footer"), ("opening", "the eyebrow")):
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as root:
+                deck = base_deck()
+                deck["meta"][key] = '<span data-step="1">LABEL</span>'
+                unit = make_json_unit(root, deck)
+                self.assertHasError(
+                    validate_unit(unit),
+                    f"deck.json: meta.{key} cannot hold a data-step; it is shown in {shown}",
+                )
+        # A section slide's stepped title is fine: only that slide steps it.
+        with tempfile.TemporaryDirectory() as root:
+            unit = make_json_unit(root, base_deck(slides=[
+                {"id": "part", "type": "section", "title": '<span data-step="1">Part</span>'},
+                {"id": "after", "title": "After"},
+            ]))
+            self.assertEqual([], validate_unit(unit))
 
     def test_deck_json_requires_viewer_version(self):
         with tempfile.TemporaryDirectory() as root:
@@ -841,6 +1086,21 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn("width: fit-content", styles)
         self.assertIn("justify-self: center", styles)
         self.assertIn(".body-copy table", styles)
+        # Step-by-step reveals: the live slide alone hides steps, in place,
+        # with a fade that reduced motion and print drop.
+        self.assertIn("function parseSlideHash", script)
+        self.assertIn("function collectSteps", script)
+        self.assertIn('querySelectorAll("[data-step]")', script)
+        self.assertIn('"step-hidden"', script)
+        self.assertIn('stepIndicator.id = "step-indicator"', script)
+        self.assertIn(".step-indicator[hidden]", styles)
+        self.assertIn(".slide-frame .step-hidden { opacity: 0; visibility: hidden;", styles)
+        self.assertIn("prefers-reduced-motion: reduce", styles)
+        self.assertIn(".slide-frame.steps-settling [data-step]", styles)
+        self.assertIn("function refreshSteps", script)
+        self.assertIn("data-step-src", script)
+        self.assertIn('cue.className = "step-cue"', script)
+        self.assertIn(".footer-nav .step-cue i.shown", styles)
         # The viewer records, journals and reports pacing, and reaches disk only
         # through the sink it looks up; any open dialog owns deck input.
         self.assertIn("lecturedeckPacingSink", script)
@@ -868,6 +1128,8 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn("overviewVisible", adjust)
         self.assertIn("MutationObserver", adjust)
         self.assertIn('document.querySelector("dialog[open]")', adjust)
+        # "#/N.k" step addresses still name slide N for adjustment.
+        self.assertIn(r"/^#\/(\d+)/.exec(location.hash)", adjust)
 
     def test_scaffold_has_no_course_specific_identity(self):
         with tempfile.TemporaryDirectory() as root:

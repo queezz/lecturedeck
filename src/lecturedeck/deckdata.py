@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 from . import __version__
@@ -27,6 +28,8 @@ LAYOUTS = frozenset(
     }
 )
 TRACK_KINDS = frozenset({"captions", "subtitles", "descriptions", "chapters", "metadata"})
+# Layouts whose renderer draws the slide's figure block (lecturedeck.js).
+FIGURE_LAYOUTS = frozenset({"figure", "figure-dominant", "figure-stage", "title", "figures"})
 
 DECK_KEYS = frozenset({"deck", "requires", "meta", "slides"})
 META_KEYS = frozenset(
@@ -67,10 +70,11 @@ SLIDE_KEYS = frozenset(
         "video",
     }
 )
-FIGURE_KEYS = frozenset({"id", "src", "alt", "caption", "source", "shift", "scale"})
-FORMULA_KEYS = frozenset({"mathml", "label", "gloss"})
-CARD_KEYS = frozenset({"label", "value", "detail"})
-INTERACTIVE_KEYS = frozenset({"src", "title"})
+FIGURE_KEYS = frozenset({"id", "src", "alt", "caption", "source", "shift", "scale", "step"})
+FORMULA_KEYS = frozenset({"mathml", "label", "gloss", "step"})
+CARD_TEXT_KEYS = ("label", "value", "detail")
+CARD_KEYS = frozenset({*CARD_TEXT_KEYS, "step"})
+INTERACTIVE_KEYS = frozenset({"src", "title", "step"})
 VIDEO_KEYS = frozenset(
     {
         "src",
@@ -85,6 +89,7 @@ VIDEO_KEYS = frozenset(
         "muted",
         "loop",
         "tracks",
+        "step",
     }
 )
 VIDEO_SOURCE_KEYS = frozenset({"src", "type"})
@@ -222,7 +227,7 @@ def _validate_cards(errors: list[str], where: str, cards: object) -> None:
             errors.append(f"deck.json: {card_where} must be an object")
             continue
         _unknown_keys(errors, card_where, card, CARD_KEYS)
-        for key in CARD_KEYS:
+        for key in CARD_TEXT_KEYS:
             _check_string(errors, card_where, card, key)
 
 
@@ -339,6 +344,294 @@ def _validate_slide(errors: list[str], where: str, slide: object, seen_ids: set[
         _validate_interactive(errors, f"{where}.interactive", slide["interactive"])
     if "video" in slide:
         _validate_video(errors, f"{where}.video", slide["video"])
+    _validate_steps(errors, where, slide)
+
+
+def effective_layout(slide: dict) -> str:
+    """lecturedeck.js slideMarkup's layout inference."""
+    layout = slide.get("layout")
+    if isinstance(layout, str) and layout:
+        return layout
+    if slide.get("interactive"):
+        return "interactive"
+    if slide.get("video"):
+        return "video"
+    figures = slide.get("figures")
+    count = len(figures) if isinstance(figures, list) else 1 if slide.get("figure") else 0
+    if count > 1:
+        return "figures"
+    if count:
+        return "figure"
+    if slide.get("type") == "title":
+        return "title"
+    if isinstance(slide.get("cards"), list) and slide["cards"]:
+        return "cards"
+    if slide.get("formula"):
+        return "equation"
+    return "statement"
+
+
+# --------------------------------------------------------------------------
+# Step-by-step reveals
+#
+# An element of slide HTML with data-step="N" is a step; a figure, card,
+# formula, interactive or video declares one with its own "step" field. N is
+# a positive integer. The viewer reveals the distinct numbers in ascending
+# order, so a gap costs nothing but reads like a mistake: check warns about
+# it. A step in content the slide never shows is an error, because the press
+# meant to reveal it would show nothing. A step nested in a later one (a
+# caption step below its figure's step, an element inside a later element)
+# cannot show before it: the viewer shows it with the later step, and check
+# warns.
+
+_STEP_VALUE = re.compile(r"[1-9][0-9]*")
+# Elements that never hold content, so they never enclose another step.
+_VOID_TAGS = frozenset(
+    {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
+)
+
+
+class _StepScanner(HTMLParser):
+    """Collect every data-step value in an HTML fragment, each with the
+    highest valid step among the elements around it (0 when none)."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.values: list[str | None] = []
+        self.enclosing: list[int] = []
+        self._open: list[tuple[str, int]] = []
+
+    def _start(self, tag: str, attrs, closed: bool) -> None:
+        around = self._open[-1][1] if self._open else 0
+        own = 0
+        for name, value in attrs:
+            if name == "data-step":
+                self.values.append(value)
+                self.enclosing.append(around)
+                if isinstance(value, str) and _STEP_VALUE.fullmatch(value):
+                    own = max(own, int(value))
+        if not closed and tag not in _VOID_TAGS:
+            self._open.append((tag, max(around, own)))
+
+    def handle_starttag(self, tag, attrs):
+        self._start(tag, attrs, closed=False)
+
+    def handle_startendtag(self, tag, attrs):
+        self._start(tag, attrs, closed=True)
+
+    def handle_endtag(self, tag):
+        for depth in range(len(self._open) - 1, -1, -1):
+            if self._open[depth][0] == tag:
+                del self._open[depth:]
+                return
+
+
+def _scan_steps(html: str) -> _StepScanner | None:
+    if "data-step" not in html.lower():
+        return None
+    scanner = _StepScanner()
+    scanner.feed(html)
+    scanner.close()
+    return scanner
+
+
+def html_step_values(html: str) -> list[str | None]:
+    """Raw data-step values in an HTML fragment (None for a bare attribute)."""
+    scanner = _scan_steps(html)
+    return scanner.values if scanner else []
+
+
+def _html_steps(html: str) -> list[tuple[str | None, int]]:
+    """(raw data-step value, highest valid step around it) in document order."""
+    scanner = _scan_steps(html)
+    return list(zip(scanner.values, scanner.enclosing)) if scanner else []
+
+
+def _owner(field: str, value: object) -> tuple[str, int] | None:
+    """(field, step) of an object whose own valid step encloses its HTML."""
+    if isinstance(value, dict):
+        step = _step_number("field", value.get("step"))
+        if step is not None:
+            return field, step
+    return None
+
+
+def _step_sources(slide: dict, where: str) -> list[tuple]:
+    """(field, kind, value, why it is never shown, owner) for every place a step can sit.
+
+    ``kind`` is ``"html"`` for slide HTML scanned for data-step and
+    ``"field"`` for an object's own ``step``. ``owner`` is the ``(field,
+    step)`` of the object whose own step encloses that HTML (a figure's
+    caption, a card's text), or None. Fields that lecturedeck.js escapes
+    (formula labels, media titles, alt text) are text, not markup.
+    """
+    chrome = slide.get("chrome") is not False
+    layout = effective_layout(slide)
+    no_chrome = None if chrome else "chrome: false drops the title, eyebrow and source"
+    copy_hidden = (
+        "a full-canvas interactive slide (chrome: false) hides its claim, formula, "
+        "body and quote"
+        if not chrome and layout == "interactive"
+        else None
+    )
+    sources: list[tuple] = []
+
+    def html(field: str, value: object, hidden: str | None, owner=None) -> None:
+        if isinstance(value, str):
+            sources.append((field, "html", value, hidden, owner))
+
+    def own(field: str, value: object, hidden: str | None) -> None:
+        if isinstance(value, dict) and "step" in value:
+            sources.append((f"{field}.step", "field", value["step"], hidden, None))
+
+    def unshown(block: str) -> str:
+        return f"layout {layout!r} does not show the {block}"
+
+    for key in ("title", "eyebrow"):
+        html(f"{where}.{key}", slide.get(key), no_chrome)
+    for key in ("claim", "body", "quote"):
+        html(f"{where}.{key}", slide.get(key), copy_hidden)
+    formula = slide.get("formula")
+    if isinstance(formula, dict):
+        own(f"{where}.formula", formula, copy_hidden)
+        owner = _owner(f"{where}.formula", formula)
+        html(f"{where}.formula.mathml", formula.get("mathml"), copy_hidden, owner)
+        gloss = formula.get("gloss")
+        if isinstance(gloss, list):
+            for position, item in enumerate(gloss):
+                html(f"{where}.formula.gloss[{position}]", item, copy_hidden, owner)
+    if isinstance(slide.get("figures"), list):
+        figures = [(f"{where}.figures[{n}]", item) for n, item in enumerate(slide["figures"])]
+    else:
+        figures = [(f"{where}.figure", slide.get("figure"))]
+    hidden = None if layout in FIGURE_LAYOUTS else unshown("figure")
+    for field, figure in figures:
+        if isinstance(figure, dict):
+            own(field, figure, hidden)
+            for key in ("caption", "source"):
+                html(f"{field}.{key}", figure.get(key), hidden, _owner(field, figure))
+    cards = slide.get("cards")
+    if isinstance(cards, list):
+        hidden = None if layout == "cards" else unshown("cards")
+        for position, card in enumerate(cards):
+            if isinstance(card, dict):
+                field = f"{where}.cards[{position}]"
+                own(field, card, hidden)
+                for key in CARD_TEXT_KEYS:
+                    html(f"{field}.{key}", card.get(key), hidden, _owner(field, card))
+    own(
+        f"{where}.interactive",
+        slide.get("interactive"),
+        None if layout == "interactive" else unshown("interactive"),
+    )
+    video = slide.get("video")
+    if isinstance(video, dict):
+        hidden = None if layout == "video" else unshown("video")
+        own(f"{where}.video", video, hidden)
+        owner = _owner(f"{where}.video", video)
+        for key in ("caption", "source"):
+            html(f"{where}.video.{key}", video.get(key), hidden, owner)
+    html(f"{where}.source", slide.get("source"), no_chrome)
+    return sources
+
+
+def _step_number(kind: str, value: object) -> int | None:
+    """The step a declaration names, or None when it is not a positive integer."""
+    if kind == "field":
+        return value if type(value) is int and value >= 1 else None
+    return int(value) if isinstance(value, str) and _STEP_VALUE.fullmatch(value) else None
+
+
+def _declared_steps(slide: dict, where: str):
+    """(field, kind, raw, step or None, why never shown, around) per declaration.
+
+    ``around`` is None, or ``(what, step)`` naming the highest valid step
+    that encloses the declaration: an element around it in the same HTML,
+    or the object whose own step owns that HTML.
+    """
+    for field, kind, value, hidden, owner in _step_sources(slide, where):
+        if kind == "field":
+            yield field, kind, value, _step_number(kind, value), hidden, None
+            continue
+        for raw, enclosing in _html_steps(value):
+            around = None
+            if enclosing and (owner is None or enclosing > owner[1]):
+                around = (f'a data-step="{enclosing}" element', enclosing)
+            elif owner:
+                around = (f"{owner[0]} (step {owner[1]})", owner[1])
+            yield field, kind, raw, _step_number(kind, raw), hidden, around
+
+
+def _validate_steps(errors: list[str], where: str, slide: dict) -> None:
+    unshown: set[str] = set()
+    for field, kind, raw, step, hidden, _ in _declared_steps(slide, where):
+        if step is None:
+            if kind == "field":
+                errors.append(f"deck.json: {field} must be a positive integer")
+            else:
+                found = "an empty data-step" if not raw else f"data-step={raw!r}"
+                errors.append(
+                    f"deck.json: {field} has {found}; data-step must be a positive integer"
+                )
+        elif hidden and field not in unshown:
+            unshown.add(field)
+            errors.append(f"deck.json: {field} has a step this slide never shows: {hidden}")
+
+
+def _ranges(numbers: list[int]) -> str:
+    """Sorted integers as compact runs: [2, 3, 4, 7] -> "2-4, 7"."""
+    parts: list[str] = []
+    start = previous = numbers[0]
+    for number in [*numbers[1:], None]:
+        if number is not None and number == previous + 1:
+            previous = number
+            continue
+        parts.append(str(start) if start == previous else f"{start}-{previous}")
+        if number is not None:
+            start = previous = number
+    return ", ".join(parts)
+
+
+def deck_warnings(data: object) -> list[str]:
+    """Advice that does not stop a deck from presenting: a step nested in a
+    later one, and gaps in a slide's step numbers."""
+    if not isinstance(data, dict) or not isinstance(data.get("slides"), list):
+        return []
+    warnings: list[str] = []
+    for position, slide in enumerate(data["slides"]):
+        if not isinstance(slide, dict):
+            continue
+        where = f"slides[{position}]"
+        levels: set[int] = set()
+        for field, _, _, step, hidden, around in _declared_steps(slide, where):
+            if step is None or hidden:
+                continue
+            if around and step < around[1]:
+                warnings.append(
+                    f'deck.json: {field} has data-step="{step}" inside {around[0]}; '
+                    f"it appears with step {around[1]}, not before it"
+                )
+                step = around[1]
+            levels.add(step)
+        used = sorted(levels)
+        # Gaps as runs, never as a list: a stray data-step="900" is one run.
+        gaps, previous = [], 0
+        for step in used:
+            if step == previous + 2:
+                gaps.append(str(previous + 1))
+            elif step > previous + 2:
+                gaps.append(f"{previous + 1}-{step - 1}")
+            previous = step
+        if gaps:
+            name = f" ({slide['id']})" if isinstance(slide.get("id"), str) else ""
+            warnings.append(
+                f"deck.json: {where}{name} skips step {', '.join(gaps)} "
+                f"(uses {_ranges(used)}); each press still reveals the next number used"
+            )
+    return warnings
 
 
 def _validate_appendix(errors: list[str], slides: list) -> None:
@@ -379,6 +672,16 @@ def validate_deck(data: object) -> list[str]:
         _check_required_string(errors, "meta", meta, "title")
         for key in ("section", "opening", "tabTitle", "selectorTitle"):
             _check_string(errors, "meta", meta, key)
+        # The course name and the opening part label repeat on many slides;
+        # a step there would hide part of every one of them.
+        for key, shown in (
+            ("section", "every slide's footer"),
+            ("opening", "the eyebrow of every slide before the first section"),
+        ):
+            if isinstance(meta.get(key), str) and html_step_values(meta[key]):
+                errors.append(
+                    f"deck.json: meta.{key} cannot hold a data-step; it is shown in {shown}"
+                )
         _check_enum(errors, "meta", meta, "openingAccent", ACCENTS)
         _validate_favicon(errors, meta)
         _validate_selector_metadata(errors, meta)

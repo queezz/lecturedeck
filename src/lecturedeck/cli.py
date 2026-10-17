@@ -16,7 +16,7 @@ from .narration import NarrationError, outline, read_deck, skeleton
 from .pdf import PDFExportError, export_pdf
 from .scaffold import refresh_unit, scaffold_unit
 from .server import make_selector_server, make_server
-from .validation import deck_entry, release_unit, validate_unit
+from .validation import deck_entry, release_unit, unit_warnings, validate_unit
 
 DEFAULT_PORT = 4173
 PORT_SEARCH_ATTEMPTS = 100
@@ -489,9 +489,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "check":
         errors = validate_unit(unit_root)
+        for error in errors:
+            print(f"ERROR: {error}", file=sys.stderr)
+        for warning in unit_warnings(unit_root):
+            print(f"WARNING: {warning}", file=sys.stderr)
         if errors:
-            for error in errors:
-                print(f"ERROR: {error}", file=sys.stderr)
             return 2
         print(f"OK: {args.unit} webdeck content and installed viewer are valid")
         return 0

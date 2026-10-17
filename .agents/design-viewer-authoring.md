@@ -325,6 +325,28 @@ catalog or a new release format.
   must not recursively scan arbitrary course trees or move course identity
   into this public runtime.
 
+## 9. Step-by-step reveals (shipped 0.25.0)
+
+A slide guides attention piece by piece instead of showing every block at
+once (owner request, 2026-10-17). The design keeps steps a property of the
+live slide alone:
+
+- Authoring is data: `data-step="N"` on slide HTML, a numeric `step` on the
+  objects the viewer draws (figures, cards, formula, interactive, video).
+  No timeline and no per-step animation vocabulary; the viewer only fades
+  in place, so layout never reflows.
+- Next and Previous step first, then change slide; arrival by Previous is
+  whole. Every other surface (overview, print, PDF, narration skeleton,
+  dialogs) shows the slide whole, and pacing stays per slide: a step is not
+  a visit, and the record schema did not change.
+- What a press reveals is decided by what the layout shows now, recounted
+  on theme, style and size changes, so `deck.css` may keep showing one of
+  two figure twins per theme. A step nested in a later one, and steps in
+  labels shown on many slides, never cost a press that shows nothing.
+- A stepped interactive loads on first reveal. The step cue sits in the
+  live slide's footer; whether the audience should see it is an open owner
+  decision (`deck.css` can hide it today).
+
 ## Boundaries that hold across all phases
 
 - Offline and CDN-free; releases are self-contained static directories served

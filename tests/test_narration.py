@@ -424,6 +424,30 @@ class ContentTest(unittest.TestCase):
         for hidden in ("internal-beat-7", "gold", "style-gradient"):
             self.assertNotIn(hidden, text)
 
+    def test_step_reveals_narrate_fully_and_step_links_resolve(self):
+        # Narration is the whole slide: every step, in reading order, unmarked.
+        slides = [
+            {"id": "opening", "title": "Start",
+             "claim": 'Idea <span data-step="1">grows</span>',
+             "body": '<p data-step="2">Then this.</p><p data-step="2">And this.</p>'
+                     '<p>Back to <a href="#/1.2">the cards, both shown</a>,'
+                     ' <a href="#/1.0">bare</a> or <a href="#/1.x">odd</a>.</p>'},
+            {"id": "cards", "title": "Cards", "cards": [
+                {"value": "always"}, {"value": "first", "step": 1},
+                {"value": "second", "step": 2}]},
+            {"id": "figure", "title": "Figure",
+             "figure": {"src": "assets/x.png", "alt": "X", "step": 1,
+                        "caption": '<b data-step="2">late caption</b>'}},
+        ]
+        text = render(slides)
+        self.assertIn("Idea grows\n\nThen this.\n\nAnd this.", text)
+        self.assertIn("- always\n- first\n- second", text)
+        self.assertIn("[figure 1] webdeck/assets/x.png\nAlt: X\nCaption: **late caption**", text)
+        self.assertIn('<!-- nav: "the cards, both shown" -> slide cards (2, step 2) -->', text)
+        self.assertIn('<!-- nav: "bare" -> slide cards (2) -->', text)
+        self.assertIn('<!-- nav: "odd" -> slide unknown (#/1.x) -->', text)
+        self.assertNotIn("data-step", text)
+
 
 class MathTest(unittest.TestCase):
     def test_linearizer(self):

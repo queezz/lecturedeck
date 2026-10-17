@@ -114,6 +114,10 @@ HTTP, with no functions or executable deck code. A minimal deck looks like:
   content block among `figure`/`figures`, `cards`, `interactive`, or `video`.
   `body`, `quote`, and captions hold compiled HTML; `formula.mathml` holds
   native MathML.
+- Slide HTML may mark elements with `data-step="N"`, and figures, cards, an
+  object `formula`, `interactive` and `video` accept a numeric `step`, to
+  reveal a slide piece by piece; see
+  [Step-by-step reveals](#step-by-step-reveals).
 - `eyebrow` overrides the current part label on that slide. Omit it or leave
   it empty to use the part label. Optional `beat` is author metadata only;
   it is accepted in source data but never shown to the audience.
@@ -168,6 +172,94 @@ objects:
 Reusable visual options, accent names, and the boundary between viewer styles
 and unit-owned CSS are documented in [STYLE_GUIDE.md](STYLE_GUIDE.md).
 
+## Step-by-step reveals
+
+A slide can guide attention through its content one piece at a time instead
+of showing every block at once. Give any element of the slide's HTML (claim,
+body, quote, formula MathML and gloss, card text, captions, title, source)
+the attribute `data-step="N"`, where `N` is a positive integer. Objects the
+viewer draws itself take a numeric `step` field instead: `figure`, each item
+of `figures`, each card, an object `formula`, `interactive` and `video`.
+Content without a step is always on screen. Elements that share a number
+appear together.
+
+```json
+{
+  "id": "one-reading-path",
+  "title": "One reading path",
+  "claim": "The claim is on screen from the start.",
+  "body": "<p data-step=\"1\">Then this sentence appears.</p><p data-step=\"2\">These two</p><p data-step=\"2\">appear together.</p>",
+  "figure": {
+    "src": "assets/diagram.png",
+    "alt": "The diagram the sentences lead to",
+    "step": 3
+  }
+}
+```
+
+- **Next and Previous.** Next (`→`, `↓`, `PageDown`, `Space`, the Next
+  control, a wheel notch, a swipe, a clicker, or an interactive page's
+  `lecturedeck:navigate` message with direction `1`) reveals the next step
+  number still hidden. On a fully shown slide it advances, and the next slide
+  opens with only its unstepped content. Previous hides the last step shown;
+  on a slide with nothing revealed it goes back, and the previous slide
+  arrives fully revealed, as it was left. `Shift` with an arrow, `PageDown`
+  or `PageUp` moves by whole slides past the steps, for rewinding: the next
+  slide opens bare, the previous one whole. While the overview is open,
+  every press moves by whole slides.
+- **Jumps.** A `#/N` deep link, an in-deck link and a choice in the overview
+  open a slide with no steps shown. `Home` opens the first slide that way and
+  `End` shows the last slide whole. Closing the overview without choosing
+  another slide keeps the step you were on.
+- **Address.** The address reads `#/N` while no step is shown and `#/N.k`
+  once steps up to `k` are shown, so a reload or a live reload returns to the
+  same step. `#/N.k` also works as a deep link or an in-deck link; a `k` past
+  the last step shows the whole slide.
+- **Layout and motion.** A hidden step keeps its place (it is made invisible,
+  not removed), so nothing moves when it appears. A step that is the whole
+  content of a box the viewer draws (a figure or video caption, the quote, a
+  formula gloss item) takes that box with it, so no empty caption bar or
+  gloss divider waits on screen. A step fades in over about a quarter of a
+  second, or appears at once when the system asks for reduced motion. A
+  hidden step is hidden from screen readers and cannot take keyboard focus
+  (focus inside it, also inside an embedded page, leaves as it hides), and a
+  video stepped back out of view is paused. A stepped `interactive` page
+  loads when its step first appears, so an animation starts in front of the
+  audience instead of running unseen; stepped back, it stays loaded.
+- **What counts as a step.** A press reveals the next number among the
+  steps the layout shows right now. A step `deck.css` does not display (one
+  twin of a dark/light figure pair, a block dropped below some width) waits
+  hidden and joins the count when it appears; switching the theme or
+  resizing the window keeps the step on screen. A step nested in a later one
+  (a caption numbered below its figure's `step`, an element inside a later
+  element) cannot show first: it appears with the later step. A section
+  slide's stepped title or eyebrow steps only that slide; the slides after it
+  show it whole in their eyebrow.
+- **Always whole.** The overview, `?print=1` and `lecturedeck pdf`, the
+  narration skeleton, and printing a live page show every step. Opening the
+  Appearance or Pacing dialog changes nothing on the slide behind it.
+- **Counter and pacing.** The counter keeps counting slides. On a slide with
+  steps, small dots after the page number in the slide's footer, and beside
+  the counter in the controls, show the steps shown (filled) and still to
+  come (open). A `chrome: false` slide has no footer and shows none. Pacing
+  records keep one visit per slide: revealing a step is not a slide change.
+- **Checking.** `check` rejects a `step` or `data-step` that is not a
+  positive integer (`0`, `"2"`, `1.5`, `01`, an empty attribute), and a step
+  in content the slide never shows: the title, eyebrow or source of a
+  `chrome: false` slide, the claim, formula, body or quote of a full-canvas
+  interactive (`chrome: false`), or a block its layout does not draw. It
+  also rejects a `data-step` in `meta.section` or `meta.opening`, which
+  appear on many slides. Step numbers with a gap, such as 1 and 3, and a
+  step nested in a later one only print a warning: each press still reveals
+  the next number used.
+- **Styling.** While a live slide has steps, its frame carries
+  `data-step-count`, `data-step-shown` and `data-step-current`; hidden steps
+  carry the class `step-hidden` and the most recently revealed ones
+  `step-current`; the footer dots carry `step-cue`.
+  [STYLE_GUIDE.md](STYLE_GUIDE.md) shows a `deck.css` example and how to
+  order steps. Legacy `slides.js` decks use the same fields; `check` does
+  not validate them.
+
 ## Compatibility
 
 Starting with `1.0.0`, newer `lecturedeck` releases in the same major line will
@@ -207,6 +299,8 @@ against the installed viewer; it rejects missing files, references that escape
 interactive pages — their HTML, CSS `url()`/`@import` targets, and static
 ES-module imports — resolve relative to the file that declares them and must
 stay local. Normal citation links in `<a href="https://...">` remain allowed.
+`check` also prints `WARNING:` lines for advice that does not fail it, such
+as a gap in a slide's step numbers.
 `release` validates first, freezes the installed viewer into one
 self-contained static bundle, and refuses to overwrite its destination.
 
@@ -302,13 +396,17 @@ directory listings are off.
 ## Presenter controls
 
 - **Next / previous:** arrow keys, `PageDown`/`PageUp`, `Space`, mouse wheel
-  or trackpad scroll, and horizontal swipe on touch screens.
+  or trackpad scroll, and horizontal swipe on touch screens. On a slide with
+  [step-by-step reveals](#step-by-step-reveals) they show or hide one step
+  before they change slide; `Shift` with the arrow and page keys moves by
+  whole slides.
 - **Mobile review:** tap the small gear or swipe up on a slide to open the
   touch menu. Overview, fullscreen and the remaining controls are available
   there; Close menu or a downward swipe dismisses it. Horizontal swipes page
   slides. Overview scrolling, pinch zoom, media and interactive controls do
   not page the deck. Overview keeps a Close overview button within reach.
-- **First / last slide:** `Home` / `End`.
+- **First / last slide:** `Home` / `End`. `Home` opens the first slide with
+  no steps shown; `End` shows the last slide whole.
 - **Overview grid:** `O` or `Escape`; click a thumbnail to jump.
 - **Full screen:** `F` (falls back to a pseudo-fullscreen on iPad Safari;
   `Escape` leaves it).
@@ -398,6 +496,13 @@ controls above the iframe. An embedded page may request deck navigation with:
 parent.postMessage({type: "lecturedeck:navigate", direction: 1}, "*");
 ```
 
+Direction `1` acts as the Next key and `-1` as Previous, so on a slide with
+step reveals the page reveals or hides a step before it changes slide. A
+page may forward its own `Home` and `End` keys as
+`{type: "lecturedeck:navigate", to: "first"}` or `to: "last"`; they act as
+the deck's `Home` (the first slide, no steps shown) and `End` (the last
+slide whole).
+
 Static Bokeh exports should use `bokeh.resources.INLINE`. Plotly exports should
 bundle Plotly JavaScript (`include_plotlyjs=True` or an equivalent local file),
 not use `"cdn"`. Any other interactive runtime must also be vendored inside the
@@ -466,9 +571,10 @@ history.
 ```
 
 The test run includes a Chromium smoke suite for the presenter contract:
-both data-loading paths, navigation, wheel input, overview, fullscreen,
-theme, media attributes, iframe interaction, the geometry-adjust guards, and
-the pacing recorder, report and same-computer saving.
+both data-loading paths, navigation, step-by-step reveals, wheel input,
+overview, fullscreen, theme, media attributes, iframe interaction, the
+geometry-adjust guards, and the pacing recorder, report and same-computer
+saving.
 It requires the optional Playwright dev dependency plus a one-time browser
 download, and is skipped automatically when either is absent:
 

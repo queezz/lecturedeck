@@ -7,7 +7,7 @@ import shutil
 from importlib.resources import files
 from pathlib import Path
 
-from .deckdata import validate_deck_file
+from .deckdata import deck_warnings, load_deck, validate_deck_file
 
 VIEWER_FILES = ("index.html", "lecturedeck.css", "lecturedeck.js")
 OPTIONAL_DECK_CSS = "deck.css"
@@ -141,6 +141,15 @@ def validate_unit(unit_root: Path) -> list[str]:
             elif not target.is_file() and not (fallback is not None and fallback.is_file()):
                 errors.append(f"missing reference in {label}: {reference}")
     return sorted(set(errors))
+
+
+def unit_warnings(unit_root: Path) -> list[str]:
+    """Advice from check that does not block serving or releasing a unit."""
+    deck_json = unit_root / "webdeck" / "deck.json"
+    if not deck_json.is_file():
+        return []
+    data, _ = load_deck(deck_json)
+    return deck_warnings(data) if data is not None else []
 
 
 def release_unit(unit_root: Path, output: Path) -> Path:

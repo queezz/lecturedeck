@@ -28,12 +28,14 @@
     .lecturedeck-adjust-hud code { display: block; margin-top: 5px; color: #fbf1c7; font: 600 17px/1.35 Consolas, "Cascadia Mono", monospace; }
     .lecturedeck-adjust-hud small { display: block; margin-top: 8px; color: #a89984; font-size: 13px; font-weight: 400; }
     .figure-card.lecturedeck-adjust-selected { outline: 4px solid #83a598; outline-offset: 5px; }
+    .figure-card.lecturedeck-adjust-selected.step-hidden { visibility: visible; opacity: .45; transition: none; }
   `;
   document.head.append(styles);
 
+  // "#/N", or "#/N.k" on a slide with step reveals shown up to step k.
   function slideIndex() {
-    const value = Number(location.hash.replace("#/", ""));
-    return Number.isInteger(value) && value >= 0 ? value : 0;
+    const match = /^#\/(\d+)/.exec(location.hash);
+    return match ? Number(match[1]) : 0;
   }
 
   function figures() {
