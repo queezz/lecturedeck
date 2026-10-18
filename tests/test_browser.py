@@ -203,6 +203,13 @@ STEPS_DECK = {
     ],
 }
 
+# The controls strip's step dots read as text: ● for a step shown, ○ for
+# one to come (they are drawn marks, not glyphs).
+CONTROL_DOTS = (
+    "[...document.querySelector('#step-indicator').children]"
+    ".map(m => m.classList.contains('shown') ? '●' : '○').join('')"
+)
+
 STEP_STATE = """() => {
   const frame = document.querySelector('#deck .slide-frame');
   const dots = document.querySelector('#step-indicator');
@@ -213,8 +220,74 @@ STEP_STATE = """() => {
     hidden: [...frame.querySelectorAll('.step-hidden')].map(name),
     current: [...frame.querySelectorAll('.step-current')].map(name),
     counter: document.querySelector('#counter').textContent,
-    dots: dots.hidden ? null : dots.textContent,
+    dots: dots.hidden ? null : %s,
   };
+}""" % CONTROL_DOTS
+
+# Ten main slides and two backups: steps on some (index: count), the same
+# long source line on all. The line wraps near the footer's width, so any
+# room the step dots took from it would change its box, and 9 / 10 and
+# 10 / 10 differ in width unless the page number keeps one box.
+FIXED_STEPS = {1: 1, 2: 3, 5: 2, 9: 3, 11: 2}
+FIXED_SOURCE = "Source: " + "a long citation that fills the footer line, " * 5
+
+
+def fixed_box_slide(index: int) -> dict:
+    steps = FIXED_STEPS.get(index, 0)
+    body = "".join(f'<p data-step="{n}">Point {n}.</p>' for n in range(1, steps + 1))
+    slide = {"id": f"fx-{index}", "title": f"Slide {index}", "claim": "Always shown.",
+             "body": body or "<p>No steps here.</p>", "source": FIXED_SOURCE}
+    if index == 10:
+        slide["appendix"] = True
+    return slide
+
+
+FIXED_BOX_DECK = {
+    "deck": 1,
+    "meta": {"title": "Fixed boxes", "section": "COURSE NAME"},
+    "slides": [fixed_box_slide(index) for index in range(12)],
+}
+
+# The boxes of every fixed element, and where the step dots sit.
+FIXED_BOXES = """() => {
+  const rect = s => {
+    const r = document.querySelector(s).getBoundingClientRect();
+    return [r.x, r.y, r.width, r.height];
+  };
+  const selectors = ['#deck .page-number', '#deck .course-name', '#deck .source',
+    '#deck .slide-foot', '#deck .slide-head', '#deck .slide-body',
+    '#counter', '#controls-tools', '#appearance-button', '#viewer-version'];
+  const boxes = Object.fromEntries(selectors.map(s => [s, rect(s)]));
+  const frame = document.querySelector('#deck .slide-frame').getBoundingClientRect();
+  const scale = frame.width / 1280;
+  const number = document.querySelector('#deck .page-number').getBoundingClientRect();
+  const counter = document.querySelector('#counter').getBoundingClientRect();
+  const cue = document.querySelector('#deck .footer-nav > .step-cue');
+  const dots = document.querySelector('#step-indicator');
+  const marks = node => node && node.checkVisibility()
+    ? [...node.children].map(m => m.classList.contains('shown') ? 'shown' : '') : [];
+  const problems = [];
+  if (cue) {
+    const r = cue.getBoundingClientRect();
+    if (r.top < number.bottom || r.bottom > frame.bottom - 4 * scale)
+      problems.push(`cue not under the page number inside the frame: ${r.top}-${r.bottom}`);
+    if (Math.abs(r.right - number.right) > 0.5) problems.push('cue not right under the number');
+    for (const m of cue.children) {
+      const b = m.getBoundingClientRect();
+      if (Math.abs(b.width - 8 * scale) > 0.5 || Math.abs(b.height - 8 * scale) > 0.5)
+        problems.push(`cue mark ${b.width}x${b.height}`);
+    }
+  }
+  const slot = document.querySelector('.counter-slot').getBoundingClientRect();
+  if (['x', 'y', 'width', 'height'].some(k => slot[k] !== counter[k]))
+    problems.push('the counter slot is not exactly the counter box');
+  for (const m of dots.hidden ? [] : dots.children) {
+    const b = m.getBoundingClientRect();
+    if (b.width < 5 || b.left < counter.left || b.right > counter.right
+        || b.top < counter.top || b.bottom > counter.bottom)
+      problems.push(`controls dot ${b.left},${b.top} ${b.width} outside the counter`);
+  }
+  return {hash: location.hash, boxes, cue: marks(cue), dots: marks(dots), problems};
 }"""
 
 
@@ -1898,6 +1971,89 @@ class BrowserSmokeTest(unittest.TestCase):
         page.wait_for_selector(".overview-card")
         self.assertEqual(0, page.locator(".step-cue").count())
 
+    def walk_fixed_boxes(self, page) -> list[dict]:
+        """Every slide of FIXED_BOX_DECK at every step, by Next, from #/0."""
+        visits = [page.evaluate(FIXED_BOXES)]
+        while not page.is_disabled("#next-button"):
+            page.keyboard.press("ArrowRight")
+            visits.append(page.evaluate(FIXED_BOXES))
+        return visits
+
+    def test_step_dots_never_move_a_fixed_element(self):
+        # Owner, 2026-10-18: "Your dots shift the page numbers. I HATE it
+        # when a thing with a fixed position is shifted." Slides without
+        # steps, with one step and with three, at no step, mid-way and
+        # whole, and the step from 9 to 10 and into the backup, all keep
+        # each fixed element in the same box, to the pixel.
+        expected = (
+            ["#/0", "#/1", "#/1.1", "#/2", "#/2.1", "#/2.2", "#/2.3", "#/3", "#/4",
+             "#/5", "#/5.1", "#/5.2", "#/6", "#/7", "#/8", "#/9", "#/9.1", "#/9.2",
+             "#/9.3", "#/10", "#/11", "#/11.1", "#/11.2"])
+        for theme in ("dark", "light"):
+            for size in ({"width": 1280, "height": 900}, {"width": 960, "height": 720}):
+                with self.subTest(theme=theme, size=size):
+                    page = self.browser.new_page(viewport=size)
+                    self.addCleanup(page.close)
+                    page.add_init_script(
+                        f"try {{ localStorage.setItem('lecturedeck-theme', '{theme}'); }}"
+                        " catch (_) {}")
+                    page.route("**/deck.json", lambda route: route.fulfill(json=FIXED_BOX_DECK))
+                    page.goto(self.urls["json"] + "#/0")
+                    page.wait_for_function("Boolean(window.LECTUREDECK)")
+                    self.assertEqual(theme == "light", page.evaluate(
+                        "document.body.classList.contains('light-theme')"))
+                    # The strip is open at both sizes, so its counter is on screen.
+                    self.assertTrue(page.evaluate(
+                        "document.querySelector('#presentation-controls')"
+                        ".classList.contains('has-safe-space')"))
+                    page.wait_for_function(
+                        "document.querySelector('#controls-tools').getAnimations().length === 0")
+                    visits = self.walk_fixed_boxes(page)
+                    self.assertEqual(expected, [v["hash"] for v in visits])
+                    first = visits[0]["boxes"]
+                    for visit in visits[1:]:
+                        for selector, box in visit["boxes"].items():
+                            self.assertEqual(first[selector], box, f"{visit['hash']} {selector}")
+                    for visit in visits:
+                        steps = FIXED_STEPS.get(int(visit["hash"][2:].split(".")[0]), 0)
+                        shown = int(visit["hash"].split(".")[1]) if "." in visit["hash"] else 0
+                        self.assertEqual(
+                            {"footer": steps, "controls": steps},
+                            {"footer": len(visit["cue"]), "controls": len(visit["dots"])},
+                            visit["hash"])
+                        self.assertEqual(
+                            ["shown"] * shown + [""] * (steps - shown), visit["cue"], visit["hash"])
+                        self.assertEqual(visit["cue"], visit["dots"], visit["hash"])
+                        # Legible where they are: under the page number,
+                        # inside the frame; inside the counter's own box.
+                        for problem in visit["problems"]:
+                            self.fail(f"{visit['hash']}: {problem}")
+                    # The reserved width is never read as text.
+                    self.assertEqual(("B2 / 2", "B2 / 2"), (
+                        page.inner_text("#deck .page-number"), page.inner_text("#counter")))
+
+    def test_step_dots_survive_a_legacy_span_pill_rule(self):
+        # An older deck.css draws a pill on every span of the strip. The
+        # counter keeps its one pill; its slot and dots draw none.
+        css = (".deck-chrome button, .deck-chrome span { border: 1px solid #504945;"
+               " border-radius: 7px; padding: 7px 10px; background: rgba(29,32,33,.92); }")
+        page = self.open_stepped(FIXED_BOX_DECK, "#/2", css=css,
+                                 viewport={"width": 1280, "height": 900})
+        page.wait_for_function(
+            "document.querySelector('#controls-tools').getAnimations().length === 0")
+        bare = page.evaluate(FIXED_BOXES)
+        page.keyboard.press("ArrowRight")
+        stepped = page.evaluate(FIXED_BOXES)
+        page.keyboard.press("Shift+ArrowLeft")
+        page.keyboard.press("Shift+ArrowLeft")
+        plain = page.evaluate(FIXED_BOXES)
+        self.assertEqual(("#/2", "#/2.1", "#/0"), (bare["hash"], stepped["hash"], plain["hash"]))
+        self.assertEqual((bare["boxes"], bare["boxes"]), (stepped["boxes"], plain["boxes"]))
+        self.assertEqual([[], [], []], [v["problems"] for v in (bare, stepped, plain)])
+        self.assertEqual(["0px", "0px"], page.evaluate(
+            "['.counter-slot', '#step-indicator'].map(s =>"
+            " getComputedStyle(document.querySelector(s)).borderTopWidth)"))
+
     def test_style_guide_dimming_example(self):
         # The STYLE_GUIDE's own deck.css example, as published.
         guide = (Path(__file__).resolve().parents[1] / "STYLE_GUIDE.md").read_text(
@@ -1958,9 +2114,9 @@ class BrowserSmokeTest(unittest.TestCase):
             "!document.querySelector('#appearance-dialog').contains(document.activeElement)")
         # Narrow, the wide-only block is no step; wide again, it waits for one.
         page.set_viewport_size({"width": 600, "height": 400})
-        page.wait_for_function("document.querySelector('#step-indicator').textContent === '●'")
+        page.wait_for_function(f"{CONTROL_DOTS} === '●'")
         page.set_viewport_size({"width": 1280, "height": 720})
-        page.wait_for_function("document.querySelector('#step-indicator').textContent === '●○'")
+        page.wait_for_function(f"{CONTROL_DOTS} === '●○'")
         self.assertEqual("hidden", self.visibility(page, "#wide-only"))
         page.keyboard.press("ArrowRight")
         self.assertEqual(("#/0.2", "visible"), (

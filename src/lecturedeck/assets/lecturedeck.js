@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.25.0";
+  const VIEWER_VERSION = "0.25.1";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -199,6 +199,11 @@
       // Inside the backup the presenter still wants to see where he is:
       // "B4 / 92" (position and backup total), never "B4 / B92".
       position: i => inAppendix(i) ? `${label(i)} / ${backupTotal}` : `${i + 1} / ${mainTotal}`,
+      // The widest positions, one per line. The page number and the counter
+      // keep a box this wide on every slide, so going from 9 to 10 moves
+      // nothing beside them.
+      widest: [`${mainTotal} / ${mainTotal}`, hasAppendix ? `B${backupTotal} / ${backupTotal}` : ""]
+        .filter(Boolean).join("\n"),
       ariaLabel: (i, title) => !hasAppendix ? `Slide ${i + 1}: ${title}`
         : inAppendix(i) ? `Backup slide ${label(i)} of ${backupTotal}: ${title}`
           : `Slide ${i + 1} of ${mainTotal}: ${title}`,
@@ -1864,7 +1869,7 @@
       const copy = `<div class="copy">${slide.claim ? `<p class="claim">${slide.claim}</p>` : ""}${formulaMarkup(slide.formula)}${slide.body ? `<div class="body-copy">${slide.body}</div>` : ""}${slide.quote ? `<div class="quote">${slide.quote}</div>` : ""}</div>`;
       const body = ["figure", "figure-dominant", "figure-stage", "title", "figures"].includes(layout) ? `${copy}${figureBlock}` : layout === "cards" ? `${copy}${cardBlock}` : layout === "interactive" ? `${copy}${interactiveBlock}` : layout === "video" ? `${copy}${videoBlock}` : copy;
       const header = chromeFree ? "" : `<header class="slide-head"><p class="eyebrow">${slide.eyebrow || partLabel(i)}</p><h1 class="slide-title">${slide.title || ""}</h1></header>`;
-      const footer = chromeFree ? "" : `<footer class="slide-foot"><span class="source">${slide.source || ""}</span><span class="footer-nav"><span class="course-name">${withoutSteps(spec.meta.section || "")}</span><span class="page-number">${numbering.position(i)}</span></span></footer>`;
+      const footer = chromeFree ? "" : `<footer class="slide-foot"><span class="source">${slide.source || ""}</span><span class="footer-nav"><span class="course-name">${withoutSteps(spec.meta.section || "")}</span><span class="page-number" data-fit="${numbering.widest}">${numbering.position(i)}</span></span></footer>`;
       const slideId = slide.id ? ` data-slide-id="${escapeHtml(slide.id)}"` : "";
       const appendix = numbering.inAppendix(i) ? ` data-appendix="true"` : "";
       return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${slide.className ? ` ${escapeHtml(slide.className)}` : ""}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || partAccent(i))}" data-index="${i}"${slideId}${appendix} aria-label="${numbering.ariaLabel(i, escapeHtml(slideTitleText(slide, i)))}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
@@ -2114,9 +2119,14 @@
       nextButton.disabled = open || (index === spec.slides.length - 1 && revealed === stepLevels.length);
       const through = shownStep();
       history.replaceState(null, "", through ? `#/${index}.${through}` : `#/${index}`);
-      // The same dots in the live slide's footer, beside the page number,
-      // where the presenter looks: the controls strip is often collapsed.
-      // Drawn as fixed-size marks, so stepping never moves the footer.
+      // Filled marks for steps shown, open ones for steps to come, drawn at
+      // a fixed size, so stepping never changes their width.
+      const marks = stepLevels.map((_, n) => `<i${n < revealed ? ' class="shown"' : ""}></i>`).join("");
+      // The same dots under the live slide's page number, where the
+      // presenter looks: the controls strip is often collapsed. The cue is
+      // positioned out of the layout, so a slide with steps, any number of
+      // them and any step shown, leaves the page number, the course name
+      // and the source line exactly where every other slide has them.
       const footerNav = deck.querySelector(".slide-frame .footer-nav");
       let cue = footerNav?.querySelector(":scope > .step-cue") || null;
       if (!stepLevels.length) cue?.remove();
@@ -2127,13 +2137,12 @@
           cue.setAttribute("aria-hidden", "true");
           footerNav.append(cue);
         }
-        cue.innerHTML = stepLevels.map((_, n) => `<i${n < revealed ? ' class="shown"' : ""}></i>`).join("");
+        cue.innerHTML = marks;
       }
       if (!stepIndicator) return;
       stepIndicator.hidden = !stepLevels.length;
       if (!stepLevels.length) return;
-      // Filled dots for steps shown, open ones for steps to come.
-      stepIndicator.textContent = "\u25cf".repeat(revealed) + "\u25cb".repeat(stepLevels.length - revealed);
+      stepIndicator.innerHTML = marks;
       const label = `Step ${revealed} of ${stepLevels.length}`;
       stepIndicator.setAttribute("aria-label", label);
       stepIndicator.title = label;
@@ -2531,14 +2540,21 @@
     addEventListener("fullscreenchange", updateFullscreenButtons);
     addEventListener("webkitfullscreenchange", updateFullscreenButtons);
     updateFullscreenButtons();
-    // The step dots sit beside the counter and appear only on a slide with
-    // steps. Built here, so a legacy unit-local index.html gets them too.
+    // The counter keeps the box of the deck's widest position. The step
+    // dots sit inside its box, under the number, in a slot that takes no
+    // room, and appear only on a slide with steps: the controls after the
+    // counter never move. Built here, so a legacy unit-local index.html
+    // gets them too.
+    counter.dataset.fit = numbering.widest;
+    const counterSlot = document.createElement("span");
+    counterSlot.className = "counter-slot";
+    counter.replaceWith(counterSlot);
     stepIndicator = document.createElement("span");
     stepIndicator.id = "step-indicator";
     stepIndicator.className = "step-indicator";
     stepIndicator.setAttribute("role", "img");
     stepIndicator.hidden = true;
-    counter.after(stepIndicator);
+    counterSlot.append(counter, stepIndicator);
     render(requested.step);
   }
 

@@ -346,6 +346,13 @@ live slide alone:
 - A stepped interactive loads on first reveal. The step cue sits in the
   live slide's footer; whether the audience should see it is an open owner
   decision (`deck.css` can hide it today).
+- Chrome never moves (owner, 2026-10-18: "I HATE it when a thing with a
+  fixed position is shifted"). The step dots are positioned out of the
+  layout, under the page number and inside the counter's box, and the page
+  number and the counter keep the width of the deck's widest position. A
+  browser test holds every fixed box to the pixel across slides with and
+  without steps, at every step, in both themes and at two window sizes;
+  new chrome must join it.
 
 ## Boundaries that hold across all phases
 

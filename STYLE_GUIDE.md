@@ -98,8 +98,11 @@ Such a rule also dims a slide that arrives whole through Previous, every
 step but the last one. The viewer fades a step with `transition` on
 `.slide-frame [data-step]`, so a `deck.css` transition on a stepped element
 replaces that fade unless it also lists `opacity` and `visibility`. The
-step dots after the page number carry `step-cue`; hide them with
-`.step-cue { display: none; }` when the audience should not see them.
+step dots under the page number carry `step-cue`; hide them with
+`.step-cue { display: none; }` when the audience should not see them. They
+sit in the frame's bottom padding, out of the layout: a `deck.css` that
+moves them must keep them out of the flow (positioned), or every stepped
+slide moves its page number again.
 
 ## Accents
 

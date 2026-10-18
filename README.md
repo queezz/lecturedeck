@@ -239,10 +239,16 @@ appear together.
   narration skeleton, and printing a live page show every step. Opening the
   Appearance or Pacing dialog changes nothing on the slide behind it.
 - **Counter and pacing.** The counter keeps counting slides. On a slide with
-  steps, small dots after the page number in the slide's footer, and beside
-  the counter in the controls, show the steps shown (filled) and still to
-  come (open). A `chrome: false` slide has no footer and shows none. Pacing
-  records keep one visit per slide: revealing a step is not a slide change.
+  steps, small dots under the page number in the slide's footer, and under
+  the number inside the counter in the controls, show the steps shown
+  (filled) and still to come (open). The dots take no room: the page
+  number, the course name, the source line, the counter and the controls
+  beside it keep the same place on every slide, with or without steps and
+  at every step. The page number and the counter also keep the width of the
+  deck's widest position, so nothing moves from 9 to 10 either. A
+  `chrome: false` slide has no footer and shows only the counter's dots.
+  Pacing records keep one visit per slide: revealing a step is not a slide
+  change.
 - **Checking.** `check` rejects a `step` or `data-step` that is not a
   positive integer (`0`, `"2"`, `1.5`, `01`, an empty attribute), and a step
   in content the slide never shows: the title, eyebrow or source of a

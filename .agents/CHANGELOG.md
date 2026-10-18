@@ -1,5 +1,31 @@
 # Changelog — shipped version history
 
+## 0.25.1
+
+Owner, 2026-10-18, on the first stepped lecture: "Your dots shift the page
+numbers. I HATE it when a thing with a fixed position is shifted. Jumpy
+from slide to slide."
+
+- The step dots no longer move anything. In 0.25.0 they sat in the
+  footer's row after the page number, so every stepped slide pushed the
+  page number and the course name left (by more with more steps) and could
+  narrow and rewrap a long source line; in the controls strip they pushed
+  every control after the counter right. The footer dots now sit under the
+  page number, in the frame's bottom padding, and the strip's dots inside
+  the counter's own box, under the number; both are positioned out of the
+  layout and drawn at a fixed size (the strip's are drawn marks now, not
+  `●○` characters). Print, PDF and the overview still show none.
+- The page number and the counter keep the width of the deck's widest
+  position, so going from slide 9 to 10, or into the backup, no longer
+  moves the course name or the controls beside the counter. The counter's
+  digits are tabular.
+- A browser test holds the page number, course name, source line, footer,
+  header, body, counter and controls to the pixel across slides with no
+  steps, one and three, at no step, mid-way and whole, from 9 to 10 and
+  into the backup, in both themes and at two window sizes; it fails on
+  0.25.0. A legacy `deck.css` rule that draws a pill on every span of the
+  strip draws none on the counter's slot or its dots.
+
 ## 0.25.0
 
 Owner, 2026-10-17: "We can dev step by step reveal." A slide must have one

@@ -224,9 +224,17 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 
 .slide-foot { min-height: 22px; display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; color: var(--faint); font-size: 15px; line-height: 1.15; }
 .slide-foot .source { max-width: 1000px; }
-.footer-nav { flex: 0 0 auto; display: flex; align-items: baseline; gap: 12px; }
+.footer-nav { position: relative; flex: 0 0 auto; display: flex; align-items: baseline; gap: 12px; }
 .course-name { color: var(--faint); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
 .page-number { color: var(--ink); font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* The page number and the controls counter keep the box of the deck's
+   widest position (data-fit, one per line, laid out with no height and
+   never seen), so neither they nor anything beside them moves from 9 to 10. */
+.page-number[data-fit] { display: inline-flex; flex-direction: column; align-items: flex-end; }
+.deck-chrome #counter[data-fit] { display: inline-flex; flex-direction: column; align-items: center; }
+.page-number[data-fit]::after, .deck-chrome #counter[data-fit]::after {
+  content: attr(data-fit); height: 0; overflow: hidden; visibility: hidden; white-space: pre;
+}
 
 .slide-frame.kind-section { place-items: center; padding: 70px 100px; text-align: center; }
 .slide-frame.kind-section::before { width: 100%; height: 8px; inset: 0 0 auto; }
@@ -249,11 +257,13 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 @media (prefers-reduced-motion: reduce) {
   .slide-frame [data-step], .slide-frame .step-hidden { transition: none; }
 }
-/* The live slide's step dots, after its page number: filled for steps
-   shown, open for steps to come. Fixed-size marks, so the footer never
-   moves while stepping. deck.css may hide them: .step-cue { display: none; } */
-.footer-nav .step-cue { display: inline-flex; gap: 5px; align-self: center; color: var(--faint); }
-.footer-nav .step-cue i { width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px currentColor; }
+/* The live slide's step dots, under its page number in the frame's bottom
+   padding: filled for steps shown, open for steps to come. Positioned out
+   of the layout and drawn at a fixed size, so no slide, stepped or not, at
+   any step, moves the page number, the course name or the source line.
+   deck.css may hide them: .step-cue { display: none; } */
+.footer-nav .step-cue { position: absolute; top: 100%; right: 0; margin-top: 3px; display: flex; gap: 5px; color: var(--faint); pointer-events: none; }
+.footer-nav .step-cue i { flex: none; width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px currentColor; }
 .footer-nav .step-cue i.shown { background: currentColor; }
 @media print {
   .slide-frame .step-hidden { opacity: 1; visibility: visible; transition: none; }
@@ -277,6 +287,7 @@ body.laser-active .interactive-frame iframe { pointer-events: none; }
 .deck-chrome { position: fixed; z-index: 20; top: 12px; left: 24px; display: flex; align-items: center; gap: 6px; opacity: .42; transition: opacity .15s; }
 .deck-chrome:hover, .deck-chrome:focus-within, .deck-chrome.has-safe-space { opacity: 1; }
 .deck-chrome button, .deck-chrome .control-link, .deck-chrome #counter { border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; background: var(--chrome-bg); color: var(--muted); font-size: 14px; }
+.deck-chrome #counter { font-variant-numeric: tabular-nums; }
 .deck-chrome button, .deck-chrome .control-link { cursor: pointer; }
 .deck-chrome .control-link { display: inline-grid; place-items: center; box-sizing: border-box; min-width: 36px; text-decoration: none; }
 .deck-chrome .control-link[hidden] { display: none; }
@@ -287,9 +298,17 @@ body.laser-active .interactive-frame iframe { pointer-events: none; }
 /* Collapsing clips the tools; items must not shrink and wrap into taller rows. */
 .controls-tools > * { flex: none; white-space: nowrap; }
 .controls-tools .viewer-version { color: var(--faint); font-size: 12px; white-space: nowrap; }
-/* Step dots beside the counter, only on a slide with steps. */
-.controls-tools .step-indicator { color: var(--muted); font-size: 11px; letter-spacing: .2em; line-height: 1; }
-.controls-tools .step-indicator[hidden] { display: none; }
+/* Step dots inside the counter's box, under the number, only on a slide
+   with steps. The slot is exactly the counter's box and the dots take no
+   room in it, so the controls after the counter never move. */
+.counter-slot { position: relative; display: inline-flex; align-items: center; }
+.counter-slot > .step-indicator { position: absolute; left: 0; right: 0; bottom: 3px; display: flex; justify-content: center; gap: 3px; color: var(--muted); pointer-events: none; }
+.counter-slot > .step-indicator[hidden] { display: none; }
+.counter-slot > .step-indicator i { flex: none; width: 5px; height: 5px; border-radius: 50%; box-shadow: inset 0 0 0 1px currentColor; }
+.counter-slot > .step-indicator i.shown { background: currentColor; }
+/* Legacy deck.css span rules (a pill on every span of the strip) must not
+   draw a second box around the counter or its dots. */
+.deck-chrome .counter-slot, .deck-chrome .step-indicator { border: 0; border-radius: 0; padding: 0; background: none; }
 .deck-chrome.has-safe-space .controls-toggle { display: none; }
 .deck-chrome.has-safe-space .controls-tools, .deck-chrome.is-expanded .controls-tools { max-width: min(780px, calc(100vw - 90px)); opacity: 1; pointer-events: auto; }
 body.immersive-slide.pseudo-fullscreen .deck-chrome,

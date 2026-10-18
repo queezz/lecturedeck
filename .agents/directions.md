@@ -15,13 +15,15 @@ the items below lives in `design-viewer-authoring.md`.
 - Complete the public style guide and freeze the supported style vocabulary for
   the `1.x` compatibility line.
 
-## Open after step reveals (0.25.0)
+## Open after step reveals (0.25.0, 0.25.1)
 
 - Owner decision: should the audience see the footer step dots? They show
-  on every stepped slide that has a footer; a deck hides them with
-  `.step-cue { display: none; }` in `deck.css`. A `meta` switch is the
-  candidate if he wants it per deck.
+  under the page number on every stepped slide that has a footer; a deck
+  hides them with `.step-cue { display: none; }` in `deck.css`. A `meta`
+  switch is the candidate if he wants it per deck.
 - Check step reveals in Safari/WebKit, which was not tested. The viewer
   falls back from `checkVisibility` (Safari 17.4+) to client rects; the
   fade, `inert` and the deferred interactive load need a look on the
-  presenting Mac.
+  presenting Mac, and so do the 0.25.1 fixed boxes: the absolutely
+  positioned dots and the page number's and counter's reserved width
+  (a zero-height `content: attr(data-fit)` line in a column flex box).
