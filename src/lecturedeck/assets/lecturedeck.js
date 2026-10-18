@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.25.1";
+  const VIEWER_VERSION = "0.26.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -320,6 +320,9 @@
   const pacingLive = new Set();
 
   const modalOpen = () => Boolean(document.querySelector("dialog[open]"));
+  // The photo viewer owns deck input like any dialog, but the presenter is
+  // still showing the slide's own picture: it pauses no pacing record.
+  const pacingDialogOpen = () => Boolean(document.querySelector("dialog[open]:not(.photo-viewer)"));
 
   // A lone surrogate would make the server refuse the whole record.
   const pacingWellFormed = text => typeof text.toWellFormed === "function" ? text.toWellFormed() : text;
@@ -1331,7 +1334,7 @@
       const showing = inWindow && Boolean(frame) && Number.isInteger(index);
       const why = document.visibilityState !== "visible" ? "hidden"
         : dialog.open ? "report"
-          : modalOpen() ? "dialog"
+          : pacingDialogOpen() ? "dialog"
             : document.body.classList.contains("overview-open") ? "overview" : null;
       const wasActive = active;
       active = showing && !why;
@@ -1512,7 +1515,7 @@
       return [...entries.values()];
     }
 
-    const helpMarkup = () => `<p class="pacing-help">Records automatically on teaching dates from ${PACING_LEAD_S / 60} min before to ${PACING_TAIL_S / 60} min after the slot. Overview, dialogs and hidden tabs pause it; gaps over ${GAP_MS / 1000} s are never counted. Shows this browser's recordings; files on disk may include other browsers.</p>`;
+    const helpMarkup = () => `<p class="pacing-help">Records automatically on teaching dates from ${PACING_LEAD_S / 60} min before to ${PACING_TAIL_S / 60} min after the slot. Overview, dialogs and hidden tabs pause it; the photo viewer counts as time on its slide. Gaps over ${GAP_MS / 1000} s are never counted. Shows this browser's recordings; files on disk may include other browsers.</p>`;
 
     function timelineMarkup(segments, summary) {
       const rows = [];
@@ -1748,6 +1751,9 @@
     // element itself is created only after the print-mode branch returns.
     let laser = null;
     let laserOn = false;
+    // The photo viewer, built after the print-mode return like the laser:
+    // print pages and PDF exports never contain it.
+    let photoViewer = null;
 
     const slideTitleText = (slide, i) => {
       const raw = slide.title || slide.interactive?.title || slide.video?.title || "";
@@ -1974,6 +1980,8 @@
       frame.style.height = fullscreen ? `${frameHeight}px` : "";
       frame.style.transform = `scale(${scale})`;
       positionControls(scale, frameWidth, frameHeight);
+      // Full screen reflows the canvas: the video expand controls follow.
+      photoViewer?.placeExpanders();
     }
 
     // ---------------------------------------------------------------
@@ -2101,6 +2109,8 @@
       }
       const frame = deck.querySelector(".slide-frame");
       if (!frame) return;
+      // A video's expand control shows and hides with the video's step.
+      photoViewer?.placeExpanders();
       if (stepLevels.length) {
         frame.dataset.stepCount = String(stepLevels.length);
         frame.dataset.stepShown = String(revealed);
@@ -2162,6 +2172,8 @@
     // the unstepped content, Infinity shows the whole slide.
     function render(stepTarget = 0) {
       if (!spec.slides.length) return;
+      // A photo never stays open over a slide it does not belong to.
+      photoViewer?.close();
       document.body.classList.toggle("immersive-slide", spec.slides[index].chrome === false);
       deck.innerHTML = slideMarkup(spec.slides[index], index);
       const frame = deck.querySelector(".slide-frame");
@@ -2179,6 +2191,7 @@
       updateNavigation();
       if (!overview.hidden) overview.querySelectorAll(".overview-card").forEach(card => card.setAttribute("aria-current", String(Number(card.dataset.index) === index)));
       scaleCurrent();
+      photoViewer?.decorate(frame);
       if (frame) {
         void frame.offsetWidth; // commit the settled state before fades return
         frame.classList.remove("steps-settling");
@@ -2282,8 +2295,10 @@
       });
       requestAnimationFrame(scaleCurrent);
       // Escape that leaves native fullscreen opens the overview, but never
-      // behind an open dialog: the same Escape closed that dialog.
-      if (escapedNativeFullscreen && overview.hidden && !modalOpen()) toggleOverview(true);
+      // behind an open dialog: the same Escape closed that dialog. Over a
+      // photo, the browser took the Escape meant for the photo: close it.
+      if (escapedNativeFullscreen && photoViewer?.isOpen()) photoViewer.close();
+      else if (escapedNativeFullscreen && overview.hidden && !modalOpen()) toggleOverview(true);
     }
 
     async function toggleFullscreen() {
@@ -2352,6 +2367,8 @@
       // Thumbnails are never stepped: the overview shows every slide whole.
       overview.innerHTML = spec.slides.map((slide, i) => `<button class="overview-card" type="button" data-index="${i}" aria-current="${i === index}"><div class="overview-thumb">${slideMarkup(slide, i, true)}</div><span class="overview-label">${numbering.label(i)}. ${slideTitleText(slide, i)}</span></button>`).join("");
       fitFormulas(overview);
+      // Thumbnails show the same photo correction as the slides.
+      photoViewer?.mark(overview);
       scaleOverviewThumbs();
       overview.querySelector('[aria-current="true"]')?.focus();
     }
@@ -2400,10 +2417,566 @@
     addEventListener("blur", () => { if (laserOn) laser.hidden = true; });
     laserButton?.addEventListener("click", () => setLaser(!laserOn));
 
+    // ---------------------------------------------------------------
+    // Photo viewer. A projector eats contrast. A click on a content image
+    // of the live slide (a figure, a figure grid, a photo in slide HTML),
+    // or the expand control on a video, opens a copy of it in an overlay
+    // that fills the window, with big brightness, contrast and zoom
+    // controls. The overlay is a modal dialog: like the other dialogs it
+    // owns keys, the wheel and swipes, and the deck behind it never moves.
+    // A navigation or clicker key only closes it, on the slide and step it
+    // opened from. Brightness, contrast and "Use on all photos" are kept
+    // per deck in this browser; that toggle corrects every photo and video
+    // of the slides, never a drawn SVG figure, a formula or the chrome.
+    const PHOTO_MIN = 50;
+    const PHOTO_MAX = 300;
+    const PHOTO_STEP = 10;
+    const PHOTO_ZOOM_MAX = 8;
+    const PHOTO_ZOOM_STEP = Math.SQRT2;
+    const EXPAND_SIZE = 44;
+    const EXPAND_INSET = 12;
+    // Pictures that are no photos to open: formulas (MathML, or an image
+    // formula such as img.math-display), links and other controls, embedded
+    // pages, thumbnail placeholders and anything marked data-photo="off".
+    const PHOTO_SKIP = '.formula, .formula-gloss, .math-inline, .math-display, [class^="math-"], [class*=" math-"], math, a[href], button, summary, label, [role="button"], .interactive-frame, .video-placeholder, .interactive-placeholder, [data-photo="off"]';
+    const PHOTO_CLOSE_KEYS = new Set(["Escape", "PageDown", "PageUp", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " ", "Home", "End"]);
+    const NBSP = "\u00a0";
+    const photoStoreKey = `lecturedeck-photo:${pacingPath()}:${String(spec.meta.title || spec.meta.tabTitle || "")}`;
+    const photoLevel = value => typeof value === "number" && Number.isFinite(value)
+      ? Math.min(PHOTO_MAX, Math.max(PHOTO_MIN, Math.round(value))) : 100;
+    const photoSettings = {brightness: 100, contrast: 100, all: false};
+    try {
+      const saved = JSON.parse(localStorage.getItem(photoStoreKey) || "null");
+      if (saved && typeof saved === "object") {
+        photoSettings.brightness = photoLevel(saved.brightness);
+        photoSettings.contrast = photoLevel(saved.contrast);
+        photoSettings.all = saved.all === true;
+      }
+    } catch (_) {
+      // Without storage every photo opens plain and nothing is remembered.
+    }
+    const photoFilter = () => photoSettings.brightness === 100 && photoSettings.contrast === 100 ? "none"
+      : `brightness(${photoSettings.brightness}%) contrast(${photoSettings.contrast}%)`;
+    const isSvgImage = image => {
+      const src = image.currentSrc || image.getAttribute("src") || "";
+      if (/^data:image\/svg\+xml/i.test(src)) return true;
+      try { return /\.svgz?$/i.test(new URL(src, location.href).pathname); } catch (_) { return false; }
+    };
+
+    const viewer = document.createElement("dialog");
+    viewer.id = "photo-viewer";
+    viewer.className = "photo-viewer";
+    viewer.setAttribute("aria-label", "Photo viewer");
+    const photoButton = (act, label, text, key) => `<button type="button" data-photo-act="${act}" aria-label="${label}" title="${label} (${key})">${text}</button>`;
+    const photoGroup = (name, label, down, up) => `<span class="photo-group">${photoButton(...down)}<span class="photo-value" data-photo-value="${name}" aria-live="polite">${label} <span class="photo-number"></span></span>${photoButton(...up)}</span>`;
+    viewer.innerHTML = '<div class="photo-stage" tabindex="-1"></div>'
+      + '<div class="photo-bar" role="group" aria-label="Photo controls">'
+      + photoGroup("brightness", "Brightness", ["brightness-down", "Less brightness", "−", "Shift+B"], ["brightness-up", "More brightness", "+", "B"])
+      + photoGroup("contrast", "Contrast", ["contrast-down", "Less contrast", "−", "Shift+C"], ["contrast-up", "More contrast", "+", "C"])
+      + photoGroup("zoom", "Zoom", ["zoom-out", "Zoom out", "−", "−"], ["zoom-in", "Zoom in", "+", "+"])
+      + '<button type="button" class="photo-toggle" data-photo-act="all" aria-pressed="false" title="Use this brightness and contrast on every photo and video of the deck (A)">Use on all photos</button>'
+      + photoButton("reset", "Reset brightness, contrast and zoom", "Reset", "0")
+      + photoButton("close", "Close the photo", "Close", "Esc")
+      + "</div>";
+    document.body.append(viewer);
+    const stage = viewer.querySelector(".photo-stage");
+    const photoBar = viewer.querySelector(".photo-bar");
+    const photoNumber = name => viewer.querySelector(`[data-photo-value="${name}"] .photo-number`);
+
+    let photoSource = null; // the slide's own picture
+    let photoMedia = null; // its copy in the viewer
+    const photoView = {zoom: 1, cx: 0.5, cy: 0.5};
+    const photoPointers = new Map();
+    let photoDrag = null;
+    let photoPinch = null;
+    let photoSuppressClick = false;
+    let expanders = new Map(); // a live slide's video -> its expand control
+    let expanderObserver = null;
+
+    // The Appearance dialog carries the same toggle, built here so a legacy
+    // unit-local index.html gets it too.
+    const photoField = document.createElement("fieldset");
+    photoField.className = "photo-fieldset";
+    photoField.innerHTML = '<legend>Photos</legend><label><input type="checkbox" id="photo-all-input"> Use on all photos</label><p class="appearance-note" id="photo-all-note"></p>';
+    const appearanceForm = appearanceDialog?.querySelector("form");
+    appearanceForm?.insertBefore(photoField, appearanceForm.querySelector(":scope > .appearance-note"));
+    const photoAllInput = photoField.querySelector("input");
+    const photoAllNote = photoField.querySelector("#photo-all-note");
+
+    function updatePhotoControls() {
+      const {brightness, contrast, all} = photoSettings;
+      photoNumber("brightness").textContent = `${brightness}${NBSP}%`;
+      photoNumber("contrast").textContent = `${contrast}${NBSP}%`;
+      photoNumber("zoom").textContent = `${photoView.zoom.toFixed(1)}×`;
+      const limits = {
+        "brightness-down": brightness <= PHOTO_MIN, "brightness-up": brightness >= PHOTO_MAX,
+        "contrast-down": contrast <= PHOTO_MIN, "contrast-up": contrast >= PHOTO_MAX,
+        "zoom-out": photoView.zoom <= 1, "zoom-in": photoView.zoom >= PHOTO_ZOOM_MAX - 1e-6,
+      };
+      // aria-disabled, not disabled: a button that has the focus keeps it.
+      for (const [act, limit] of Object.entries(limits)) {
+        viewer.querySelector(`[data-photo-act="${act}"]`).setAttribute("aria-disabled", String(limit));
+      }
+      viewer.querySelector('[data-photo-act="all"]').setAttribute("aria-pressed", String(all));
+      photoAllInput.checked = all;
+      photoAllNote.textContent = `Brightness ${brightness}${NBSP}%, contrast ${contrast}${NBSP}% on every photo and video of this deck. Click a photo on a slide to change them.`;
+    }
+
+    // The filter the slide itself gives the picture (a deck.css invert for
+    // the dark theme, say), without the room correction: the copy shows
+    // the picture as the slide does, then corrects it.
+    let photoBaseFilter = "none";
+
+    function slideFilter(source) {
+      const corrected = source.classList.contains("photo-content");
+      if (corrected) source.classList.remove("photo-content");
+      const filter = getComputedStyle(source).filter;
+      if (corrected) source.classList.add("photo-content");
+      return filter && filter !== "none" ? filter : "none";
+    }
+
+    function applyPhotoSettings(persist = true) {
+      const filter = photoFilter();
+      document.body.style.setProperty("--photo-filter", filter);
+      document.body.classList.toggle("photos-corrected", photoSettings.all);
+      if (photoMedia) {
+        const parts = [photoBaseFilter, filter].filter(part => part !== "none");
+        photoMedia.style.filter = parts.join(" ");
+      }
+      updatePhotoControls();
+      if (!persist) return;
+      try {
+        localStorage.setItem(photoStoreKey, JSON.stringify(photoSettings));
+      } catch (_) {
+        // Kept for this page only when local storage is unavailable.
+      }
+    }
+
+    function stepPhoto(name, direction) {
+      photoSettings[name] = photoLevel(photoSettings[name] + direction * PHOTO_STEP);
+      applyPhotoSettings();
+    }
+
+    // The size the picture really has, for fitting it: the copy's own once
+    // it has loaded, the slide's until then, its box on the slide at worst.
+    function photoNatural() {
+      const video = photoMedia instanceof HTMLVideoElement;
+      const sizes = video
+        ? [[photoMedia.videoWidth, photoMedia.videoHeight], [photoSource.videoWidth, photoSource.videoHeight]]
+        : [[photoMedia.naturalWidth, photoMedia.naturalHeight], [photoSource.naturalWidth, photoSource.naturalHeight]];
+      sizes.push([photoSource.offsetWidth, photoSource.offsetHeight]);
+      const found = sizes.find(([width, height]) => width > 0 && height > 0);
+      return found ? {width: found[0], height: found[1]} : {width: 16, height: 9};
+    }
+
+    // The picture in the stage: fitted, zoomed, with its point (cx, cy),
+    // in fractions of its size, at the stage centre. Every size here is in
+    // pixels from the stage's own box: no percentage height anywhere.
+    function photoBox() {
+      const width = stage.clientWidth, height = stage.clientHeight;
+      const natural = photoNatural();
+      const fit = Math.min(width / natural.width, height / natural.height);
+      const shownWidth = natural.width * fit * photoView.zoom;
+      const shownHeight = natural.height * fit * photoView.zoom;
+      return {width, height, shownWidth, shownHeight,
+        left: width / 2 - photoView.cx * shownWidth, top: height / 2 - photoView.cy * shownHeight};
+    }
+
+    function drawPhoto() {
+      if (!photoMedia || !stage.clientWidth || !stage.clientHeight) return;
+      // A picture no wider (or taller) than the stage stays centred; a
+      // larger one never leaves a gap at an edge.
+      const fitted = photoBox();
+      const axis = (shown, room, value) => shown <= room + 0.5 ? 0.5
+        : Math.min(1 - room / 2 / shown, Math.max(room / 2 / shown, value));
+      photoView.cx = axis(fitted.shownWidth, fitted.width, photoView.cx);
+      photoView.cy = axis(fitted.shownHeight, fitted.height, photoView.cy);
+      const box = photoBox();
+      photoMedia.style.width = `${box.shownWidth}px`;
+      photoMedia.style.height = `${box.shownHeight}px`;
+      photoMedia.style.transform = `translate(${box.left}px, ${box.top}px)`;
+      viewer.dataset.zoomed = String(photoView.zoom > 1);
+      updatePhotoControls();
+    }
+
+    // Zoom so that the picture's point under (x, y) of the stage stays put.
+    function zoomPhoto(target, x = stage.clientWidth / 2, y = stage.clientHeight / 2) {
+      if (!photoMedia) return;
+      const zoom = Math.min(PHOTO_ZOOM_MAX, Math.max(1, target));
+      const before = photoBox();
+      const fx = (x - before.left) / before.shownWidth;
+      const fy = (y - before.top) / before.shownHeight;
+      photoView.zoom = Math.abs(zoom - 1) < 1e-3 ? 1 : zoom;
+      const after = photoBox();
+      photoView.cx = (before.width / 2 - x) / after.shownWidth + fx;
+      photoView.cy = (before.height / 2 - y) / after.shownHeight + fy;
+      drawPhoto();
+    }
+
+    const stagePoint = event => {
+      const rect = stage.getBoundingClientRect();
+      return {x: event.clientX - rect.left, y: event.clientY - rect.top};
+    };
+
+    // A copy, never the slide's own element, so the slide behind keeps
+    // every box where it was. A video continues where the slide's was.
+    function photoCopy(source) {
+      if (source instanceof HTMLVideoElement) {
+        const video = source.cloneNode(true);
+        for (const name of ["id", "class", "style", "data-step", "aria-hidden", "inert", "autoplay"]) {
+          video.removeAttribute(name);
+        }
+        video.className = "photo-media";
+        video.controls = true;
+        video.playsInline = true;
+        video.preload = "auto";
+        video.muted = source.muted;
+        video.volume = source.volume;
+        video.defaultPlaybackRate = source.playbackRate;
+        const at = source.currentTime;
+        const playing = !source.paused && !source.ended;
+        source.pause();
+        video.addEventListener("loadedmetadata", () => {
+          // Closed before it loaded: a copy nobody sees must never play.
+          if (video !== photoMedia) return;
+          try {
+            if (at) video.currentTime = at;
+          } catch (_) {
+            // Not seekable: it starts from the beginning.
+          }
+          drawPhoto();
+          if (playing) video.play().catch(() => {});
+        }, {once: true});
+        return video;
+      }
+      const image = document.createElement("img");
+      image.className = "photo-media";
+      image.alt = source.alt || "";
+      image.decoding = "async";
+      image.draggable = false;
+      if (source.srcset) {
+        image.srcset = source.srcset;
+        image.sizes = "100vw";
+      }
+      image.src = source.currentSrc || source.src;
+      image.addEventListener("load", drawPhoto, {once: true});
+      return image;
+    }
+
+    function openPhoto(source) {
+      if (viewer.open || modalOpen() || !source.isConnected) return;
+      photoSource = source;
+      photoMedia = photoCopy(source);
+      photoBaseFilter = slideFilter(source);
+      if (photoMedia instanceof HTMLImageElement) {
+        // A drawing with a transparent background keeps the slide's own
+        // background, so dark ink stays readable on the black stage.
+        const frame = source.closest(".slide-frame");
+        const background = frame ? getComputedStyle(frame).getPropertyValue("--bg").trim() : "";
+        photoMedia.style.backgroundColor = background || "";
+      }
+      viewer.dataset.kind = source instanceof HTMLVideoElement ? "video" : "image";
+      Object.assign(photoView, {zoom: 1, cx: 0.5, cy: 0.5});
+      stage.replaceChildren(photoMedia);
+      viewer.showModal();
+      // The stage, not a button, takes the focus: a clicker's Space must
+      // close the photo, never press "Less brightness".
+      stage.focus({preventScroll: true});
+      // The laser keeps pointing over the photo: its dot moves into the
+      // viewer, which the top layer draws above everything else.
+      viewer.append(laser);
+      applyPhotoSettings(false);
+      drawPhoto();
+    }
+
+    function finishPhoto() {
+      if (!photoMedia) return;
+      if (photoMedia instanceof HTMLVideoElement && photoSource instanceof HTMLVideoElement) {
+        const at = photoMedia.currentTime;
+        const known = photoMedia.readyState >= 1;
+        photoMedia.pause();
+        // The slide's video waits, paused, at the moment the viewer reached.
+        try {
+          if (known && Number.isFinite(at) && photoSource.isConnected) photoSource.currentTime = at;
+        } catch (_) {
+          // Not seekable: it keeps its own moment.
+        }
+      }
+      if (photoMedia instanceof HTMLVideoElement) {
+        // Stop the copy loading, too.
+        photoMedia.removeAttribute("src");
+        photoMedia.querySelectorAll("source").forEach(node => node.remove());
+        try { photoMedia.load(); } catch (_) { /* already released */ }
+      }
+      photoMedia.remove();
+      photoMedia = null;
+      photoSource = null;
+      photoBaseFilter = "none";
+      // The tail of a trackpad scroll that zoomed the photo must not page
+      // the deck once the photo is gone.
+      wheelStreak = 0;
+      wheelPrevAt = performance.now();
+      wheelHoldUntil = performance.now() + 150;
+      photoDrag = null;
+      photoPinch = null;
+      photoPointers.clear();
+      viewer.classList.remove("photo-dragging");
+      if (laser.parentElement === viewer) document.body.append(laser);
+      // The dialog hands the focus back, or leaves it a moment on its own
+      // button. Neither keeps it: the clicker's Space then pages the deck
+      // instead of pressing a control again.
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && (deck.contains(focused) || viewer.contains(focused))) focused.blur();
+    }
+
+    function closePhoto() {
+      if (viewer.open) viewer.close();
+      finishPhoto();
+    }
+
+    function resetPhoto() {
+      photoSettings.brightness = 100;
+      photoSettings.contrast = 100;
+      Object.assign(photoView, {zoom: 1, cx: 0.5, cy: 0.5});
+      applyPhotoSettings();
+      drawPhoto();
+    }
+
+    function photoAction(act) {
+      ({
+        "brightness-down": () => stepPhoto("brightness", -1),
+        "brightness-up": () => stepPhoto("brightness", 1),
+        "contrast-down": () => stepPhoto("contrast", -1),
+        "contrast-up": () => stepPhoto("contrast", 1),
+        "zoom-out": () => zoomPhoto(photoView.zoom / PHOTO_ZOOM_STEP),
+        "zoom-in": () => zoomPhoto(photoView.zoom * PHOTO_ZOOM_STEP),
+        all: () => {
+          photoSettings.all = !photoSettings.all;
+          applyPhotoSettings();
+        },
+        reset: resetPhoto,
+        close: closePhoto,
+      })[act]?.();
+    }
+
+    // Keys while the photo is open. Navigation and clicker keys only close
+    // it; every other deck shortcut waits behind it, except the laser.
+    function photoKeydown(event) {
+      const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
+      if (event.key === "Escape" || (plain && PHOTO_CLOSE_KEYS.has(event.key))) {
+        event.preventDefault();
+        closePhoto();
+        return;
+      }
+      if (!plain || event.key === "Tab" || event.key === "Enter") return;
+      const key = event.key.toLowerCase();
+      const act = key === "b" ? (event.shiftKey ? "brightness-down" : "brightness-up")
+        : key === "c" ? (event.shiftKey ? "contrast-down" : "contrast-up")
+          : ["+", "=", "add"].includes(key) ? "zoom-in"
+            : ["-", "_", "subtract"].includes(key) ? "zoom-out"
+              : key === "0" ? "reset"
+                : key === "a" ? "all" : null;
+      if (act) {
+        event.preventDefault();
+        photoAction(act);
+      } else if (key === "l") {
+        event.preventDefault();
+        setLaser(!laserOn);
+      }
+    }
+
+    photoAllInput.addEventListener("change", () => {
+      photoSettings.all = photoAllInput.checked;
+      applyPhotoSettings();
+    });
+    photoBar.addEventListener("click", event => {
+      const button = event.target instanceof Element ? event.target.closest("[data-photo-act]") : null;
+      if (button) photoAction(button.dataset.photoAct);
+    });
+    // The stage around the picture is the backdrop; a drag that ends there
+    // is no click on it.
+    viewer.addEventListener("click", event => {
+      if (photoSuppressClick) {
+        photoSuppressClick = false;
+        return;
+      }
+      if (event.target === stage || event.target === viewer) closePhoto();
+    });
+    viewer.addEventListener("cancel", event => {
+      event.preventDefault();
+      closePhoto();
+    });
+    viewer.addEventListener("close", () => { if (!viewer.open) finishPhoto(); });
+    viewer.addEventListener("wheel", event => {
+      // The page never scrolls or zooms behind the photo.
+      event.preventDefault();
+      if (!photoMedia) return;
+      const unit = event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? 400 : 1;
+      const delta = event.deltaY * unit;
+      if (!delta) return;
+      const point = photoBar.contains(event.target)
+        ? {x: stage.clientWidth / 2, y: stage.clientHeight / 2} : stagePoint(event);
+      // A trackpad pinch arrives as a wheel with ctrlKey, in small steps.
+      zoomPhoto(photoView.zoom * Math.exp(-delta * (event.ctrlKey ? 0.01 : 0.002)), point.x, point.y);
+    }, {passive: false});
+    stage.addEventListener("dblclick", event => {
+      // A video keeps its own double-click (the player's full screen).
+      if (event.target !== photoMedia || !(photoMedia instanceof HTMLImageElement)) return;
+      event.preventDefault();
+      const point = stagePoint(event);
+      zoomPhoto(photoView.zoom > 1 ? 1 : 2, point.x, point.y);
+    });
+    stage.addEventListener("dragstart", event => event.preventDefault());
+    stage.addEventListener("pointerdown", event => {
+      photoSuppressClick = false;
+      if (!photoMedia || (event.pointerType === "mouse" && event.button !== 0)) return;
+      // A new gesture starts clean, whatever an earlier one left behind.
+      if (event.isPrimary) photoPointers.clear();
+      photoPointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
+      if (photoPointers.size === 2) {
+        const [a, b] = [...photoPointers.values()];
+        photoPinch = {distance: Math.hypot(a.x - b.x, a.y - b.y) || 1, zoom: photoView.zoom};
+        photoDrag = null;
+        return;
+      }
+      // At fit there is nothing to pan, and a video's controls keep their clicks.
+      if (photoView.zoom <= 1) return;
+      photoDrag = {id: event.pointerId, x: event.clientX, y: event.clientY,
+        cx: photoView.cx, cy: photoView.cy, moved: false};
+    });
+    stage.addEventListener("pointermove", event => {
+      if (!photoPointers.has(event.pointerId)) return;
+      photoPointers.set(event.pointerId, {x: event.clientX, y: event.clientY});
+      if (photoPinch && photoPointers.size === 2) {
+        const [a, b] = [...photoPointers.values()];
+        const rect = stage.getBoundingClientRect();
+        zoomPhoto(photoPinch.zoom * Math.hypot(a.x - b.x, a.y - b.y) / photoPinch.distance,
+          (a.x + b.x) / 2 - rect.left, (a.y + b.y) / 2 - rect.top);
+        photoSuppressClick = true;
+        return;
+      }
+      const drag = photoDrag;
+      if (!drag || drag.id !== event.pointerId) return;
+      const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+      if (!drag.moved) {
+        if (Math.hypot(dx, dy) < 4) return;
+        drag.moved = true;
+        try { stage.setPointerCapture(event.pointerId); } catch (_) { /* the pointer is gone */ }
+        viewer.classList.add("photo-dragging");
+      }
+      const box = photoBox();
+      photoView.cx = drag.cx - dx / box.shownWidth;
+      photoView.cy = drag.cy - dy / box.shownHeight;
+      drawPhoto();
+    });
+    const endPhotoPointer = event => {
+      photoPointers.delete(event.pointerId);
+      if (photoPointers.size < 2) photoPinch = null;
+      if (photoDrag?.id !== event.pointerId) return;
+      if (photoDrag.moved) photoSuppressClick = true;
+      photoDrag = null;
+      viewer.classList.remove("photo-dragging");
+    };
+    // On the dialog, so a finger lifted over the bar ends its pointer too.
+    viewer.addEventListener("pointerup", endPhotoPointer);
+    viewer.addEventListener("pointercancel", endPhotoPointer);
+    if (typeof ResizeObserver === "function") new ResizeObserver(drawPhoto).observe(stage);
+    addEventListener("resize", drawPhoto);
+
+    // Mark a slide's pictures: every image that opens in the viewer, and the
+    // photos and videos the room correction reaches (no SVG drawing).
+    function markPhotos(scope, live) {
+      const found = [];
+      for (const node of scope.querySelectorAll(".slide-body img, .slide-body video")) {
+        // Only the slide's own content counts: an overview card is a button.
+        const skip = node.closest(PHOTO_SKIP);
+        if (skip && node.closest(".slide-body").contains(skip)) continue;
+        const image = node instanceof HTMLImageElement;
+        if (image && live) node.classList.add("photo-zoomable");
+        if (!image || !isSvgImage(node)) node.classList.add("photo-content");
+        found.push(node);
+      }
+      return found;
+    }
+
+    // Each expand control sits on its video's top right corner, out of the
+    // slide's layout (a child of the frame, positioned in its unscaled
+    // pixels), and shows only while its video does.
+    function placeExpanders() {
+      const frame = deck.querySelector(".slide-frame");
+      if (!frame || !expanders.size) return;
+      const box = frame.getBoundingClientRect();
+      const scale = frame.offsetWidth ? box.width / frame.offsetWidth : 1;
+      for (const [video, button] of expanders) {
+        const rect = video.getBoundingClientRect();
+        const shown = video.isConnected && !video.closest(".step-hidden") && rect.width > 0 && rect.height > 0;
+        button.hidden = !shown;
+        if (!shown) continue;
+        button.style.left = `${(rect.right - box.left) / scale - EXPAND_SIZE - EXPAND_INSET}px`;
+        button.style.top = `${(rect.top - box.top) / scale + EXPAND_INSET}px`;
+      }
+    }
+
+    function decoratePhotos(frame) {
+      expanderObserver?.disconnect();
+      expanders = new Map();
+      if (!frame) return;
+      for (const node of markPhotos(frame, true)) {
+        if (!(node instanceof HTMLVideoElement)) continue;
+        // A click on the video plays it; the expand control opens it.
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "photo-expand";
+        button.title = "Enlarge: brightness, contrast and zoom";
+        button.setAttribute("aria-label", "Enlarge the video");
+        button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        button.hidden = true;
+        button.addEventListener("click", event => {
+          event.preventDefault();
+          event.stopPropagation();
+          openPhoto(node);
+        });
+        node.addEventListener("loadedmetadata", placeExpanders);
+        frame.append(button);
+        expanders.set(node, button);
+      }
+      if (expanders.size && typeof ResizeObserver === "function") {
+        expanderObserver = new ResizeObserver(placeExpanders);
+        expanders.forEach((_, video) => expanderObserver.observe(video));
+      }
+      // A late image or font can move a video without resizing it.
+      if (expanders.size) {
+        frame.querySelectorAll("img").forEach(image => {
+          if (!image.complete) image.addEventListener("load", placeExpanders, {once: true});
+        });
+        document.fonts?.ready.then(placeExpanders, () => {});
+      }
+      placeExpanders();
+    }
+
+    // A click on a marked image opens it. Nothing else on the deck acts on
+    // a click, so it never pages or steps the slide.
+    deck.addEventListener("click", event => {
+      const image = event.target instanceof Element ? event.target.closest("img.photo-zoomable") : null;
+      if (!image || image.closest(".step-hidden") || !image.closest(".slide-frame")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openPhoto(image);
+    });
+
+    photoViewer = {
+      isOpen: () => viewer.open,
+      close: closePhoto,
+      decorate: decoratePhotos,
+      mark: scope => { markPhotos(scope, false); },
+      placeExpanders,
+    };
+    applyPhotoSettings(false);
+
     addEventListener("resize", () => { scaleCurrent(); scaleOverviewThumbs(); refreshSteps(); });
     // The theme, the presentation style and other body classes may show or
     // hide stepped content through deck.css.
-    new MutationObserver(refreshSteps).observe(document.body, {
+    new MutationObserver(() => { refreshSteps(); photoViewer?.placeExpanders(); }).observe(document.body, {
       attributes: true, attributeFilter: ["class", "data-presentation-style"],
     });
     addEventListener("hashchange", () => {
@@ -2413,6 +2986,8 @@
       }
     });
     addEventListener("message", event => {
+      // Nothing pages the deck under an open photo.
+      if (viewer.open) return;
       const iframe = deck.querySelector(".interactive-frame iframe");
       if (!iframe || event.source !== iframe.contentWindow || event.data?.type !== "lecturedeck:navigate") return;
       // `to` is the page's Home or End: the deck's first or last state.
@@ -2425,6 +3000,8 @@
     // While any dialog is open, keys, the wheel and swipes belong to it:
     // they scroll the dialog and never page, open or exit the deck.
     addEventListener("keydown", event => {
+      // The photo viewer is a dialog too, with keys of its own.
+      if (viewer.open) { photoKeydown(event); return; }
       if (modalOpen()) return;
       // Focus can linger on a control of a dialog that just closed (its
       // close event comes a task later); such a key belongs to the deck.

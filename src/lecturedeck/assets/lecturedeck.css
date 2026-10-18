@@ -284,6 +284,85 @@ body.laser-active .deck, body.laser-active .deck * { cursor: none; }
    through; switching the laser off gives the animation its mouse back. */
 body.laser-active .interactive-frame iframe { pointer-events: none; }
 @media print { .laser-dot { display: none; } }
+
+/* Photo viewer. A content image of the live slide opens on a click (the
+   zoom-in cursor says so); a video, whose click plays it, opens from a
+   small expand control on its top right corner, a child of the frame
+   placed from script and out of the slide's layout. */
+.slide-frame img.photo-zoomable { cursor: zoom-in; }
+body.laser-active .slide-frame img.photo-zoomable { cursor: none; }
+.photo-expand {
+  position: absolute; z-index: 5; width: 44px; height: 44px; padding: 0;
+  display: grid; place-items: center; border: 1px solid rgba(251,241,199,.5); border-radius: 50%;
+  background: rgba(17,19,20,.62); color: #fbf1c7; cursor: pointer; opacity: .6; transition: opacity .15s;
+}
+.photo-expand[hidden] { display: none; }
+.photo-expand:hover, .photo-expand:focus-visible { opacity: 1; }
+.photo-expand:focus-visible { outline: 3px solid #83a598; outline-offset: 2px; }
+.photo-expand svg { width: 24px; height: 24px; }
+/* "Use on all photos": the viewer's brightness and contrast on every photo
+   and video of the slides, never on a drawn SVG figure (no photo-content
+   mark), a formula or the chrome. The rule is as weak as one class, so any
+   filter deck.css sets on an image keeps priority. Filters never change a
+   layout box. */
+:where(body.photos-corrected) .photo-content { filter: var(--photo-filter, none); }
+@media print {
+  :where(body.photos-corrected) .photo-content { filter: none; }
+  .photo-expand { display: none; }
+}
+/* The overlay is dark in both color modes, for the photo's sake and for
+   high-contrast controls, so it uses fixed colors, never theme variables.
+   Its size comes from the viewport and the stage's own pixels: the picture
+   is sized from script, with no percentage height inside a grid track. */
+.photo-viewer {
+  position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; max-width: none; max-height: none;
+  margin: 0; padding: 0; border: 0; overflow: hidden; background: #000; color: #fbf1c7;
+  font-family: Calibri, Aptos, Arial, sans-serif;
+}
+.photo-viewer[open] { display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+.photo-viewer::backdrop { background: #000; }
+.photo-stage {
+  position: relative; min-width: 0; min-height: 0; overflow: hidden; outline: none; cursor: zoom-out;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.photo-viewer .photo-media {
+  position: absolute; left: 0; top: 0; display: block; max-width: none; max-height: none; min-width: 0; min-height: 0;
+  margin: 0; padding: 0; border: 0; border-radius: 0; object-fit: fill; transform-origin: 0 0; background: transparent;
+  -webkit-user-drag: none;
+}
+.photo-viewer[data-kind="image"] .photo-media { cursor: zoom-in; }
+.photo-viewer[data-zoomed="true"] .photo-stage, .photo-viewer[data-kind="image"][data-zoomed="true"] .photo-media { cursor: grab; }
+.photo-viewer.photo-dragging .photo-stage, .photo-viewer.photo-dragging[data-kind] .photo-media { cursor: grabbing; }
+.photo-viewer[data-kind="video"] .photo-media { cursor: auto; background: #050708; }
+body.laser-active .photo-viewer[open] .photo-stage, body.laser-active .photo-viewer[open] .photo-stage * { cursor: none; }
+.photo-bar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 22px;
+  padding: 12px max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  border-top: 1px solid #504945; background: #111314; color: #fbf1c7; font-size: 20px; line-height: 1.2;
+}
+.photo-group { display: inline-flex; align-items: center; gap: 8px; }
+.photo-bar button {
+  min-width: 48px; min-height: 48px; padding: 8px 16px; border: 1px solid #665c54; border-radius: 10px;
+  background: #282828; color: #fbf1c7; font: inherit; font-weight: 700; cursor: pointer; touch-action: manipulation;
+}
+.photo-bar button:hover { background: #3c3836; }
+.photo-bar button:focus-visible { outline: 3px solid #83a598; outline-offset: 2px; }
+.photo-bar button[aria-disabled="true"] { opacity: .4; cursor: default; }
+.photo-group button { width: 48px; padding: 0; font-size: 28px; line-height: 1; }
+/* Values keep one width (tabular digits in a fixed box), so stepping from
+   90 % to 100 % or 1.0× to 1.4× moves no button. */
+.photo-value { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.photo-number { display: inline-block; min-width: 3em; text-align: right; }
+.photo-toggle::before {
+  content: ""; display: inline-block; width: .8em; height: .8em; margin-right: .45em; vertical-align: -.08em;
+  border: 2px solid currentColor; border-radius: 3px;
+}
+.photo-bar .photo-toggle[aria-pressed="true"] { border-color: #fabd2f; background: #fabd2f; color: #1d2021; }
+.photo-toggle[aria-pressed="true"]::before { background: currentColor; box-shadow: inset 0 0 0 2px #fabd2f; }
+@media (max-width: 700px) {
+  .photo-bar { gap: 8px 12px; padding-top: 8px; font-size: 18px; }
+}
+@media print { .photo-viewer, .photo-viewer[open] { display: none; } }
 .deck-chrome { position: fixed; z-index: 20; top: 12px; left: 24px; display: flex; align-items: center; gap: 6px; opacity: .42; transition: opacity .15s; }
 .deck-chrome:hover, .deck-chrome:focus-within, .deck-chrome.has-safe-space { opacity: 1; }
 .deck-chrome button, .deck-chrome .control-link, .deck-chrome #counter { border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; background: var(--chrome-bg); color: var(--muted); font-size: 14px; }

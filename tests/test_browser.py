@@ -12,6 +12,7 @@ judgment and are deliberately out of scope.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -332,6 +333,117 @@ def crowded_link_deck() -> dict:
             *crowded,
         ],
     }
+
+
+# Photo viewer: a figure photo with a later step, a grid of a photo and a
+# drawn SVG, a photo card and the pictures that never open (a linked image,
+# one marked off, a formula), a video, a stepped video, an interactive page
+# and a plain slide.
+DRAWN_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90" viewBox="0 0 160 90">'
+    '<rect width="160" height="90"'
+    ' fill="#334"/><circle cx="80" cy="45" r="30" fill="#fb4934"/></svg>'
+)
+PHOTO_DECK = {
+    "deck": 1,
+    "meta": {"title": "Photo deck", "section": "COURSE NAME"},
+    "slides": [
+        {"id": "ph-title", "type": "title", "title": "Photo deck", "claim": "No pictures."},
+        {"id": "ph-figure", "title": "A photo", "claim": "Look at it.",
+         "body": '<p data-step="1" id="ph-later">Then this.</p>', "source": "Source line",
+         "figure": {"id": "ph-photo", "src": "assets/figure.png", "alt": "A photo",
+                    "caption": "Caption"}},
+        {"id": "ph-grid", "title": "A grid", "layout": "figures", "claim": "Two pictures.",
+         "figures": [{"id": "ph-grid-photo", "src": "assets/figure.png", "alt": "Grid photo"},
+                     {"id": "ph-drawn", "src": "assets/drawn.svg", "alt": "Drawn figure"}]},
+        {"id": "ph-card", "title": "A photo card", "claim": "Authored HTML.",
+         "body": '<figure class="photo-card"><img id="ph-card-photo" src="assets/figure.png"'
+                 ' alt="Card photo"></figure><p>A <a href="#/0"><img id="ph-linked"'
+                 ' src="assets/figure.png" width="40" alt="Linked"></a> link and '
+                 '<span data-photo="off"><img id="ph-off" src="assets/figure.png" width="40"'
+                 ' alt="Off"></span> one marked off.</p>'
+                 '<p><img class="math-display" id="ph-math" src="assets/drawn.svg"'
+                 ' alt="An image formula"></p><details><summary><img id="ph-summary"'
+                 ' src="assets/figure.png" width="40" alt="Summary"></summary>Opened.</details>',
+         "formula": {"mathml": "<math display='block'><mi>a</mi><mo>=</mo><mi>b</mi></math>"}},
+        {"id": "ph-video", "title": "A video",
+         "video": {"src": "assets/clip.webm", "type": "video/webm", "title": "Clip",
+                   "caption": "A caption"}},
+        {"id": "ph-video-step", "title": "A stepped video", "claim": "Then the clip.",
+         "video": {"src": "assets/clip.webm", "type": "video/webm", "title": "Stepped clip",
+                   "step": 1}},
+        {"id": "ph-demo", "title": "A demo",
+         "interactive": {"src": "assets/demo/index.html", "title": "Demo"}},
+        {"id": "ph-end", "title": "The end", "claim": "Plain."},
+    ],
+}
+
+# The viewer's state, values with their no-break spaces made plain.
+PHOTO_STATE = """() => {
+  const viewer = document.querySelector('#photo-viewer');
+  const media = viewer.querySelector('.photo-media');
+  const box = node => {
+    const r = node.getBoundingClientRect();
+    return {x: r.x, y: r.y, w: r.width, h: r.height};
+  };
+  const frame = document.querySelector('#deck .slide-frame');
+  return {
+    open: viewer.open,
+    kind: viewer.dataset.kind || null,
+    values: [...viewer.querySelectorAll('.photo-value')]
+      .map(v => v.textContent.replace(/\\u00a0/g, ' ')),
+    filter: media ? media.style.filter : null,
+    media: media ? box(media) : null,
+    stage: box(viewer.querySelector('.photo-stage')),
+    hash: location.hash,
+    index: Number(frame.dataset.index),
+    hidden: [...frame.querySelectorAll('.step-hidden')]
+      .map(n => n.id || n.dataset.figureId || n.tagName),
+  };
+}"""
+
+# A MediaRecorder clip of a changing canvas: a real, seekable WebM once it is
+# served with Range support, which `lecturedeck serve` does not offer.
+RECORD_CLIP = """async () => {
+  if (typeof MediaRecorder !== 'function') return null;
+  if (!MediaRecorder.isTypeSupported('video/webm')) return null;
+  const canvas = Object.assign(document.createElement('canvas'), {width: 320, height: 180});
+  const paint = canvas.getContext('2d');
+  const recorder = new MediaRecorder(canvas.captureStream(30), {mimeType: 'video/webm'});
+  const parts = [];
+  recorder.ondataavailable = event => parts.push(event.data);
+  let frame = 0;
+  const timer = setInterval(() => {
+    paint.fillStyle = `hsl(${(frame += 9) % 360} 70% 50%)`;
+    paint.fillRect(0, 0, 320, 180);
+  }, 33);
+  recorder.start();
+  await new Promise(resolve => setTimeout(resolve, 3000));
+  recorder.stop();
+  clearInterval(timer);
+  await new Promise(resolve => { recorder.onstop = resolve; });
+  const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
+  let text = '';
+  for (const byte of bytes) text += String.fromCharCode(byte);
+  return btoa(text);
+}"""
+
+
+def ranged(body: bytes, content_type: str):
+    """A route handler answering Range requests, so a browser can seek."""
+
+    def fulfill(route):
+        match = re.match(r"bytes=(\d+)-(\d*)", route.request.headers.get("range", ""))
+        headers = {"Content-Type": content_type, "Accept-Ranges": "bytes"}
+        if not match:
+            route.fulfill(status=200, body=body, headers=headers)
+            return
+        start = int(match.group(1))
+        end = int(match.group(2)) if match.group(2) else len(body) - 1
+        headers["Content-Range"] = f"bytes {start}-{end}/{len(body)}"
+        route.fulfill(status=206, body=body[start:end + 1], headers=headers)
+
+    return fulfill
 
 
 def build_legacy_unit(unit: Path) -> None:
@@ -2182,6 +2294,634 @@ class BrowserSmokeTest(unittest.TestCase):
         frame.evaluate("parent.postMessage({type: 'lecturedeck:navigate', to: 'middle'}, '*')")
         page.wait_for_timeout(150)
         self.assertEqual("#/1.1", self.steps(page)["hash"])
+
+    # Photo viewer --------------------------------------------------------
+
+    def open_photo_deck(self, fragment: str = "", deck: dict = PHOTO_DECK, css: str | None = None,
+                        init: str | None = None, within=None, **options):
+        # `within` opens the page in an existing context, sharing its storage.
+        page = within.new_page(**options) if within else self.browser.new_page(**options)
+        self.addCleanup(page.close)
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        self.addCleanup(lambda: self.assertEqual([], errors))
+        if init:
+            page.add_init_script(init)
+        page.route("**/deck.json", lambda route: route.fulfill(json=deck))
+        page.route("**/assets/drawn.svg", lambda route: route.fulfill(
+            body=DRAWN_SVG, content_type="image/svg+xml"))
+        clip = getattr(type(self), "_clip", None)
+        if clip:
+            page.route("**/assets/clip.webm", ranged(clip, "video/webm"))
+        if css is not None:
+            page.route("**/deck.css", lambda route: route.fulfill(
+                body=css, content_type="text/css"))
+        page.goto(self.urls["json"] + fragment)
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        return page
+
+    def photo(self, page) -> dict:
+        return page.evaluate(PHOTO_STATE)
+
+    def open_photo(self, page, selector: str) -> dict:
+        page.click(selector)
+        page.wait_for_selector("#photo-viewer[open]")
+        return self.photo(page)
+
+    def close_photo(self, page, key: str = "Escape") -> dict:
+        page.keyboard.press(key)
+        page.wait_for_selector("#photo-viewer", state="hidden")
+        return self.photo(page)
+
+    def recorded_clip(self) -> bytes | None:
+        if not hasattr(type(self), "_clip"):
+            page = self.browser.new_page()
+            try:
+                page.goto("about:blank")
+                text = page.evaluate(RECORD_CLIP)
+            finally:
+                page.close()
+            type(self)._clip = base64.b64decode(text) if text else None
+        return type(self)._clip
+
+    def assert_fits(self, state: dict) -> None:
+        media, stage = state["media"], state["stage"]
+        self.assertLessEqual(media["w"], stage["w"] + 0.5)
+        self.assertLessEqual(media["h"], stage["h"] + 0.5)
+        self.assertTrue(abs(media["w"] - stage["w"]) < 1 or abs(media["h"] - stage["h"]) < 1, state)
+        self.assertAlmostEqual(media["x"] + media["w"] / 2, stage["x"] + stage["w"] / 2, delta=1)
+        self.assertAlmostEqual(media["y"] + media["h"] / 2, stage["y"] + stage["h"] / 2, delta=1)
+
+    def test_photo_opens_full_window_and_any_paging_key_only_closes_it(self):
+        # Owner, 2026-10-18: "Projector eats a lot of contrast ... So I can
+        # click on any picture, and it fills the screen, and I can adjust
+        # brightness/contrast".
+        page = self.open_photo_deck("#/1", viewport={"width": 1280, "height": 800})
+        image = "#deck .figure-card img"
+        self.assertEqual("zoom-in", page.evaluate(
+            "s => getComputedStyle(document.querySelector(s)).cursor", image))
+        state = self.open_photo(page, image)
+        self.assertEqual((True, "image", "#/1", 1, ["ph-later"]), (
+            state["open"], state["kind"], state["hash"], state["index"], state["hidden"]))
+        self.assertEqual(["Brightness 100 %", "Contrast 100 %", "Zoom 1.0×"], state["values"])
+        self.assert_fits(state)
+        # The stage and the bar fill the window exactly.
+        bar = self.box(page, "#photo-viewer .photo-bar")
+        stage = state["stage"]
+        self.assertEqual((0, 0, 1280), (stage["x"], stage["y"], stage["w"]))
+        self.assertAlmostEqual(800, state["stage"]["h"] + bar["h"], delta=1)
+        self.assertEqual("photo-stage", page.evaluate("document.activeElement.className"))
+        # Big plain labels on a dark backdrop, in both color modes.
+        sizes = page.evaluate(
+            "[...document.querySelectorAll('#photo-viewer .photo-bar :is(button, .photo-value)')]"
+            ".map(n => parseFloat(getComputedStyle(n).fontSize))")
+        self.assertGreaterEqual(min(sizes), 18)
+        self.assertEqual("rgb(17, 19, 20)", page.evaluate(
+            "getComputedStyle(document.querySelector('#photo-viewer .photo-bar')).backgroundColor"))
+        # A clicker or navigation key closes it on the same slide and step;
+        # it never pages or steps.
+        keys = ["Escape", "PageDown", "PageUp", "ArrowLeft", "ArrowRight", "ArrowUp",
+                "ArrowDown", "Space", "Home", "End", "Shift+ArrowRight", "Shift+PageDown"]
+        for key in keys:
+            with self.subTest(key=key):
+                if not self.photo(page)["open"]:
+                    self.open_photo(page, image)
+                state = self.close_photo(page, key)
+                self.assertEqual((False, "#/1", 1, ["ph-later"]), (
+                    state["open"], state["hash"], state["index"], state["hidden"]))
+        # The Close button and a click on the backdrop close it too.
+        page.set_viewport_size({"width": 1280, "height": 1000})
+        self.open_photo(page, image)
+        page.click('#photo-viewer [data-photo-act="close"]')
+        page.wait_for_selector("#photo-viewer", state="hidden")
+        self.open_photo(page, image)
+        page.mouse.click(640, 20)  # the black band above the fitted photo
+        page.wait_for_selector("#photo-viewer", state="hidden")
+        self.assertEqual("#/1", self.photo(page)["hash"])
+        # The deck pages on as before.
+        page.keyboard.press("ArrowRight")
+        self.assertEqual("#/1.1", self.photo(page)["hash"])
+        # In light mode the overlay keeps its dark backdrop and light labels.
+        page.keyboard.press("t")
+        page.wait_for_selector("#appearance-dialog[open]")
+        page.get_by_label("Light", exact=True).check()
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#appearance-dialog", state="hidden")
+        self.open_photo(page, image)
+        self.assertEqual(["rgb(0, 0, 0)", "rgb(251, 241, 199)", "rgb(17, 19, 20)"], page.evaluate(
+            "['#photo-viewer', '#photo-viewer .photo-value', '#photo-viewer .photo-bar']"
+            ".map((s, i) => getComputedStyle(document.querySelector(s))"
+            "[i === 1 ? 'color' : 'backgroundColor'])"))
+
+    def test_photo_brightness_contrast_and_shortcuts(self):
+        page = self.open_photo_deck("#/1", viewport={"width": 1280, "height": 800})
+        image = "#deck .figure-card img"
+        self.open_photo(page, image)
+        buttons = ("() => [...document.querySelectorAll('#photo-viewer .photo-bar button')]"
+                   ".map(b => { const r = b.getBoundingClientRect();"
+                   " return [r.x, r.y, r.width]; })")
+        still = page.evaluate(buttons)
+        for _ in range(3):
+            page.click('#photo-viewer [data-photo-act="brightness-up"]')
+        state = self.photo(page)
+        self.assertEqual(("Brightness 130 %", "brightness(130%) contrast(100%)"), (
+            state["values"][0], state["filter"]))
+        page.keyboard.press("Shift+B")
+        page.keyboard.press("c")
+        page.keyboard.press("c")
+        state = self.photo(page)
+        self.assertEqual((["Brightness 120 %", "Contrast 120 %", "Zoom 1.0×"],
+                          "brightness(120%) contrast(120%)"), (state["values"], state["filter"]))
+        page.keyboard.press("Shift+C")
+        self.assertEqual("Contrast 110 %", self.photo(page)["values"][1])
+        # Limits: 50-300 %, and the button at a limit says so.
+        for _ in range(30):
+            page.keyboard.press("b")
+        self.assertEqual("Brightness 300 %", self.photo(page)["values"][0])
+        self.assertEqual("true", page.get_attribute(
+            '#photo-viewer [data-photo-act="brightness-up"]', "aria-disabled"))
+        for _ in range(30):
+            page.keyboard.press("Shift+B")
+        self.assertEqual("Brightness 50 %", self.photo(page)["values"][0])
+        self.assertEqual(("true", "false"), (
+            page.get_attribute('#photo-viewer [data-photo-act="brightness-down"]', "aria-disabled"),
+            page.get_attribute('#photo-viewer [data-photo-act="brightness-up"]', "aria-disabled")))
+        # No value change moves a button.
+        self.assertEqual(still, page.evaluate(buttons))
+        page.keyboard.press("+")
+        self.assertEqual("Zoom 1.4×", self.photo(page)["values"][2])
+        self.assertEqual(still, page.evaluate(buttons))
+        # 0 (or Reset) puts everything back.
+        page.keyboard.press("0")
+        state = self.photo(page)
+        self.assertEqual((["Brightness 100 %", "Contrast 100 %", "Zoom 1.0×"], ""), (
+            state["values"], state["filter"]))
+        self.assert_fits(state)
+        # The deck's own shortcuts wait behind the photo.
+        for key in ("o", "f", "t", "g"):
+            page.keyboard.press(key)
+        self.assertEqual([True, True, False, False, True], page.evaluate(
+            "() => [document.querySelector('#photo-viewer').open,"
+            " document.querySelector('#overview').hidden,"
+            " Boolean(document.fullscreenElement)"
+            " || document.body.classList.contains('pseudo-fullscreen'),"
+            " document.querySelector('#appearance-dialog').open,"
+            " document.querySelector('.lecturedeck-adjust-hud').hidden]"))
+        # A clicker's Space closes the photo even on a button with the focus
+        # (Chromium focuses a clicked button, a keyboard user tabs to one),
+        # and never presses that button.
+        page.click('#photo-viewer [data-photo-act="brightness-up"]')
+        page.focus('#photo-viewer [data-photo-act="brightness-up"]')
+        self.assertEqual("brightness-up", page.evaluate("document.activeElement.dataset.photoAct"))
+        self.close_photo(page, "Space")
+        self.assertEqual("BODY", page.evaluate("document.activeElement.tagName"))
+        # The clicker's next Space pages the deck.
+        page.keyboard.press("Space")
+        self.assertEqual("#/1.1", self.photo(page)["hash"])
+        state = self.open_photo(page, image)
+        self.assertEqual("Brightness 110 %", state["values"][0])
+        # Reset by its button too.
+        page.click('#photo-viewer [data-photo-act="reset"]')
+        self.assertEqual("Brightness 100 %", self.photo(page)["values"][0])
+
+    def test_photo_zooms_around_the_cursor_pans_and_toggles_on_double_click(self):
+        page = self.open_photo_deck("#/1", viewport={"width": 1280, "height": 1000})
+        fitted = self.open_photo(page, "#deck .figure-card img")
+        media = fitted["media"]
+        x, y = media["x"] + media["w"] * 0.3, media["y"] + media["h"] * 0.4
+        page.mouse.move(x, y)
+        page.mouse.wheel(0, -200)
+        page.wait_for_function("document.querySelector('#photo-viewer').dataset.zoomed === 'true'")
+        zoomed = self.photo(page)["media"]
+        # The point under the cursor stays under it.
+        self.assertAlmostEqual(0.3, (x - zoomed["x"]) / zoomed["w"], delta=0.005)
+        self.assertAlmostEqual(0.4, (y - zoomed["y"]) / zoomed["h"], delta=0.005)
+        self.assertGreater(zoomed["w"], media["w"])
+        for _ in range(25):
+            page.mouse.wheel(0, -400)
+        page.wait_for_function(
+            "document.querySelector('[data-photo-value=\"zoom\"]').textContent === 'Zoom 8.0×'")
+        self.assertAlmostEqual(8 * media["w"], self.photo(page)["media"]["w"], delta=1)
+        for _ in range(25):
+            page.mouse.wheel(0, 400)
+        page.wait_for_function(
+            "document.querySelector('[data-photo-value=\"zoom\"]').textContent === 'Zoom 1.0×'")
+        self.assertEqual(media, self.photo(page)["media"])
+        # A trackpad pinch (a wheel with ctrlKey) zooms too, never the page.
+        page.keyboard.down("Control")
+        page.mouse.wheel(0, -30)
+        page.keyboard.up("Control")
+        page.wait_for_function("document.querySelector('#photo-viewer').dataset.zoomed === 'true'")
+        self.assertEqual(1, page.evaluate("visualViewport.scale"))
+        page.keyboard.press("0")
+        # The keys zoom by steps of the square root of two.
+        page.keyboard.press("=")
+        page.keyboard.press("+")
+        self.assertEqual("Zoom 2.0×", self.photo(page)["values"][2])
+        page.keyboard.press("-")
+        page.keyboard.press("-")
+        page.keyboard.press("-")
+        state = self.photo(page)
+        self.assertEqual(("Zoom 1.0×", media), (state["values"][2], state["media"]))
+        # A double-click toggles between fit and 2x at the point clicked.
+        page.mouse.dblclick(x, y)
+        state = self.photo(page)
+        self.assertEqual("Zoom 2.0×", state["values"][2])
+        self.assertAlmostEqual(0.3, (x - state["media"]["x"]) / state["media"]["w"], delta=0.005)
+        # Dragging pans and leaves the photo open, though it ends off the picture.
+        start = state["media"]
+        page.mouse.move(640, 500)
+        page.mouse.down()
+        page.mouse.move(540, 450, steps=4)
+        page.mouse.up()
+        state = self.photo(page)
+        self.assertTrue(state["open"])
+        self.assertAlmostEqual(start["x"] - 100, state["media"]["x"], delta=1)
+        self.assertAlmostEqual(start["y"] - 50, state["media"]["y"], delta=1)
+        # A pan stops at the picture's edge, never showing a gap.
+        page.mouse.move(640, 500)
+        page.mouse.down()
+        page.mouse.move(1270, 990, steps=4)
+        page.mouse.up()
+        state = self.photo(page)
+        self.assertEqual((0, 0), (state["media"]["x"], max(0, state["media"]["y"])))
+        page.mouse.dblclick(state["media"]["x"] + 50, state["media"]["y"] + 50)
+        state = self.photo(page)
+        self.assertEqual(("Zoom 1.0×", media), (state["values"][2], state["media"]))
+        self.assertEqual(1, page.evaluate("visualViewport.scale"))
+        self.assertEqual("#/1", self.photo(page)["hash"])
+        # A trackpad scroll's momentum that outlasts the photo pages nothing.
+        for _ in range(4):
+            page.mouse.wheel(0, -30)
+        page.keyboard.press("Escape")
+        for _ in range(6):
+            page.mouse.wheel(0, 30)
+        page.wait_for_timeout(100)
+        self.assertEqual("#/1", self.photo(page)["hash"])
+
+    def test_photo_settings_are_remembered_per_deck(self):
+        context = self.browser.new_context()
+        self.addCleanup(context.close)
+        page = self.open_photo_deck("#/1", within=context)
+        self.open_photo(page, "#deck .figure-card img")
+        for key in ("b", "b", "b", "c"):
+            page.keyboard.press(key)
+        self.close_photo(page)
+        key = "lecturedeck-photo:/webdeck/:Photo deck"
+        self.assertEqual({"brightness": 130, "contrast": 110, "all": False},
+                         json.loads(page.evaluate("k => localStorage.getItem(k)", key)))
+        # The next photo opens with the same correction, also after a reload.
+        page.keyboard.press("ArrowRight")
+        page.keyboard.press("ArrowRight")
+        state = self.open_photo(page, "#deck [data-figure-id='ph-grid-photo'] img")
+        self.assertEqual(("#/2", "brightness(130%) contrast(110%)"),
+                         (state["hash"], state["filter"]))
+        self.close_photo(page)
+        page.reload()
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        state = self.open_photo(page, "#deck [data-figure-id='ph-grid-photo'] img")
+        self.assertEqual(["Brightness 130 %", "Contrast 110 %", "Zoom 1.0×"], state["values"])
+        # Another deck keeps its own.
+        other = self.open_photo_deck("#/1", deck={**PHOTO_DECK, "meta": {"title": "Other deck"}},
+                                     within=context)
+        self.assertEqual("", self.open_photo(other, "#deck .figure-card img")["filter"])
+        kept = json.loads(other.evaluate("k => localStorage.getItem(k)", key))
+        self.assertEqual(130, kept["brightness"])
+        # Without storage it works for the page and remembers nothing.
+        blocked = ("Object.defineProperty(window, 'localStorage', {configurable: true,"
+                   " get() { throw new DOMException('blocked', 'SecurityError'); }});")
+        page = self.open_photo_deck("#/1", init=blocked)
+        self.open_photo(page, "#deck .figure-card img")
+        page.keyboard.press("b")
+        page.keyboard.press("a")
+        self.assertEqual("brightness(110%) contrast(100%)", self.photo(page)["filter"])
+        self.close_photo(page)
+        self.assertEqual("brightness(1.1) contrast(1)", page.evaluate(
+            "getComputedStyle(document.querySelector('#deck .figure-card img')).filter"))
+        page.reload()
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        self.assertEqual("", self.open_photo(page, "#deck .figure-card img")["filter"])
+
+    def test_use_on_all_photos_corrects_photos_and_videos_only(self):
+        page = self.open_photo_deck("#/3", viewport={"width": 1280, "height": 800})
+        marked = page.evaluate(
+            "[...document.querySelectorAll('#deck img')].map(n => [n.id, n.className])")
+        self.assertEqual(
+            [["ph-card-photo", "photo-zoomable photo-content"], ["ph-linked", ""], ["ph-off", ""],
+             ["ph-math", "math-display"], ["ph-summary", ""]],
+            marked)
+        filters = """() => Object.fromEntries([
+          ['card', '#ph-card-photo'], ['linked', '#ph-linked'], ['off', '#ph-off'],
+          ['formula', '#deck .formula'], ['counter', '#counter'], ['frame', '#deck .slide-frame'],
+        ].map(([k, s]) => [k, getComputedStyle(document.querySelector(s)).filter]))"""
+        self.assertEqual({"none"}, set(page.evaluate(filters).values()))
+        self.open_photo(page, "#ph-card-photo")
+        page.keyboard.press("b")
+        page.keyboard.press("b")
+        page.keyboard.press("c")
+        toggle = '#photo-viewer [data-photo-act="all"]'
+        self.assertEqual("false", page.get_attribute(toggle, "aria-pressed"))
+        page.click(toggle)
+        self.assertEqual("true", page.get_attribute(toggle, "aria-pressed"))
+        self.close_photo(page)
+        self.assertEqual({"card": "brightness(1.2) contrast(1.1)", "linked": "none", "off": "none",
+                          "formula": "none", "counter": "none", "frame": "none"},
+                         page.evaluate(filters))
+        # A drawn SVG figure stays as drawn; the photo beside it is corrected.
+        page.keyboard.press("PageUp")
+        grid = ("s => getComputedStyle("
+                "document.querySelector(`#deck [data-figure-id='${s}'] img`)).filter")
+        self.assertEqual(("brightness(1.2) contrast(1.1)", "none"), (
+            page.evaluate(grid, "ph-grid-photo"), page.evaluate(grid, "ph-drawn")))
+        # The drawing still opens, with the viewer's correction.
+        state = self.open_photo(page, "#deck [data-figure-id='ph-drawn'] img")
+        self.assertEqual("brightness(120%) contrast(110%)", state["filter"])
+        self.close_photo(page)
+        # Videos and the overview thumbnails follow it; print never does.
+        page.evaluate("location.hash = '#/4'")
+        page.wait_for_function("document.querySelector('#deck .slide-frame').dataset.index === '4'")
+        self.assertEqual("brightness(1.2) contrast(1.1)", page.evaluate(
+            "getComputedStyle(document.querySelector('#deck video')).filter"))
+        page.emulate_media(media="print")
+        self.assertEqual("none", page.evaluate(
+            "getComputedStyle(document.querySelector('#deck video')).filter"))
+        page.emulate_media(media="screen")
+        page.keyboard.press("o")
+        page.wait_for_selector(".overview-card")
+        self.assertEqual(
+            ["brightness(1.2) contrast(1.1)", "none"],
+            page.evaluate(
+                "[\"[data-figure-id='ph-grid-photo'] img\", \"[data-figure-id='ph-drawn'] img\"]"
+                ".map(s => getComputedStyle(document.querySelector('#overview ' + s)).filter)"))
+        page.keyboard.press("Escape")
+        page.wait_for_function("document.querySelector('#overview').hidden")
+        # The Appearance dialog carries the same toggle, and turns it off.
+        page.keyboard.press("t")
+        page.wait_for_selector("#appearance-dialog[open]")
+        checkbox = page.get_by_label("Use on all photos", exact=True)
+        self.assertTrue(checkbox.is_checked())
+        self.assertIn("Brightness 120 %, contrast 110 %",
+                      page.text_content("#photo-all-note").replace("\xa0", " "))
+        checkbox.uncheck()
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#appearance-dialog", state="hidden")
+        self.assertEqual("none", page.evaluate(
+            "getComputedStyle(document.querySelector('#deck video')).filter"))
+        self.assertFalse(json.loads(page.evaluate(
+            "localStorage.getItem('lecturedeck-photo:/webdeck/:Photo deck')"))["all"])
+        # A filter deck.css gives an image keeps priority over the correction.
+        own = "[data-figure-id='ph-grid-photo'] img { filter: grayscale(1); }"
+        page = self.open_photo_deck("#/2", css=own, init=(
+            "localStorage.setItem('lecturedeck-photo:/webdeck/:Photo deck',"
+            " JSON.stringify({brightness: 150, contrast: 100, all: true}))"))
+        self.assertEqual(("grayscale(1)", "none"), (
+            page.evaluate(grid, "ph-grid-photo"), page.evaluate(grid, "ph-drawn")))
+
+    def test_photo_copy_keeps_the_slide_background_and_deck_filter(self):
+        # A drawing with a transparent background and a deck.css invert must
+        # read as on the slide, not as dark ink on the black stage.
+        css = "body:not(.light-theme) [data-figure-id='ph-drawn'] img { filter: invert(1); }"
+        page = self.open_photo_deck("#/2", css=css)
+        state = self.open_photo(page, "#deck [data-figure-id='ph-drawn'] img")
+        self.assertEqual("invert(1)", state["filter"])
+        self.assertEqual("rgb(29, 32, 33)", page.evaluate(
+            "getComputedStyle(document.querySelector('#photo-viewer .photo-media'))"
+            ".backgroundColor"))
+        page.keyboard.press("b")
+        self.assertEqual("invert(1) brightness(110%) contrast(100%)", self.photo(page)["filter"])
+        self.close_photo(page)
+        # With all photos corrected, a photo's copy is corrected once, not twice.
+        self.open_photo(page, "#deck [data-figure-id='ph-grid-photo'] img")
+        page.keyboard.press("a")
+        self.close_photo(page)
+        state = self.open_photo(page, "#deck [data-figure-id='ph-grid-photo'] img")
+        self.assertEqual("brightness(110%) contrast(100%)", state["filter"])
+        self.close_photo(page)
+        # In light mode the copy takes the light slide background.
+        light = self.open_photo_deck("#/2", init=(
+            "localStorage.setItem('lecturedeck-theme', 'light')"))
+        self.open_photo(light, "#deck [data-figure-id='ph-drawn'] img")
+        self.assertEqual("rgb(250, 247, 237)", light.evaluate(
+            "getComputedStyle(document.querySelector('#photo-viewer .photo-media'))"
+            ".backgroundColor"))
+
+    def test_style_guide_photo_example(self):
+        # The STYLE_GUIDE's own deck.css example, as published, for a figure
+        # of this deck: kept out of the correction, still opening corrected.
+        guide = (Path(__file__).resolve().parents[1] / "STYLE_GUIDE.md").read_text(
+            encoding="utf-8").split("## Photos", 1)[1]
+        css = re.search(r"```css\n(.*?)```", guide, re.S).group(1)
+        self.assertIn('[data-figure-id="drawn-field"]', css)
+        page = self.open_photo_deck("#/1", css=css.replace("drawn-field", "ph-photo"), init=(
+            "localStorage.setItem('lecturedeck-photo:/webdeck/:Photo deck',"
+            " JSON.stringify({brightness: 150, contrast: 100, all: true}))"))
+        self.assertEqual("none", page.evaluate(
+            "getComputedStyle(document.querySelector('#deck .figure-card img')).filter"))
+        self.assertTrue(page.evaluate("document.body.classList.contains('photos-corrected')"))
+        state = self.open_photo(page, "#deck .figure-card img")
+        self.assertEqual("brightness(150%) contrast(100%)", state["filter"])
+
+    def test_photo_viewer_never_moves_the_chrome(self):
+        boxes = """() => Object.fromEntries(['#deck .page-number', '#deck .course-name',
+          '#deck .source', '#deck .slide-foot', '#deck .slide-head', '#deck .slide-body',
+          '#deck .figure-card', '#counter', '#controls-tools', '#appearance-button',
+          '#laser-button', '#viewer-version', '#presentation-controls'].map(s => {
+            const r = document.querySelector(s).getBoundingClientRect();
+            return [s, [r.x, r.y, r.width, r.height]]; }))"""
+        for size in ({"width": 1280, "height": 900}, {"width": 960, "height": 720}):
+            with self.subTest(size=size):
+                page = self.open_photo_deck("#/1", viewport=size)
+                page.wait_for_function(
+                    "document.querySelector('#controls-tools').getAnimations().length === 0")
+                before = page.evaluate(boxes)
+                self.open_photo(page, "#deck .figure-card img")
+                page.keyboard.press("b")
+                page.keyboard.press("+")
+                self.assertEqual(before, page.evaluate(boxes))
+                page.keyboard.press("a")
+                self.close_photo(page)
+                self.assertEqual(before, page.evaluate(boxes))
+                page.keyboard.press("ArrowRight")
+                self.assertEqual(before, page.evaluate(boxes))
+        # A video's expand control is out of the slide's layout.
+        clip = ["#deck .video-card", "#deck video", "#deck .video-card figcaption",
+                "#deck .slide-body", "#deck .page-number"]
+        rects = ("ss => ss.map(s => { const r = document.querySelector(s).getBoundingClientRect();"
+                 " return [r.x, r.y, r.width, r.height]; })")
+        page.evaluate("location.hash = '#/4'")
+        page.wait_for_selector("#deck .photo-expand", state="attached")
+        with_control = page.evaluate(rects, clip)
+        page.evaluate("document.querySelectorAll('#deck .photo-expand').forEach(b => b.remove())")
+        self.assertEqual(with_control, page.evaluate(rects, clip))
+
+    def test_video_opens_from_its_expand_control_and_plays_on(self):
+        if not self.recorded_clip():
+            self.skipTest("this browser records no WebM")
+        page = self.open_photo_deck("#/4", viewport={"width": 1280, "height": 800})
+        page.wait_for_function("document.querySelector('#deck video').readyState >= 1")
+        video, button = "#deck video", "#deck .photo-expand"
+        page.wait_for_selector(button)
+        # Small and on the video's top right corner.
+        place = page.evaluate("""() => {
+          const frame = document.querySelector('#deck .slide-frame').getBoundingClientRect();
+          const scale = frame.width / 1280;
+          const v = document.querySelector('#deck video').getBoundingClientRect();
+          const b = document.querySelector('#deck .photo-expand').getBoundingClientRect();
+          return [(v.right - b.right) / scale, (b.top - v.top) / scale, b.width / scale];
+        }""")
+        self.assertEqual([12, 12, 44], [round(value, 1) for value in place])
+        self.assertEqual("Enlarge the video", page.get_attribute(button, "aria-label"))
+        # A click on the video itself plays it, as always, and opens nothing.
+        page.click(video)
+        page.wait_for_function("() => { const v = document.querySelector('#deck video');"
+                               " return !v.paused && v.currentTime > 0.3; }")
+        self.assertFalse(self.photo(page)["open"])
+        at = page.evaluate("document.querySelector('#deck video').currentTime")
+        # The viewer's copy plays on from there.
+        page.click(button)
+        page.wait_for_selector("#photo-viewer[open]")
+        page.wait_for_function("t => { const m = document.querySelector('#photo-viewer video');"
+                               " return m && !m.paused && m.currentTime >= t; }", arg=at)
+        state = self.photo(page)
+        self.assertEqual(("video", "#/4", 4), (state["kind"], state["hash"], state["index"]))
+        self.assert_fits(state)
+        self.assertTrue(page.evaluate("document.querySelector('#deck video').paused"))
+        self.assertTrue(page.evaluate("document.querySelector('#photo-viewer video').controls"))
+        page.keyboard.press("b")
+        self.assertEqual("brightness(110%) contrast(100%)", self.photo(page)["filter"])
+        page.evaluate("""async () => { const m = document.querySelector('#photo-viewer video');
+          m.pause(); m.currentTime = 2.25;
+          await new Promise(r => m.addEventListener('seeked', r, {once: true})); }""")
+        self.close_photo(page, "PageDown")
+        # The slide's video waits, paused, where the viewer left it.
+        page.wait_for_function(
+            "Math.abs(document.querySelector('#deck video').currentTime - 2.25) < 0.05")
+        self.assertEqual([True, "#/4", "BODY"], page.evaluate(
+            "[document.querySelector('#deck video').paused, location.hash,"
+            " document.activeElement.tagName]"))
+        # A copy closed before it loaded never plays, unseen.
+        page.evaluate("""async () => {
+          window.__orphanPlays = 0;
+          const play = HTMLMediaElement.prototype.play;
+          HTMLMediaElement.prototype.play = function () {
+            if (!this.isConnected) window.__orphanPlays += 1;
+            return play.call(this);
+          };
+          const v = document.querySelector('#deck video');
+          v.muted = true; v.currentTime = 0.2; await v.play();
+          document.querySelector('#deck .photo-expand').click();
+          dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+        }""")
+        page.wait_for_timeout(800)
+        self.assertEqual([False, 0], page.evaluate(
+            "[document.querySelector('#photo-viewer').open, window.__orphanPlays]"))
+        # A stepped video's control appears with its step.
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(("#/5", True), (self.photo(page)["hash"], page.is_hidden(button)))
+        page.keyboard.press("ArrowRight")
+        page.wait_for_selector(button)
+        self.assertEqual("#/5.1", self.photo(page)["hash"])
+        page.keyboard.press("ArrowLeft")
+        page.wait_for_selector(button, state="hidden")
+
+    def test_photo_viewer_leaves_links_marked_images_demos_and_chrome_alone(self):
+        page = self.open_photo_deck("#/3")
+        page.click("#ph-off", force=True)
+        page.wait_for_timeout(100)
+        self.assertFalse(self.photo(page)["open"])
+        # An image formula (img.math-display) is no photo, and an image in a
+        # summary still opens its details.
+        self.assertEqual("auto", page.evaluate(
+            "getComputedStyle(document.querySelector('#ph-math')).cursor"))
+        page.click("#ph-math")
+        page.click("#ph-summary")
+        page.wait_for_timeout(100)
+        self.assertEqual([False, True], page.evaluate(
+            "[document.querySelector('#photo-viewer').open,"
+            " document.querySelector('#deck details').open]"))
+        page.click("#ph-linked")
+        page.wait_for_function("location.hash === '#/0'")
+        self.assertFalse(self.photo(page)["open"])
+        page.evaluate("location.hash = '#/6'")
+        page.wait_for_selector("#deck .interactive-frame iframe")
+        self.assertEqual(0, page.locator("#deck .photo-zoomable, #deck .photo-expand").count())
+        if page.locator("#controls-toggle").is_visible():
+            page.locator("#controls-toggle").click()
+        page.click("#counter")
+        self.assertFalse(self.photo(page)["open"])
+        # The print page holds no viewer at all.
+        printed = self.open_photo_deck("?print=1")
+        printed.wait_for_function("window.LECTUREDECK_PRINT_READY === true")
+        self.assertEqual(0, printed.locator(
+            "#photo-viewer, .photo-expand, .photo-zoomable, .photo-content").count())
+
+    def test_laser_points_over_the_photo(self):
+        page = self.open_photo_deck("#/1", viewport={"width": 1280, "height": 800})
+        page.keyboard.press("l")
+        state = self.open_photo(page, "#deck .figure-card img")
+        self.assertTrue(state["open"])
+        self.assertTrue(page.evaluate("document.body.classList.contains('laser-active')"))
+        page.mouse.move(500, 300)
+        page.mouse.move(520, 310)
+        page.wait_for_function("!document.querySelector('.laser-dot').hidden")
+        dot = page.evaluate("""() => { const d = document.querySelector('.laser-dot');
+          const r = d.getBoundingClientRect();
+          return [d.parentElement.id, r.left + r.width / 2, r.top + r.height / 2]; }""")
+        self.assertEqual("photo-viewer", dot[0])
+        self.assertAlmostEqual(520, dot[1], delta=2)
+        self.assertAlmostEqual(310, dot[2], delta=2)
+        self.assertEqual("none", page.evaluate(
+            "getComputedStyle(document.querySelector('#photo-viewer .photo-media')).cursor"))
+        # L works inside the viewer too.
+        page.keyboard.press("l")
+        self.assertFalse(page.evaluate("document.body.classList.contains('laser-active')"))
+        page.keyboard.press("l")
+        self.close_photo(page)
+        self.assertEqual(["BODY", True], page.evaluate(
+            "[document.querySelector('.laser-dot').parentElement.tagName,"
+            " document.body.classList.contains('laser-active')]"))
+
+    def test_escape_leaving_full_screen_closes_the_photo_only(self):
+        page = self.open_photo_deck("#/1")
+        page.keyboard.press("f")
+        page.wait_for_function("Boolean(document.fullscreenElement)"
+                               " || document.body.classList.contains('pseudo-fullscreen')")
+        if not page.evaluate("Boolean(document.fullscreenElement)"):
+            self.skipTest("no native full screen in this browser")
+        self.open_photo(page, "#deck .figure-card img")
+        # Above the full-screen deck.
+        self.assertTrue(page.evaluate(
+            "document.querySelector('#photo-viewer')"
+            ".contains(document.elementFromPoint(640, 300))"))
+        # The browser takes Escape to leave full screen; it was meant for the photo.
+        page.evaluate("document.exitFullscreen()")
+        page.wait_for_selector("#photo-viewer", state="hidden")
+        self.assertEqual([True, "#/1"], page.evaluate(
+            "[document.querySelector('#overview').hidden, location.hash]"))
+
+    def test_pacer_counts_the_photo_as_time_on_its_slide(self):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.route("**/deck.json", lambda route: route.fulfill(json=PHOTO_DECK))
+        page.route("**/presentation-time.json", lambda route: route.fulfill(
+            json={"start": "09:00", "end": "10:00", "timeZone": "UTC", "dates": ["2026-01-01"]}
+        ))
+        page.clock.install(time=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc))
+        page.goto(self.urls["json"] + "#/1")
+        page.wait_for_selector("#pacing-button")
+        page.clock.run_for(2000)
+        page.click("#deck .figure-card img")
+        page.wait_for_selector("#photo-viewer[open]")
+        page.clock.run_for(5000)
+        page.keyboard.press("PageDown")
+        page.wait_for_selector("#photo-viewer", state="hidden")
+        page.clock.run_for(2000)
+        (entry,) = journal(page)
+        record = entry["record"]
+        # One unbroken visit to the slide, no pause, no slide change.
+        self.assertEqual(["ph-figure"], [visit["slideId"] for visit in record["visits"]])
+        self.assertGreaterEqual(record["visits"][0]["durationMs"], 9000)
+        self.assertEqual([], record["pauses"])
 
 
 PACING_DECK = {

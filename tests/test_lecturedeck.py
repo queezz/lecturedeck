@@ -1,5 +1,6 @@
 import http.client
 import json
+import re
 import sys
 import tempfile
 import threading
@@ -1101,6 +1102,21 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn("data-step-src", script)
         self.assertIn('cue.className = "step-cue"', script)
         self.assertIn(".footer-nav .step-cue i.shown", styles)
+        # The photo viewer: a dialog built after the print return, its
+        # settings per deck in local storage, a correction weak enough for
+        # deck.css to override, no pacing pause, nothing in print.
+        self.assertIn('viewer.id = "photo-viewer"', script)
+        self.assertIn("viewer.showModal()", script)
+        self.assertIn("lecturedeck-photo:", script)
+        self.assertIn('dialog[open]:not(.photo-viewer)', script)
+        self.assertIn('button.className = "photo-expand"', script)
+        self.assertIn('[data-photo="off"]', script)
+        self.assertIn(".photo-viewer[open] { display: grid;", styles)
+        self.assertIn(":where(body.photos-corrected) .photo-content", styles)
+        self.assertIn(".photo-viewer, .photo-viewer[open] { display: none; }", styles)
+        self.assertLess(script.index("if (printMode) {\n      renderPrintDeck();"),
+                        script.index('viewer.id = "photo-viewer"'))
+        self.assertNotIn("photo-viewer", index)
         # The viewer records, journals and reports pacing, and reaches disk only
         # through the sink it looks up; any open dialog owns deck input.
         self.assertIn("lecturedeckPacingSink", script)
@@ -1130,6 +1146,23 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn('document.querySelector("dialog[open]")', adjust)
         # "#/N.k" step addresses still name slide N for adjustment.
         self.assertIn(r"/^#\/(\d+)/.exec(location.hash)", adjust)
+
+    def test_photo_viewer_keys_are_documented_and_free(self):
+        script = packaged_text("lecturedeck.js")
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+        section = readme.split("### Photo viewer", 1)[1].split("\n## ", 1)[0]
+        # Each key the viewer reads is in the README's table.
+        for key, documented in (('"b"', "`B` / `Shift`+`B`"), ('"c"', "`C` / `Shift`+`C`"),
+                                ('"+", "="', "`+` / `-` (also `=` / `_`)"), ('"0"', "`0`"),
+                                ('"a"', "`A`"), ('"l"', "`L`")):
+            self.assertIn(key, script)
+            self.assertIn(documented, section)
+        # None of them is a deck shortcut: the deck's handler reads only o,
+        # f, l, t (and the serve-only adjust HUD g); L is the laser in both.
+        deck_keys = set(re.findall(r'event\.key\.toLowerCase\(\) === "(\w)"', script))
+        self.assertEqual({"o", "f", "l", "t"}, deck_keys)
+        self.assertIn("Use on all photos", section)
+        self.assertIn('data-photo="off"', section)
 
     def test_scaffold_has_no_course_specific_identity(self):
         with tempfile.TemporaryDirectory() as root:

@@ -354,6 +354,31 @@ live slide alone:
   without steps, at every step, in both themes and at two window sizes;
   new chrome must join it.
 
+## 10. Photo viewer (shipped 0.26.0)
+
+A projector eats contrast (owner, 2026-10-18), so the presenter corrects a
+photo on the glass rather than re-exporting it. The design keeps the
+correction a browser preference, never deck data:
+
+- One overlay, a modal dialog built after the print return: it owns input
+  like every dialog, sits in the top layer above the chrome and the laser
+  (whose dot moves into it while it is open), and shows a copy of the
+  picture, never the slide's own element, so the slide behind keeps every
+  box. A video opens from an expand control placed out of the layout,
+  since its own click plays it.
+- What opens is read from the markup: content images of the live slide,
+  except links, formulas, interactive pages and `data-photo="off"`. What
+  the room correction reaches is the same set minus SVG drawings, plus
+  videos. No deck field was needed.
+- Paging and clicker keys only close it, so a presenter can never be stuck
+  in it or skip a step; navigation never happens underneath it.
+- Brightness, contrast and "Use on all photos" persist per deck in local
+  storage, like the theme. The global rule is a single weak class, so a
+  unit's `deck.css` filter wins, and print drops it, so a PDF never
+  depends on a browser preference.
+- Pacing counts the viewer as time on its slide: the presenter is still
+  showing that slide's picture. Other dialogs remain pauses.
+
 ## Boundaries that hold across all phases
 
 - Offline and CDN-free; releases are self-contained static directories served

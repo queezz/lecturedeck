@@ -104,6 +104,36 @@ sit in the frame's bottom padding, out of the layout: a `deck.css` that
 moves them must keep them out of the flow (positioned), or every stepped
 slide moves its page number again.
 
+## Photos
+
+Every content image of a slide opens in the [photo viewer](README.md#photo-viewer)
+on a click, and a video from its expand control; **Use on all photos** then
+applies the presenter's brightness and contrast to the deck's photos and
+videos. The viewer decides from the markup, so a unit needs no extra field:
+
+- an `.svg` image is a drawing, never corrected (it still opens);
+- images in a link, button, summary or label, in a formula (including an
+  image formula with a `math-…` class such as `img.math-display`) or in an
+  interactive page never open;
+- `data-photo="off"` on an element keeps every image inside it out of both,
+  for an icon, a logo or a raster drawing in slide HTML.
+
+The live slide marks what it found: `img.photo-zoomable` for images that
+open (with the zoom-in cursor), `.photo-content` for the photos and videos
+the correction reaches, and `body.photos-corrected` while it is on, with the
+filter in `--photo-filter`. The correction rule is as weak as one class, so
+`deck.css` keeps the last word over a figure it styles:
+
+```css
+/* A drawn figure exported as PNG: zoomable, never brightened with the photos. */
+[data-figure-id="drawn-field"] img { filter: none; }
+```
+
+The video expand control is `.photo-expand`, a child of the slide frame
+placed over the video's top right corner and out of the layout. The overlay
+itself is dark in both color modes, with fixed high-contrast colors, because
+a photo is judged against a dark surround; it takes no theme variables.
+
 ## Accents
 
 Set `accent` on a slide or section to choose its semantic highlight color. The

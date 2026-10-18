@@ -1,5 +1,59 @@
 # Changelog — shipped version history
 
+## 0.26.0
+
+Owner, 2026-10-18: "Projector eats a lot of contrast, so we need some tool
+to make images brighter. And maybe a zoom tool. So I can click on any
+picture, and it fills the screen, and I can adjust brightness/contrast..."
+
+- A photo viewer. A click or tap on a content image of the live slide (a
+  figure, a figure grid, an image in slide HTML such as a photo card)
+  opens a copy of it in a modal overlay that fills the window, scaled to
+  fit. A zoom-in cursor marks what opens. A video, whose click plays it,
+  opens from a small expand control on its top right corner, placed out
+  of the slide's layout; the viewer plays a copy on from the slide's
+  moment, and closing leaves the slide's video paused where the viewer
+  left it. Links and other controls, formulas (also image formulas such
+  as `img.math-display`), interactive pages, the chrome and anything in
+  `data-photo="off"` never open. The copy keeps a `deck.css` filter (a
+  dark-theme invert) and, behind a transparent drawing, the slide's
+  background, so it reads as it does on the slide.
+- Big plain controls along the bottom (labels 20 px on a fixed dark bar,
+  the same in both color modes): brightness and contrast in 10 % steps
+  from 50 to 300 %, zoom from fit to 8×, each showing its value
+  ("Brightness 130 %") in a fixed box so no button moves, **Use on all
+  photos**, **Reset** and **Close**. Brightness and contrast are CSS
+  `filter: brightness() contrast()`.
+- Zoom around the cursor with the wheel, a trackpad scroll or pinch;
+  drag to pan, never past an edge; double-click toggles fit and 2×; two
+  fingers pinch on a touch screen. Keys, all free in the viewer: `B` /
+  `Shift+B` brightness, `C` / `Shift+C` contrast, `+` / `-` zoom, `0`
+  reset, `A` all photos, `L` laser (it keeps tracking over the photo).
+- A paging or clicker key (`PageDown`, `PageUp`, arrows, `Space`, `Home`,
+  `End`) or `Escape` only closes the photo, on the same slide and step:
+  it never pages or steps, also when a bar button has the focus, and the
+  clicker's next press pages the deck again. The backdrop and **Close**
+  close it too. In native full screen the browser's `Escape` leaves full
+  screen and the photo closes with it, with no overview behind.
+- Brightness, contrast and the toggle are kept per deck (address and
+  title) in local storage, so the next photo opens with the same
+  correction; every access is guarded and the viewer works without
+  storage. **Use on all photos**, also a checkbox in the Appearance
+  dialog, corrects every content photo and video of the slides and the
+  overview thumbnails, never an SVG drawing, a formula, the chrome,
+  print or PDF; a `deck.css` filter on an image keeps priority.
+- Nothing moves: the page counter, step dots, footer and controls strip
+  keep their boxes to the pixel while the photo opens, changes and
+  closes. Pacing counts time in the viewer as time on its slide, with no
+  pause and no slide change; the tail of a trackpad scroll that zoomed
+  the photo never pages the deck after it closes, and a video copy closed
+  before it loaded never plays. Print and PDF contain no viewer.
+- Browser tests cover opening and fit, every closing key, the controls
+  and their limits, zoom around the cursor, pan and double-click,
+  remembered settings with and without storage, the all-photos scope,
+  fixed chrome at two sizes, the video copy with a seekable WebM served
+  with range support, exclusions, the laser, full screen and pacing.
+
 ## 0.25.1
 
 Owner, 2026-10-18, on the first stepped lecture: "Your dots shift the page

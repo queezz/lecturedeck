@@ -426,6 +426,12 @@ directory listings are off.
   on they let the mouse through, so press `L` again to click or drag one. It
   switches off when the overview opens, hides while the pointer is outside the
   window, and never appears in a PDF export.
+- **Photo viewer:** a click on any photo or figure of the slide opens it
+  over the whole window, with big **Brightness**, **Contrast** and **Zoom**
+  controls for a projector that eats contrast; a video opens from a small
+  expand control on its corner. **Use on all photos** applies the same
+  correction to every photo and video of the deck. Any paging or clicker
+  key only closes it. See [Photo viewer](#photo-viewer).
 - **Deck selector:** the home button returns to the selector when the deck was
   opened from one; it stays hidden for a directly served deck.
 - **Viewer version:** the expanded controls strip shows a small `vX.Y.Z`
@@ -444,9 +450,83 @@ Browsers reserve `Escape` while using native full screen, so it cannot open the
 overview directly. `O` and the always-visible fullscreen control bar still open
 the overview. When `Escape` exits native full screen, lecturedeck opens the
 overview automatically; press `F` when you want to leave full screen without
-opening it. While any dialog (Appearance, Pacing) is open, keys, the wheel,
-the trackpad and swipes belong to the dialog: they scroll it and never page
-the deck, and `Escape` only closes the dialog.
+opening it. While any dialog (Appearance, Pacing, the photo viewer) is open,
+keys, the wheel, the trackpad and swipes belong to the dialog: they scroll it
+and never page the deck, and `Escape` only closes the dialog.
+
+### Photo viewer
+
+A projector eats contrast. A click or tap on a content image of the live
+slide opens it in an overlay that fills the window, scaled to fit, with big
+plain controls along the bottom edge: brightness `−`/`+`, contrast `−`/`+`,
+zoom `−`/`+`, **Use on all photos**, **Reset** and **Close**, each value
+shown as it changes (`Brightness 130 %`). The zoom-in cursor marks every
+image that opens: figures, figure grids, and images in slide HTML such as a
+photo card. A click on a `<video>` still plays and pauses it, so a video
+opens from a small expand control on its top right corner instead; the
+viewer plays a copy of it from the moment the slide's video had reached,
+and closing leaves the slide's video paused where the viewer left it. (The
+copy seeks only where the server allows it: Chromium cannot seek a video
+from `lecturedeck serve`, which answers no HTTP range requests, so there it
+starts from the beginning; Firefox and Zen seek either way.)
+
+Nothing else opens: interactive pages, the chrome, the overview, an image
+inside a link, button, summary or label (the control wins), an image
+formula (MathML, `.formula`, or an image with a `math-…` class such as
+`img.math-display`), and anything inside an element marked
+`data-photo="off"`. The viewer shows a picture as the slide does: it keeps
+a filter that `deck.css` gives it (an invert for the dark theme, say) and,
+behind a transparent drawing, the slide's background, so dark ink stays
+readable on the black stage.
+
+| Key | In the photo viewer |
+|---|---|
+| `B` / `Shift`+`B` | brightness up / down by 10 % (50–300 %) |
+| `C` / `Shift`+`C` | contrast up / down by 10 % (50–300 %) |
+| `+` / `-` (also `=` / `_`) | zoom in / out by √2 (1× fit to 8×) |
+| `0` | reset brightness, contrast and zoom |
+| `A` | toggle **Use on all photos** |
+| `L` | laser pointer, which keeps tracking over the photo |
+| `Escape`, `PageDown`, `PageUp`, arrows, `Space`, `Home`, `End` | close |
+
+The keys were free in the viewer and stay local to the overlay. A paging or
+clicker key only closes the photo, on exactly the slide and step it opened
+from: it never pages or steps, so the presenter can never get stuck in the
+overlay or skip content. **Close** and a click on the dark backdrop around
+the photo close it too. Every other deck shortcut (`O`, `F`, `T`, `G`)
+waits behind the photo. In native full screen the browser takes the first
+`Escape` to leave full screen; the viewer then closes the photo too, and
+does not open the overview.
+
+**Zoom.** The mouse wheel, a trackpad scroll or a pinch zooms around the
+cursor; dragging pans, and the picture never leaves a gap at an edge; a
+double-click toggles between fit and 2× at the point clicked; two fingers
+pinch on a touch screen. A video keeps its own clicks and double-click
+(the player's full screen), and pans only while zoomed.
+
+**Remembered per deck.** The last brightness and contrast, and **Use on all
+photos**, are kept in this browser's local storage per deck (its address and
+title), so the next photo opens with the same correction. Zoom always starts
+at fit. Without local storage everything still works for the open page and
+nothing is remembered.
+
+**Use on all photos.** The toggle, in the overlay and as a checkbox in the
+**Appearance** dialog, applies the viewer's brightness and contrast with CSS
+`filter` to every content photo and video of the slides and the overview
+thumbnails, so the presenter corrects the whole deck for the room once at
+the start of class. It never touches a drawn SVG figure (an `.svg` image),
+a formula, the chrome, print or a PDF export. The rule is as weak as one
+class, so a filter that `deck.css` sets on an image keeps priority; keep a
+raster drawing out of the correction with `data-photo="off"` in slide HTML
+or a `deck.css` rule such as `[data-figure-id="drawn-field"] img { filter:
+none; }`.
+
+**Nothing moves.** The overlay is a modal dialog above everything, sized
+from the viewport. The page counter, step dots, footer and controls strip
+keep their boxes to the pixel while it opens, changes and closes, and a
+video's expand control sits out of the slide's layout. Pacing records count
+the time in the viewer as time on its slide: opening it is no slide change
+and no pause. Print pages and PDF exports contain no viewer.
 
 ### Serve-only figure adjustment
 
@@ -522,6 +602,8 @@ the file that declares them.
 Video slides use local, rights-cleared media under the unit's `webdeck/assets/`
 tree. The runtime loads metadata only until the presenter presses play, does not
 autoplay in overview, and leaves the video's keyboard and touch controls alone.
+A small expand control on the video's top right corner opens it in the
+[photo viewer](#photo-viewer), for brightness, contrast and zoom.
 
 ```json
 {
@@ -647,7 +729,8 @@ as a `suspended` or `clock` pause. Time in the overview, the pacing report,
 another dialog or a hidden tab is a pause with that reason (`overview`,
 `report`, `dialog`, `hidden`); a gap ends an overview, report or dialog pause
 too, while a hidden tab's pause spans it (browsers slow a hidden tab's
-timers). Pauses are not slide time.
+timers). Pauses are not slide time. The photo viewer is no pause: time in it
+counts for the slide it was opened from.
 
 **Where records land.** While `lecturedeck serve` delivers the deck to a
 browser on the serving computer, each page load's recording (a *segment*)
