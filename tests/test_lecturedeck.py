@@ -391,6 +391,66 @@ class LecturedeckTest(unittest.TestCase):
                     unit = make_json_unit(root, base_deck(slides=deck_slides))
                     self.assertHasError(validate_unit(unit), fragment)
 
+    def test_deck_json_figure_hotspots_are_validated(self):
+        def figure(hotspots, src="assets/a.png") -> dict:
+            return {"src": src, "alt": "Group photo", "hotspots": hotspots}
+
+        planck = {
+            "x": 0.123, "y": 0.456, "r": 0.025, "label": "Max Planck",
+            "html": "<strong>Max Planck</strong> (1858–1947)<br>Energy quanta, 1900; "
+                    "<math><mi>E</mi><mo>=</mo><mi>h</mi><mi>ν</mi></math>, "
+                    '<a href="https://www.nobelprize.org/">Nobel</a> 1918.',
+        }
+        edges = [{"x": 0, "y": 1, "r": 0.5, "label": "Edge"}, {"x": 1, "y": 0, "r": 1e-4,
+                                                               "label": "Other edge"}]
+        good = [
+            {"id": "one", "figure": figure([planck])},
+            {"id": "grid", "layout": "figures",
+             "figures": [figure(edges), {"src": "assets/a.png", "alt": "Plain"}]},
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            unit = make_json_unit(root, base_deck(slides=good))
+            (unit / "webdeck" / "assets" / "a.png").write_bytes(b"x")
+            self.assertEqual([], validate_unit(unit))
+        where = "slides[0].figure.hotspots"
+        cases = [
+            ([], f"{where} must be a non-empty list"),
+            ({"x": 0.5}, f"{where} must be a non-empty list"),
+            (["Planck"], f"{where}[0] must be an object"),
+            ([{**planck, "name": "x"}], f"{where}[0] has unknown field 'name'"),
+            ([{**planck, "x": 1.2}], f"{where}[0].x must be a number in [0, 1], a fraction of "
+                                     "the picture's natural width"),
+            ([{**planck, "y": -0.1}], f"{where}[0].y must be a number in [0, 1], a fraction of "
+                                      "the picture's natural height"),
+            ([{**planck, "y": "0.4"}], f"{where}[0].y must be a number in [0, 1]"),
+            ([{**planck, "x": True}], f"{where}[0].x must be a number in [0, 1]"),
+            ([{k: v for k, v in planck.items() if k != "x"}], f"{where}[0].x must be a number"),
+            ([{**planck, "r": 0}], f"{where}[0].r must be a number in (0, 0.5], a fraction of "
+                                   "the picture's natural width"),
+            ([{**planck, "r": 0.6}], f"{where}[0].r must be a number in (0, 0.5]"),
+            ([{**planck, "r": float("nan")}], f"{where}[0].r must be a number in (0, 0.5]"),
+            ([{**planck, "label": ""}], f"{where}[0].label must be a non-empty string"),
+            ([{**planck, "label": "  "}], f"{where}[0].label must be a non-empty string"),
+            ([{k: v for k, v in planck.items() if k != "label"}],
+             f"{where}[0].label must be a non-empty string"),
+            ([planck, {**planck, "html": 3}], f"{where}[1].html must be a string"),
+            ([{**planck, "html": '<span data-step="1">later</span>'}],
+             f"{where}[0].html cannot hold a data-step; a popup is never stepped"),
+        ]
+        for hotspots, fragment in cases:
+            with self.subTest(fragment=fragment, hotspots=hotspots):
+                with tempfile.TemporaryDirectory() as root:
+                    unit = make_json_unit(root, base_deck(
+                        slides=[{"id": "one", "figure": figure(hotspots)}]))
+                    (unit / "webdeck" / "assets" / "a.png").write_bytes(b"x")
+                    self.assertHasError(validate_unit(unit), fragment)
+        # Every item of a figure grid is checked on its own.
+        with tempfile.TemporaryDirectory() as root:
+            unit = make_json_unit(root, base_deck(slides=[{"id": "grid", "figures": [
+                figure([planck]), figure([{**planck, "x": 2}])]}]))
+            (unit / "webdeck" / "assets" / "a.png").write_bytes(b"x")
+            self.assertHasError(validate_unit(unit), "slides[0].figures[1].hotspots[0].x")
+
     def stepped_unit(self, root, slides: list) -> Path:
         unit = make_json_unit(root, base_deck(slides=slides))
         assets = unit / "webdeck" / "assets"
@@ -1117,6 +1177,20 @@ class LecturedeckTest(unittest.TestCase):
         self.assertLess(script.index("if (printMode) {\n      renderPrintDeck();"),
                         script.index('viewer.id = "photo-viewer"'))
         self.assertNotIn("photo-viewer", index)
+        # Photo hotspots: built after the print return like the viewer, a
+        # deck-wide H switch kept for the tab, nothing in print.
+        self.assertLess(script.index("if (printMode) {\n      renderPrintDeck();"),
+                        script.index("function hotspotSurface"))
+        self.assertIn("lecturedeck-hotspot-rings:", script)
+        self.assertIn('ring.className = "hotspot"', script)
+        # The layer is the frame's child: a positioned figure card lays out
+        # at another width in WebKit, so the card is never restyled.
+        self.assertIn("frame.append(layer)", script)
+        self.assertNotIn("has-hotspots {", styles)
+        self.assertIn(".slide-frame .hotspot-layer.hotspot-stepped-out {", styles)
+        self.assertIn(
+            "@media print { .hotspot-layer, .hotspot-popup { display: none !important; } }", styles)
+        self.assertNotIn("hotspot", index)
         # The viewer records, journals and reports pacing, and reaches disk only
         # through the sink it looks up; any open dialog owns deck input.
         self.assertIn("lecturedeckPacingSink", script)
@@ -1154,13 +1228,19 @@ class LecturedeckTest(unittest.TestCase):
         # Each key the viewer reads is in the README's table.
         for key, documented in (('"b"', "`B` / `Shift`+`B`"), ('"c"', "`C` / `Shift`+`C`"),
                                 ('"+", "="', "`+` / `-` (also `=` / `_`)"), ('"0"', "`0`"),
-                                ('"a"', "`A`"), ('"l"', "`L`")):
+                                ('"a"', "`A`"), ('"l"', "`L`"), ('"h"', "`H`")):
             self.assertIn(key, script)
             self.assertIn(documented, section)
         # None of them is a deck shortcut: the deck's handler reads only o,
-        # f, l, t (and the serve-only adjust HUD g); L is the laser in both.
+        # f, l, t, h (and the serve-only adjust HUD g); L is the laser and H
+        # the hotspot hint rings in both.
         deck_keys = set(re.findall(r'event\.key\.toLowerCase\(\) === "(\w)"', script))
-        self.assertEqual({"o", "f", "l", "t"}, deck_keys)
+        self.assertEqual({"o", "f", "l", "t", "h"}, deck_keys)
+        adjust_keys = set(re.findall(r'event\.key\.toLowerCase\(\) === "(\w)"',
+                                     packaged_text("adjust.js")))
+        self.assertEqual({"g"}, adjust_keys)
+        hotspots = readme.split("### Photo hotspots", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("| `H` |", hotspots)
         self.assertIn("Use on all photos", section)
         self.assertIn('data-photo="off"', section)
 

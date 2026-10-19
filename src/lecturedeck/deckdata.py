@@ -70,7 +70,10 @@ SLIDE_KEYS = frozenset(
         "video",
     }
 )
-FIGURE_KEYS = frozenset({"id", "src", "alt", "caption", "source", "shift", "scale", "step"})
+FIGURE_KEYS = frozenset(
+    {"id", "src", "alt", "caption", "source", "shift", "scale", "step", "hotspots"}
+)
+HOTSPOT_KEYS = frozenset({"x", "y", "r", "label", "html"})
 FORMULA_KEYS = frozenset({"mathml", "label", "gloss", "step"})
 CARD_TEXT_KEYS = ("label", "value", "detail")
 CARD_KEYS = frozenset({*CARD_TEXT_KEYS, "step"})
@@ -97,6 +100,7 @@ TRACK_KEYS = frozenset({"src", "kind", "srclang", "label", "default"})
 
 MAX_SHIFT = 2000
 MAX_SCALE = 10
+MAX_HOTSPOT_RADIUS = 0.5
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _CLASS_NAMES = re.compile(r"^[A-Za-z][\w-]*(?: [A-Za-z][\w-]*)*$")
@@ -167,6 +171,44 @@ def _validate_figure(errors: list[str], where: str, figure: object) -> None:
         scale = figure["scale"]
         if not _finite_number(scale) or not 0 < scale <= MAX_SCALE:
             errors.append(f"deck.json: {where}.scale must be a number in (0, {MAX_SCALE}]")
+    if "hotspots" in figure:
+        _validate_hotspots(errors, f"{where}.hotspots", figure["hotspots"])
+
+
+def _validate_hotspots(errors: list[str], where: str, hotspots: object) -> None:
+    """Points of a figure's picture with a popup: x and y are fractions of
+    its natural width and height, r a fraction of its natural width."""
+    if not isinstance(hotspots, list) or not hotspots:
+        errors.append(f"deck.json: {where} must be a non-empty list")
+        return
+    for position, spot in enumerate(hotspots):
+        field = f"{where}[{position}]"
+        if not isinstance(spot, dict):
+            errors.append(f"deck.json: {field} must be an object")
+            continue
+        _unknown_keys(errors, field, spot, HOTSPOT_KEYS)
+        for key in ("x", "y"):
+            value = spot.get(key)
+            if not _finite_number(value) or not 0 <= value <= 1:
+                errors.append(
+                    f"deck.json: {field}.{key} must be a number in [0, 1], a fraction of "
+                    f"the picture's natural {'width' if key == 'x' else 'height'}"
+                )
+        radius = spot.get("r")
+        if not _finite_number(radius) or not 0 < radius <= MAX_HOTSPOT_RADIUS:
+            errors.append(
+                f"deck.json: {field}.r must be a number in (0, {MAX_HOTSPOT_RADIUS}], "
+                "a fraction of the picture's natural width"
+            )
+        if not isinstance(spot.get("label"), str) or not spot["label"].strip():
+            errors.append(f"deck.json: {field}.label must be a non-empty string")
+        if "html" in spot:
+            if not isinstance(spot["html"], str):
+                errors.append(f"deck.json: {field}.html must be a string")
+            elif html_step_values(spot["html"]):
+                errors.append(
+                    f"deck.json: {field}.html cannot hold a data-step; a popup is never stepped"
+                )
 
 
 def _validate_formula(errors: list[str], where: str, formula: object) -> None:

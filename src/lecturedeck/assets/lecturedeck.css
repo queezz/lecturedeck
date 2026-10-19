@@ -363,6 +363,77 @@ body.laser-active .photo-viewer[open] .photo-stage, body.laser-active .photo-vie
   .photo-bar { gap: 8px 12px; padding-top: 8px; font-size: 18px; }
 }
 @media print { .photo-viewer, .photo-viewer[open] { display: none; } }
+/* Photo hotspots. The layer lies exactly on the drawn picture, placed from
+   script as a child of the frame (or of the viewer's stage), out of every
+   layout box; the figure card itself is never restyled. Each ring sits at
+   its fractions of the picture, so the rings follow the figure's geometry
+   and the viewer's zoom and pan, and the layer steps and fades with its
+   figure (hotspot-stepped-out, the same timing as a step). A ring is
+   invisible until the pointer is over the picture (is-hinted, from
+   script); then every ring shows faintly, the presenter's hint. The ring
+   under the pointer (or focused, or tapped) shows at full strength beside
+   its popup. H turns the hint off and on (hotspot-rings-off on the body);
+   on a screen without hover the hint stays on. Fixed colors: a ring sits
+   on the photo, not on the slide, in both color modes. deck.css may set
+   --hotspot-ring and --hotspot-active on .hotspot-layer. */
+.hotspot-layer {
+  --hotspot-hint: 0; position: absolute; z-index: 1; left: 0; top: 0; pointer-events: none;
+  transform-origin: 0 0; transition: opacity .28s ease, visibility 0s linear 0s;
+}
+.hotspot-layer[hidden] { display: none; }
+.slide-frame .hotspot-layer.hotspot-stepped-out {
+  opacity: 0; visibility: hidden; transition: opacity .2s ease, visibility 0s linear .2s;
+}
+.slide-frame.steps-settling .hotspot-layer { transition: none; }
+.hotspot-layer.is-hinted, body.hotspot-rings-flash .hotspot-layer { --hotspot-hint: .7; }
+@media (hover: none) { .hotspot-layer { --hotspot-hint: .7; } }
+body.hotspot-rings-off .hotspot-layer { --hotspot-hint: 0 !important; }
+.hotspot {
+  position: absolute; left: calc(var(--hotspot-x) * 100%); top: calc(var(--hotspot-y) * 100%);
+  width: max(18px, calc(var(--hotspot-r) * 200%)); aspect-ratio: 1; transform: translate(-50%, -50%);
+  border: 2px solid var(--hotspot-ring, rgba(251,241,199,.95)); border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(17,19,20,.6), inset 0 0 0 1.5px rgba(17,19,20,.6);
+  opacity: var(--hotspot-hint); pointer-events: auto; outline: none; transition: opacity .15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.hotspot.is-active, .hotspot:focus-visible {
+  opacity: 1; border-width: 3px; border-color: var(--hotspot-active, #fabd2f);
+  box-shadow: 0 0 0 2px rgba(17,19,20,.75), inset 0 0 0 2px rgba(17,19,20,.75);
+}
+.slide-frame .hotspot-layer.opens-photo .hotspot { cursor: zoom-in; }
+.photo-viewer .hotspot { cursor: default; }
+.photo-viewer[data-zoomed="true"] .hotspot { cursor: grab; }
+body.laser-active .slide-frame .hotspot, body.laser-active .photo-viewer[open] .hotspot { cursor: none; }
+/* The popup: beside its ring, inside the slide (a child of the frame, out
+   of its layout) or the viewer's stage, never under the photo's filter.
+   Its text is the captions' 22 px on the 1280x720 stage; in the viewer it
+   grows with the window like the slide (--hotspot-scale, from script). */
+.hotspot-popup {
+  position: absolute; z-index: 6; left: 0; top: 0; width: max-content;
+  max-width: min(440px, calc(100% - 16px)); margin: 0; padding: 10px 14px 11px;
+  border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px;
+  background: var(--panel); color: var(--ink); box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  font-family: Calibri, Aptos, Arial, sans-serif; font-size: 22px; font-style: normal; font-weight: 400;
+  line-height: 1.25; text-align: left; overflow-wrap: break-word; pointer-events: auto; cursor: auto;
+  user-select: text; -webkit-user-select: text;
+}
+.hotspot-popup[hidden] { display: none; }
+.hotspot-popup strong, .hotspot-popup b { color: var(--strong); }
+.hotspot-popup p { margin: 0 0 .35em; }
+.hotspot-popup > :last-child { margin-bottom: 0; }
+.hotspot-popup a {
+  color: var(--blue); font-weight: 600; text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--blue) 50%, transparent); text-underline-offset: 3px;
+}
+.photo-stage .hotspot-popup {
+  border-color: #504945; border-left-color: #fabd2f; background: rgba(29,32,33,.96); color: #ebdbb2;
+  font-size: calc(22px * var(--hotspot-scale, 1));
+  max-width: min(calc(440px * var(--hotspot-scale, 1)), calc(100% - 16px));
+}
+.photo-stage .hotspot-popup :is(strong, b) { color: #fbf1c7; }
+.photo-stage .hotspot-popup a { color: #83a598; text-decoration-color: rgba(131,165,152,.5); }
+@media (prefers-reduced-motion: reduce) { .hotspot, .hotspot-layer { transition: none; } }
+@media print { .hotspot-layer, .hotspot-popup { display: none !important; } }
 .deck-chrome { position: fixed; z-index: 20; top: 12px; left: 24px; display: flex; align-items: center; gap: 6px; opacity: .42; transition: opacity .15s; }
 .deck-chrome:hover, .deck-chrome:focus-within, .deck-chrome.has-safe-space { opacity: 1; }
 .deck-chrome button, .deck-chrome .control-link, .deck-chrome #counter { border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; background: var(--chrome-bg); color: var(--muted); font-size: 14px; }

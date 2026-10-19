@@ -134,6 +134,34 @@ placed over the video's top right corner and out of the layout. The overlay
 itself is dark in both color modes, with fixed high-contrast colors, because
 a photo is judged against a dark surround; it takes no theme variables.
 
+### Photo hotspots
+
+A figure's `hotspots` ([README](README.md#photo-hotspots)) draw rings on the
+picture and a popup beside the one under the pointer. A ring sits on the
+photo, not on the slide, so its colors are fixed in both color modes: a
+cream hint ring and a gold active ring, each with a thin dark edge that
+holds on light and dark pictures alike. The popup takes the slide's theme
+(`--panel`, `--ink`, the slide's `--accent` on its left edge) and the
+captions' 22 px; in the photo viewer it takes the viewer's fixed dark
+colors. Write the popup like a caption: the name in `<strong>`, the years,
+then one line on why this person is on the slide.
+
+The hooks are `.hotspot-layer` (one per figure, a child of the frame,
+carrying the figure's `data-figure-id`), `.hotspot` (`.is-active` while its
+popup shows), `.hotspot-popup`, and `body.hotspot-rings-off` while `H` has
+the hint off. The ring colors are variables on the layer:
+
+```css
+/* A pale photo: darker hint rings, a red active ring. */
+.hotspot-layer[data-figure-id="group-photo"] {
+  --hotspot-ring: rgba(29, 32, 33, .9);
+  --hotspot-active: #cc241d;
+}
+```
+
+Never give the figure card or its image a style to make room for the rings:
+they take none.
+
 ## Accents
 
 Set `accent` on a slide or section to choose its semantic highlight color. The

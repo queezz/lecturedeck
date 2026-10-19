@@ -41,8 +41,25 @@ the items below lives in `design-viewer-authoring.md`.
   and the photo viewer's copy starts from the beginning instead of the
   slide's moment. Firefox and Zen seek anyway. Range support for media in
   the request handler would fix both.
+- Not committed in the suite: the Gecko checks run through a scratch
+  WebDriver BiDi client against headless Zen (no Gecko in the Playwright
+  install here: its Firefox will not start). A small stdlib BiDi harness
+  in `tests/` would let the browser suite run in Gecko too.
 - Pre-existing Gecko layout gap, found while testing: in a `figures` grid
   an SVG figure with a `viewBox` and no `width`/`height` lays out zero
   pixels wide in Gecko (Chromium fills the cell), and a sized SVG keeps
   its own width. `.figure-card img` uses `width: auto; height: 100%`; it
   needs a definite width for SVGs without an intrinsic size.
+
+## Open after photo hotspots (0.27.0)
+
+- Owner judgment at the first lecture with them (the Solvay 1927 photo):
+  the hint ring's strength (0.7 opacity cream, gold when active), the
+  popup's side (beside the face, on the side with more room, which covers
+  neighbours in a crowded row), and whether he wants a mode that shows
+  every ring without hover. All are one CSS variable or one branch.
+- Trackpad and touch on the presenting Mac and an iPad were not tried:
+  WebKit ran through Playwright on Windows, a touch tap through Chromium's
+  touch emulation only.
+- Hotspots exist only on figure objects. An image in slide HTML (a photo
+  card) has none; a `data-hotspots` attribute would need its own check.

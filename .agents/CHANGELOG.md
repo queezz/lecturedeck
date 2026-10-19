@@ -1,5 +1,62 @@
 # Changelog — shipped version history
 
+## 0.27.0
+
+Owner, 2026-10-19, on a slide of the Solvay 1927 group photograph:
+"Can we do something powerpoint cant, but our webdeck can??? ...
+hoovering over people and getting a popup with biblio data? And some hint
+for me to where to hoover?"
+
+- Photo hotspots. A figure object (a `figure`, or an item of `figures`)
+  may carry `hotspots`, each `{"x", "y", "r", "label", "html"}`: the centre
+  as fractions of the picture's natural width and height, the radius as a
+  fraction of its natural width, a plain-text label (the accessible name)
+  and an optional popup body in slide HTML, MathML and links included.
+- On the live slide the rings lie exactly on the picture as the browser
+  draws it: content box, `object-fit`, `object-position`, a `deck.css`
+  width, max-height, padding or border, the figure's `shift` and `scale`,
+  full screen and late fonts. They are invisible until the pointer is over
+  the picture; then a faint ring marks every hotspot, the presenter's hint.
+  The ring under the pointer shows at full strength with its popup beside
+  it, on the side with more room, kept inside the slide, 22 px text in the
+  theme's colors; the pointer can move into it to follow a link. A click
+  on a ring opens the photo viewer like a click on the picture. A touch
+  screen shows the faint rings always; a tap shows a popup, a second tap or
+  a tap elsewhere hides it. `Tab` reaches the rings, `Enter` toggles a
+  popup, and the paging keys still page.
+- The photo viewer lays the same rings over its copy: they follow zoom and
+  pan exactly, a double-click on one zooms like one on the picture, and
+  they and their popups sit outside the brightness and contrast filter,
+  the text as large as on the slide. Every viewer key, the clicker's close
+  and the laser work as in 0.26.0.
+- `H` (free in the deck and in the viewer) turns the hint rings off and on
+  for the whole deck; the hotspot under the pointer still shows its ring
+  and popup. Turning them on shows every ring for a moment. It is also a
+  checkbox in Appearance on a deck with hotspots, and lasts for the tab.
+- Nothing moves: the rings and the popup are children of the slide frame
+  (the viewer's stage), out of every layout box, and the figure card is
+  never restyled. A first build made the card `position: relative`, which
+  WebKit lays out at another width for a `fit-content` card (400 px became
+  615 px) and loops its ResizeObserver; the layer now follows the figure's
+  step, fade and inert state from script. A stepped figure's rings wait
+  and fade in with it, and its popup closes when it steps out. The
+  overview, print pages and PDF exports show the photo without rings.
+- `check` validates `hotspots`: a non-empty list of objects with only those
+  keys, `x` and `y` in [0, 1], `0 < r <= 0.5`, a non-blank `label`, a string
+  `html` without `data-step`.
+- Hooks for `deck.css`: `.hotspot-layer` (with the figure's
+  `data-figure-id`), `.hotspot` and `.hotspot.is-active`, `.hotspot-popup`,
+  `body.hotspot-rings-off`, and `--hotspot-ring`, `--hotspot-active`.
+- Browser tests prove the rings on coloured marks of generated pictures,
+  by computed position and by screenshot pixels, at two window sizes, with
+  max-height and letterboxing, object-fit cover with padding and a border,
+  shift and scale, and full screen; hover and popup in both themes; `H`;
+  the viewer at fit, zoom and pan; touch taps; no moved box against the
+  same deck without hotspots; steps, overview and print. Chromium runs
+  them in the suite and WebKit passed all of them through Playwright;
+  Gecko (headless Zen over WebDriver BiDi) passed the geometry and pixel,
+  hover, popup, `H` and viewer zoom checks.
+
 ## 0.26.0
 
 Owner, 2026-10-18: "Projector eats a lot of contrast, so we need some tool

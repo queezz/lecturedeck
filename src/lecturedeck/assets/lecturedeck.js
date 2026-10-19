@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.26.0";
+  const VIEWER_VERSION = "0.27.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -1754,6 +1754,8 @@
     // The photo viewer, built after the print-mode return like the laser:
     // print pages and PDF exports never contain it.
     let photoViewer = null;
+    // Photo hotspots, built after the print-mode return too.
+    let hotspots = null;
 
     const slideTitleText = (slide, i) => {
       const raw = slide.title || slide.interactive?.title || slide.video?.title || "";
@@ -1980,8 +1982,10 @@
       frame.style.height = fullscreen ? `${frameHeight}px` : "";
       frame.style.transform = `scale(${scale})`;
       positionControls(scale, frameWidth, frameHeight);
-      // Full screen reflows the canvas: the video expand controls follow.
+      // Full screen reflows the canvas: the video expand controls and the
+      // hotspot rings follow.
       photoViewer?.placeExpanders();
+      hotspots?.place();
     }
 
     // ---------------------------------------------------------------
@@ -2109,8 +2113,10 @@
       }
       const frame = deck.querySelector(".slide-frame");
       if (!frame) return;
-      // A video's expand control shows and hides with the video's step.
+      // A video's expand control shows and hides with the video's step; a
+      // hotspot's popup closes when its figure steps out of view.
       photoViewer?.placeExpanders();
+      hotspots?.stepped();
       if (stepLevels.length) {
         frame.dataset.stepCount = String(stepLevels.length);
         frame.dataset.stepShown = String(revealed);
@@ -2192,6 +2198,7 @@
       if (!overview.hidden) overview.querySelectorAll(".overview-card").forEach(card => card.setAttribute("aria-current", String(Number(card.dataset.index) === index)));
       scaleCurrent();
       photoViewer?.decorate(frame);
+      hotspots?.decorate(frame);
       if (frame) {
         void frame.offsetWidth; // commit the settled state before fades return
         frame.classList.remove("steps-settling");
@@ -2596,6 +2603,9 @@
       photoMedia.style.height = `${box.shownHeight}px`;
       photoMedia.style.transform = `translate(${box.left}px, ${box.top}px)`;
       viewer.dataset.zoomed = String(photoView.zoom > 1);
+      // The hotspot rings lie over the copy, outside its filter, and follow
+      // every zoom and pan.
+      hotspots?.drawn(box);
       updatePhotoControls();
     }
 
@@ -2678,6 +2688,7 @@
       viewer.dataset.kind = source instanceof HTMLVideoElement ? "video" : "image";
       Object.assign(photoView, {zoom: 1, cx: 0.5, cy: 0.5});
       stage.replaceChildren(photoMedia);
+      hotspots?.opened(source);
       viewer.showModal();
       // The stage, not a button, takes the focus: a clicker's Space must
       // close the photo, never press "Less brightness".
@@ -2712,6 +2723,7 @@
       photoMedia = null;
       photoSource = null;
       photoBaseFilter = "none";
+      hotspots?.closed();
       // The tail of a trackpad scroll that zoomed the photo must not page
       // the deck once the photo is gone.
       wheelStreak = 0;
@@ -2782,6 +2794,9 @@
       } else if (key === "l") {
         event.preventDefault();
         setLaser(!laserOn);
+      } else if (key === "h") {
+        event.preventDefault();
+        hotspots?.toggle();
       }
     }
 
@@ -2820,8 +2835,11 @@
       zoomPhoto(photoView.zoom * Math.exp(-delta * (event.ctrlKey ? 0.01 : 0.002)), point.x, point.y);
     }, {passive: false});
     stage.addEventListener("dblclick", event => {
-      // A video keeps its own double-click (the player's full screen).
-      if (event.target !== photoMedia || !(photoMedia instanceof HTMLImageElement)) return;
+      // A video keeps its own double-click (the player's full screen). A
+      // hotspot ring is part of the picture.
+      const onPicture = event.target === photoMedia
+        || (event.target instanceof Element && Boolean(event.target.closest(".photo-stage > .hotspot-layer")));
+      if (!onPicture || !(photoMedia instanceof HTMLImageElement)) return;
       event.preventDefault();
       const point = stagePoint(event);
       zoomPhoto(photoView.zoom > 1 ? 1 : 2, point.x, point.y);
@@ -2863,6 +2881,8 @@
         drag.moved = true;
         try { stage.setPointerCapture(event.pointerId); } catch (_) { /* the pointer is gone */ }
         viewer.classList.add("photo-dragging");
+        // A popup the pointer only passed over goes; a tapped one stays.
+        hotspots?.dragged();
       }
       const box = photoBox();
       photoView.cx = drag.cx - dx / box.shownWidth;
@@ -2964,6 +2984,421 @@
       openPhoto(image);
     });
 
+    // ---------------------------------------------------------------
+    // Photo hotspots. A figure may carry `hotspots`: points of its picture,
+    // x and y as fractions of its natural width and height and a radius r
+    // as a fraction of its natural width, each with a label and a popup.
+    // On the live slide a layer of rings lies exactly on the drawn picture
+    // (its content box, object-fit and object-position, and the figure's
+    // shift and scale). The layer is a child of the frame, out of every
+    // layout box, and the figure card is never restyled: WebKit lays a
+    // positioned fit-content card out at another width. The layer follows
+    // the figure's step and fade from script. The rings stay invisible
+    // until the pointer is over the picture; then faint rings mark every
+    // hotspot, the presenter's hint of where to point. A ring under the
+    // pointer, focused from the keyboard or tapped shows its popup beside
+    // it, inside the slide. The photo viewer lays the same rings over its
+    // copy, following zoom and pan, outside the copy's brightness and
+    // contrast filter. `H` turns the hint rings off and on for the whole
+    // deck; a hotspot under the pointer still shows its own ring and popup.
+    const HOTSPOT_HIDE_MS = 200;
+    const HOTSPOT_GAP = 12;
+    const HOTSPOT_MARGIN = 8;
+    const HOTSPOT_FLASH_MS = 1500;
+    const hotspotOf = new WeakMap(); // ring -> its hotspot
+    const hotspotsOfCard = new WeakMap(); // figure card -> its hotspots
+    const hotspotRingsKey = `lecturedeck-hotspot-rings:${pacingPath()}:${String(spec.meta.title || spec.meta.tabTitle || "")}`;
+    const inRange = (value, low, high) => typeof value === "number" && Number.isFinite(value)
+      && value >= low && value <= high;
+    // check rejects a malformed hotspot; the viewer simply leaves it out.
+    const figureHotspots = figure => !Array.isArray(figure?.hotspots) ? []
+      : figure.hotspots.filter(spot => spot && typeof spot === "object"
+        && inRange(spot.x, 0, 1) && inRange(spot.y, 0, 1) && inRange(spot.r, 1e-9, 0.5)
+        && typeof spot.label === "string" && spot.label.trim());
+    const slideFigures = slide => Array.isArray(slide?.figures) ? slide.figures : slide?.figure ? [slide.figure] : [];
+    const deckHasHotspots = spec.slides.some(slide => slideFigures(slide).some(figure => figureHotspots(figure).length));
+    let hotspotRings = true;
+    try {
+      hotspotRings = sessionStorage.getItem(hotspotRingsKey) !== "off";
+    } catch (_) {
+      // Without session storage the rings start on with every page.
+    }
+    let hotspotFlash = 0;
+    let hotspotObservers = [];
+    let slideLayers = []; // {card, image, layer} of the live slide
+    let viewerLayer = null;
+    const pictureOfLayer = new WeakMap(); // layer -> the image it lies on
+
+    // The layout size of a box, in its own unscaled pixels.
+    const layoutSize = node => {
+      const style = getComputedStyle(node);
+      return {width: parseFloat(style.width) || 0, height: parseFloat(style.height) || 0};
+    };
+
+    const OBJECT_KEYWORDS = new Map([["left", 0], ["top", 0], ["center", 50], ["right", 100], ["bottom", 100]]);
+    // The offset object-position gives a picture inside its content box,
+    // from the free room on each axis (negative when the picture overflows).
+    function objectOffset(position, freeX, freeY) {
+      const words = String(position || "").trim().split(/\s+/);
+      if (words.length !== 2) return [freeX / 2, freeY / 2];
+      let [across, down] = words;
+      if (["top", "bottom"].includes(across) || ["left", "right"].includes(down)) [across, down] = [down, across];
+      const offset = (word, free) => OBJECT_KEYWORDS.has(word) ? free * OBJECT_KEYWORDS.get(word) / 100
+        : word.endsWith("%") ? free * parseFloat(word) / 100
+          : word.endsWith("px") ? parseFloat(word) : free / 2;
+      return [offset(across, freeX), offset(down, freeY)];
+    }
+
+    // Where an image draws its picture, in the unscaled pixels of
+    // `container`, an ancestor it is laid out in: its content box, then
+    // object-fit and object-position, as the browser paints it, through
+    // every transform between them (the frame's scale, a figure's shift
+    // and scale). `clip` is the part of that rectangle outside the content
+    // box (object-fit cover or none), as an inset() of it. Null while the
+    // picture is not laid out or has no size.
+    function drawnPicture(image, container) {
+      if (!image?.isConnected) return null;
+      const outer = image.getBoundingClientRect();
+      const around = container.getBoundingClientRect();
+      const room = layoutSize(container);
+      if (!outer.width || !outer.height || !around.width || !room.width) return null;
+      const naturalWidth = image.naturalWidth, naturalHeight = image.naturalHeight;
+      if (!naturalWidth || !naturalHeight) return null;
+      const style = getComputedStyle(image);
+      const px = name => parseFloat(style[name]) || 0;
+      const left = px("borderLeftWidth") + px("paddingLeft"), right = px("borderRightWidth") + px("paddingRight");
+      const top = px("borderTopWidth") + px("paddingTop"), bottom = px("borderBottomWidth") + px("paddingBottom");
+      const sized = style.boxSizing === "border-box";
+      const width = (parseFloat(style.width) || 0) + (sized ? 0 : left + right);
+      const height = (parseFloat(style.height) || 0) + (sized ? 0 : top + bottom);
+      const contentWidth = width - left - right, contentHeight = height - top - bottom;
+      if (contentWidth <= 0 || contentHeight <= 0) return null;
+      const contain = Math.min(contentWidth / naturalWidth, contentHeight / naturalHeight);
+      const cover = Math.max(contentWidth / naturalWidth, contentHeight / naturalHeight);
+      const [fitX, fitY] = {
+        contain: [contain, contain], cover: [cover, cover], none: [1, 1],
+        "scale-down": [Math.min(1, contain), Math.min(1, contain)],
+      }[style.objectFit] || [contentWidth / naturalWidth, contentHeight / naturalHeight];
+      const drawnWidth = naturalWidth * fitX, drawnHeight = naturalHeight * fitY;
+      const [x, y] = objectOffset(style.objectPosition, contentWidth - drawnWidth, contentHeight - drawnHeight);
+      // The transforms only scale and move: one factor turns the image's
+      // own pixels into screen pixels, another the container's.
+      const imageScale = outer.width / width;
+      const scale = imageScale / (around.width / room.width);
+      const insets = [Math.max(0, -y), Math.max(0, drawnWidth + x - contentWidth),
+        Math.max(0, drawnHeight + y - contentHeight), Math.max(0, -x)].map(inset => inset * scale);
+      const origin = {
+        left: (outer.left - around.left) * (room.width / around.width) - container.clientLeft,
+        top: (outer.top - around.top) * (room.width / around.width) - container.clientTop,
+      };
+      return {
+        left: origin.left + (left + x) * scale, top: origin.top + (top + y) * scale,
+        width: drawnWidth * scale, height: drawnHeight * scale,
+        clip: insets.some(inset => inset > 0.5) ? `inset(${insets.map(inset => `${inset}px`).join(" ")})` : "",
+      };
+    }
+
+    // A popup surface: one popup at a time, beside its ring, inside the
+    // container it is shown in (the slide frame, or the viewer's stage).
+    // A tapped popup is pinned: it stays until a tap elsewhere.
+    function hotspotSurface(name) {
+      const popup = document.createElement("div");
+      popup.className = "hotspot-popup";
+      popup.id = `hotspot-popup-${name}`;
+      popup.setAttribute("role", "tooltip");
+      popup.hidden = true;
+      let ring = null;
+      let pinned = false;
+      let timer = 0;
+      const surface = {
+        popup,
+        get ring() { return ring; },
+        get pinned() { return pinned; },
+        show(next, pin = false) {
+          clearTimeout(timer);
+          const container = next.closest(".slide-frame, .photo-stage");
+          const spot = hotspotOf.get(next);
+          if (!container || !spot) return;
+          const keep = next === ring && pinned;
+          if (next !== ring) {
+            surface.hide();
+            // Popup HTML is slide HTML, but a popup is never stepped.
+            popup.innerHTML = typeof spot.html === "string" && spot.html.trim()
+              ? withoutSteps(spot.html) : escapeHtml(spot.label.trim());
+            ring = next;
+            ring.classList.add("is-active");
+            ring.setAttribute("aria-describedby", popup.id);
+          }
+          pinned = pin || keep;
+          if (popup.parentElement !== container) container.append(popup);
+          surface.place();
+        },
+        hide() {
+          clearTimeout(timer);
+          if (ring) {
+            ring.classList.remove("is-active");
+            ring.removeAttribute("aria-describedby");
+          }
+          ring = null;
+          pinned = false;
+          popup.hidden = true;
+        },
+        // The pointer left the ring: a moment to reach the popup's links.
+        later() {
+          clearTimeout(timer);
+          timer = setTimeout(() => { if (!pinned) surface.hide(); }, HOTSPOT_HIDE_MS);
+        },
+        keep() { clearTimeout(timer); },
+        // Beside the ring, on the side with more room, else below or above
+        // it, slid along that side to stay inside the container.
+        place() {
+          const container = popup.parentElement;
+          if (!ring || !container) return;
+          if (!ring.isConnected || !container.contains(ring)) { surface.hide(); return; }
+          const box = container.getBoundingClientRect();
+          const size = layoutSize(container);
+          const scale = size.width ? box.width / size.width : 0;
+          const r = ring.getBoundingClientRect();
+          if (!scale || !r.width) return;
+          const near = {
+            left: (r.left - box.left) / scale, right: (r.right - box.left) / scale,
+            top: (r.top - box.top) / scale, bottom: (r.bottom - box.top) / scale,
+          };
+          const cx = (near.left + near.right) / 2, cy = (near.top + near.bottom) / 2;
+          // A ring zoomed or panned out of view takes its popup with it.
+          popup.hidden = cx < 0 || cy < 0 || cx > size.width || cy > size.height;
+          if (popup.hidden) return;
+          const width = popup.offsetWidth, height = popup.offsetHeight;
+          const m = HOTSPOT_MARGIN, gap = HOTSPOT_GAP;
+          const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+          const alongX = x => clamp(x, m, size.width - m - width);
+          const alongY = y => clamp(y, m, size.height - m - height);
+          const right = {side: "right", x: near.right + gap, y: alongY(cy - height / 2)};
+          const left = {side: "left", x: near.left - gap - width, y: alongY(cy - height / 2)};
+          const below = {side: "below", x: alongX(cx - width / 2), y: near.bottom + gap};
+          const above = {side: "above", x: alongX(cx - width / 2), y: near.top - gap - height};
+          const fits = p => p.x >= m - 0.5 && p.y >= m - 0.5
+            && p.x + width <= size.width - m + 0.5 && p.y + height <= size.height - m + 0.5;
+          const order = cx > size.width / 2 ? [left, right, below, above] : [right, left, below, above];
+          const chosen = order.find(fits) || {side: order[0].side, x: alongX(order[0].x), y: alongY(order[0].y)};
+          popup.style.left = `${chosen.x}px`;
+          popup.style.top = `${chosen.y}px`;
+          popup.dataset.side = chosen.side;
+        },
+      };
+      popup.addEventListener("pointerenter", () => surface.keep());
+      popup.addEventListener("pointerleave", event => {
+        if (event.pointerType === "mouse" && !pinned) surface.later();
+      });
+      return surface;
+    }
+    const slideSurface = hotspotSurface("slide");
+    const viewerSurface = hotspotSurface("viewer");
+
+    // A ring: a focusable button-like mark, named by its label. A mouse
+    // shows its popup on hover, a keyboard on focus, a finger on a tap.
+    // On the slide a mouse click on a ring opens the photo like a click on
+    // the picture; in the viewer it does nothing more.
+    function hotspotRing(spot, surface) {
+      const ring = document.createElement("span");
+      ring.className = "hotspot";
+      ring.tabIndex = 0;
+      ring.setAttribute("role", "button");
+      ring.setAttribute("aria-label", spot.label.trim());
+      ring.style.setProperty("--hotspot-x", String(spot.x));
+      ring.style.setProperty("--hotspot-y", String(spot.y));
+      ring.style.setProperty("--hotspot-r", String(spot.r));
+      hotspotOf.set(ring, spot);
+      let pointer = "mouse";
+      const toggle = () => {
+        if (surface.ring === ring && surface.pinned) surface.hide();
+        else surface.show(ring, true);
+      };
+      ring.addEventListener("pointerdown", event => { pointer = event.pointerType || "mouse"; });
+      ring.addEventListener("pointerenter", event => {
+        if (event.pointerType === "mouse") surface.show(ring);
+      });
+      ring.addEventListener("pointerleave", event => {
+        if (event.pointerType === "mouse" && surface.ring === ring && !surface.pinned) surface.later();
+      });
+      ring.addEventListener("focus", () => { if (ring.matches(":focus-visible")) surface.show(ring); });
+      ring.addEventListener("blur", () => {
+        if (surface.ring === ring && !surface.pinned && !ring.matches(":hover")) surface.hide();
+      });
+      ring.addEventListener("keydown", event => {
+        if (event.key !== "Enter" || event.ctrlKey || event.metaKey || event.altKey) return;
+        event.preventDefault();
+        toggle();
+      });
+      ring.addEventListener("click", event => {
+        if (surface === viewerSurface) {
+          // The end of a drag or pinch is no tap (the viewer's own click
+          // handler then forgets the drag).
+          if (!photoSuppressClick && pointer !== "mouse") toggle();
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (pointer !== "mouse") { toggle(); return; }
+        const image = pictureOfLayer.get(ring.parentElement);
+        if (image?.matches("img.photo-zoomable") && !image.closest(".step-hidden")) openPhoto(image);
+      });
+      return ring;
+    }
+
+    // The faint rings show while the pointer is over the picture or its
+    // rings (a finger has no hover; a screen without hover always shows them).
+    function hotspotLayer(spots, surface, image) {
+      const layer = document.createElement("div");
+      layer.className = "hotspot-layer";
+      layer.append(...spots.map(spot => hotspotRing(spot, surface)));
+      pictureOfLayer.set(layer, image);
+      const over = node => node instanceof Node && (node === image || layer.contains(node));
+      const hint = event => { if (event.pointerType !== "touch") layer.classList.add("is-hinted"); };
+      const unhint = event => { if (!over(event.relatedTarget)) layer.classList.remove("is-hinted"); };
+      image.addEventListener("pointerenter", hint);
+      image.addEventListener("pointerleave", unhint);
+      layer.addEventListener("pointerover", hint);
+      layer.addEventListener("pointerout", unhint);
+      return layer;
+    }
+
+    // Lay each figure's rings on its drawn picture, in the frame's own
+    // pixels, and let them step and fade with the figure.
+    function placeHotspotLayers() {
+      const frame = deck.querySelector(".slide-frame");
+      if (!frame) return;
+      for (const {card, image, layer} of slideLayers) {
+        if (!layer.isConnected) continue;
+        const out = Boolean(card.closest(".step-hidden"));
+        layer.classList.toggle("hotspot-stepped-out", out);
+        layer.inert = out;
+        const box = drawnPicture(image, frame);
+        layer.hidden = !box;
+        if (!box) continue;
+        layer.style.left = `${box.left}px`;
+        layer.style.top = `${box.top}px`;
+        layer.style.width = `${box.width}px`;
+        layer.style.height = `${box.height}px`;
+        layer.style.clipPath = box.clip;
+      }
+      slideSurface.place();
+    }
+
+    function decorateHotspots(frame) {
+      slideSurface.hide();
+      hotspotObservers.forEach(observer => observer.disconnect());
+      hotspotObservers = [];
+      slideLayers = [];
+      if (!frame) return;
+      const figures = slideFigures(spec.slides[Number(frame.dataset.index)]);
+      for (const card of frame.querySelectorAll(".figure-card[data-figure-index]")) {
+        const spots = figureHotspots(figures[Number(card.dataset.figureIndex)]);
+        const image = card.querySelector(":scope > img");
+        if (!spots.length || !image) continue;
+        hotspotsOfCard.set(card, spots);
+        // A hook only: the card's own style never changes.
+        card.classList.add("has-hotspots");
+        const layer = hotspotLayer(spots, slideSurface, image);
+        layer.classList.toggle("opens-photo", image.classList.contains("photo-zoomable"));
+        // deck.css can style one figure's rings by its id.
+        if (card.dataset.figureId) layer.dataset.figureId = card.dataset.figureId;
+        layer.hidden = true;
+        frame.append(layer);
+        slideLayers.push({card, image, layer});
+        if (!image.complete) image.addEventListener("load", placeHotspotLayers, {once: true});
+      }
+      if (!slideLayers.length) return;
+      // A late font, a theme or full screen can resize the picture; the
+      // adjust HUD moves a figure by its style.
+      if (typeof ResizeObserver === "function") {
+        const resized = new ResizeObserver(placeHotspotLayers);
+        slideLayers.forEach(({card, image}) => { resized.observe(card); resized.observe(image); });
+        hotspotObservers.push(resized);
+      }
+      const restyled = new MutationObserver(placeHotspotLayers);
+      slideLayers.forEach(({card}) => restyled.observe(card, {attributes: true, attributeFilter: ["style"]}));
+      hotspotObservers.push(restyled);
+      document.fonts?.ready.then(placeHotspotLayers, () => {});
+      placeHotspotLayers();
+    }
+
+    // The viewer's copy of a figure with hotspots gets the same rings.
+    function openViewerHotspots(source) {
+      slideSurface.hide();
+      viewerLayer = null;
+      const card = source instanceof HTMLImageElement ? source.closest(".figure-card.has-hotspots") : null;
+      const spots = card && card.querySelector(":scope > img") === source ? hotspotsOfCard.get(card) : null;
+      if (!spots?.length || !photoMedia) return;
+      // Popup text as large as on the slide, never smaller than 22 px.
+      viewer.style.setProperty("--hotspot-scale",
+        String(Math.max(1, Math.min(innerWidth / SLIDE_WIDTH, innerHeight / SLIDE_HEIGHT))));
+      viewerLayer = hotspotLayer(spots, viewerSurface, photoMedia);
+      stage.append(viewerLayer);
+    }
+
+    function setHotspotRings(on) {
+      hotspotRings = on;
+      document.body.classList.toggle("hotspot-rings-off", !on);
+      // Turned on, every ring shows a moment, also without the pointer.
+      clearTimeout(hotspotFlash);
+      document.body.classList.toggle("hotspot-rings-flash", on);
+      if (on) hotspotFlash = setTimeout(() => document.body.classList.remove("hotspot-rings-flash"), HOTSPOT_FLASH_MS);
+      if (hotspotRingsInput) hotspotRingsInput.checked = on;
+      try {
+        sessionStorage.setItem(hotspotRingsKey, on ? "on" : "off");
+      } catch (_) {
+        // Kept for this page only.
+      }
+    }
+
+    // The Appearance dialog carries the switch on a deck with hotspots.
+    let hotspotRingsInput = null;
+    if (deckHasHotspots) {
+      const label = document.createElement("label");
+      label.innerHTML = '<input type="checkbox" id="hotspot-rings-input"> Hint rings on photo hotspots (H)';
+      photoField.insertBefore(label, photoAllNote);
+      hotspotRingsInput = label.querySelector("input");
+      hotspotRingsInput.addEventListener("change", () => setHotspotRings(hotspotRingsInput.checked));
+    }
+    document.body.classList.toggle("hotspot-rings-off", !hotspotRings);
+    if (hotspotRingsInput) hotspotRingsInput.checked = hotspotRings;
+
+    // A tap anywhere else lets a pinned popup go.
+    document.addEventListener("pointerdown", event => {
+      const target = event.target instanceof Element ? event.target : null;
+      for (const surface of [slideSurface, viewerSurface]) {
+        if (!surface.pinned) continue;
+        if (target && (surface.popup.contains(target) || target.closest(".hotspot"))) continue;
+        surface.hide();
+      }
+    }, true);
+
+    hotspots = {
+      decorate: decorateHotspots,
+      place: placeHotspotLayers,
+      stepped: () => {
+        placeHotspotLayers();
+        if (slideSurface.ring?.closest(".hotspot-stepped-out")) slideSurface.hide();
+      },
+      toggle: () => setHotspotRings(!hotspotRings),
+      opened: openViewerHotspots,
+      drawn: box => {
+        if (!viewerLayer) return;
+        viewerLayer.style.width = `${box.shownWidth}px`;
+        viewerLayer.style.height = `${box.shownHeight}px`;
+        viewerLayer.style.transform = `translate(${box.left}px, ${box.top}px)`;
+        viewerSurface.place();
+      },
+      dragged: () => { if (!viewerSurface.pinned) viewerSurface.hide(); },
+      closed: () => {
+        viewerSurface.hide();
+        viewerSurface.popup.remove();
+        viewerLayer?.remove();
+        viewerLayer = null;
+      },
+    };
+
     photoViewer = {
       isOpen: () => viewer.open,
       close: closePhoto,
@@ -2976,7 +3411,7 @@
     addEventListener("resize", () => { scaleCurrent(); scaleOverviewThumbs(); refreshSteps(); });
     // The theme, the presentation style and other body classes may show or
     // hide stepped content through deck.css.
-    new MutationObserver(() => { refreshSteps(); photoViewer?.placeExpanders(); }).observe(document.body, {
+    new MutationObserver(() => { refreshSteps(); photoViewer?.placeExpanders(); hotspots?.place(); }).observe(document.body, {
       attributes: true, attributeFilter: ["class", "data-presentation-style"],
     });
     addEventListener("hashchange", () => {
@@ -3023,6 +3458,7 @@
       else if (event.key.toLowerCase() === "f") toggleFullscreen();
       else if (event.key.toLowerCase() === "l") setLaser(!laserOn);
       else if (event.key.toLowerCase() === "t") { event.preventDefault(); appearanceDialog?.showModal(); }
+      else if (event.key.toLowerCase() === "h" && !event.ctrlKey && !event.metaKey && !event.altKey) hotspots?.toggle();
     });
     let wheelStreak = 0;
     let wheelPrevAt = -1e6;

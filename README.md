@@ -118,6 +118,9 @@ HTTP, with no functions or executable deck code. A minimal deck looks like:
   object `formula`, `interactive` and `video` accept a numeric `step`, to
   reveal a slide piece by piece; see
   [Step-by-step reveals](#step-by-step-reveals).
+- A figure (`figure`, or an item of `figures`) may carry `hotspots`: points
+  of its picture with a popup, such as the people in a group photograph;
+  see [Photo hotspots](#photo-hotspots).
 - `eyebrow` overrides the current part label on that slide. Omit it or leave
   it empty to use the part label. Optional `beat` is author metadata only;
   it is accepted in source data but never shown to the audience.
@@ -432,6 +435,11 @@ directory listings are off.
   expand control on its corner. **Use on all photos** applies the same
   correction to every photo and video of the deck. Any paging or clicker
   key only closes it. See [Photo viewer](#photo-viewer).
+- **Photo hotspots:** on a figure with `hotspots`, faint rings mark every
+  hotspot while the pointer is over the picture; hovering (or tapping) a
+  ring shows its popup, on the slide and in the photo viewer. `H` turns the
+  hint rings off and on for the whole deck. See
+  [Photo hotspots](#photo-hotspots).
 - **Deck selector:** the home button returns to the selector when the deck was
   opened from one; it stays hidden for a directly served deck.
 - **Viewer version:** the expanded controls strip shows a small `vX.Y.Z`
@@ -487,6 +495,7 @@ readable on the black stage.
 | `0` | reset brightness, contrast and zoom |
 | `A` | toggle **Use on all photos** |
 | `L` | laser pointer, which keeps tracking over the photo |
+| `H` | hint rings of [photo hotspots](#photo-hotspots), as on the slide |
 | `Escape`, `PageDown`, `PageUp`, arrows, `Space`, `Home`, `End` | close |
 
 The keys were free in the viewer and stay local to the overlay. A paging or
@@ -527,6 +536,87 @@ keep their boxes to the pixel while it opens, changes and closes, and a
 video's expand control sits out of the slide's layout. Pacing records count
 the time in the viewer as time on its slide: opening it is no slide change
 and no pause. Print pages and PDF exports contain no viewer.
+
+### Photo hotspots
+
+Something a slide program cannot do: point at a person in a group photo and
+get who they are. A figure, a single `figure` or an item of `figures`, may
+carry `hotspots`:
+
+```json
+"figure": {
+  "src": "assets/solvay-1927.jpg",
+  "alt": "The participants of the fifth Solvay conference, 1927",
+  "hotspots": [
+    {"x": 0.2025, "y": 0.389, "r": 0.017, "label": "Max Planck",
+     "html": "<strong>Max Planck</strong> (1858–1947)<br>Energy quanta, 1900; Nobel 1918."}
+  ]
+}
+```
+
+- `x` and `y` give the centre as fractions of the picture's natural width
+  and height (the image file as served, so measure on the cropped file);
+  both lie in [0, 1]. `r` is the radius as a fraction of the natural width,
+  0 < `r` ≤ 0.5.
+- `label` is required plain text: the hotspot's accessible name, and the
+  popup when there is no `html`.
+- `html` is the optional popup body, slide HTML: inline MathML and links
+  work. It holds no `data-step`; a popup is never stepped. Keep it to two
+  or three short lines: the popup is 22 px text, the captions' size, at
+  most 440 px wide on the 1280×720 stage.
+- `check` rejects anything else: an empty list, a missing or blank label,
+  a coordinate outside its range, an unknown key. Add `"requires": ">=0.27"`
+  so an older viewer refuses the deck rather than ignoring the hotspots.
+
+On the live slide the rings lie exactly on the picture as the browser draws
+it: its content box, `object-fit` and `object-position`, a `deck.css`
+`width`, `max-height`, padding or border, and the figure's `shift` and
+`scale`; they follow full screen, the theme and a late font. They stay
+invisible until the pointer is over the picture; then a faint ring marks
+every hotspot, the presenter's hint of where to point. The ring under the
+pointer shows at full strength with its popup beside it (on the side with
+more room, else below or above), always inside the slide; the pointer can
+move into the popup to follow a link. A click on a ring opens the photo
+viewer like a click on the picture. On a touch screen, which has no hover,
+the faint rings always show; a tap on a ring shows its popup, a second tap
+or a tap anywhere else hides it. A keyboard reaches the rings with `Tab`
+(the popup shows on focus) and `Enter` toggles it; paging keys still page.
+
+The [photo viewer](#photo-viewer) lays the same rings over its copy. They
+follow zoom and pan exactly, sit outside its brightness and contrast filter,
+and show their popups the same way, in the viewer's own dark colors, with
+the text as large as on the slide (never under 22 px). Every viewer key,
+the clicker's close, double-click zoom (also on a ring) and the laser work
+as without hotspots.
+
+| Key | Photo hotspots |
+|---|---|
+| `H` | hint rings off / on for the whole deck, on the slide and in the viewer |
+
+`H` was free. With the rings off, nothing marks the hotspots, but the one
+under the pointer still shows its ring and popup, so the presenter can keep
+the photo clean and still name a face. Turned on, every ring shows for a
+moment, even without the pointer over the photo. The switch is also a
+checkbox in the **Appearance** dialog on a deck with hotspots, and it lasts
+for the browser tab (session storage), so a reload keeps it and a new
+lecture starts with the rings on.
+
+**Nothing moves.** The rings and the popup are children of the slide frame
+(the viewer's stage), positioned out of the layout; the figure card itself
+is never restyled. A stepped figure's rings wait hidden with it and fade in
+with it; a popup closes when its figure steps out of view. The overview,
+print pages and PDF exports show the photo without rings or popups.
+
+`deck.css` hooks: `.hotspot-layer` (one per figure, with the figure's
+`data-figure-id`), `.hotspot` (a ring; `.is-active` with its popup),
+`.hotspot-popup` (`#hotspot-popup-slide` on the slide,
+`#hotspot-popup-viewer` in the viewer), `body.hotspot-rings-off`, and the
+ring colors `--hotspot-ring` and `--hotspot-active`, set on the layer:
+
+```css
+/* Darker hint rings on one pale photo. */
+.hotspot-layer[data-figure-id="solvay-1927"] { --hotspot-ring: rgba(29, 32, 33, .9); }
+```
 
 ### Serve-only figure adjustment
 

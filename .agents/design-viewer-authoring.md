@@ -379,6 +379,40 @@ correction a browser preference, never deck data:
 - Pacing counts the viewer as time on its slide: the presenter is still
   showing that slide's picture. Other dialogs remain pauses.
 
+## 11. Photo hotspots (shipped 0.27.0)
+
+Owner, 2026-10-19, on the Solvay 1927 photograph: "Can we do something
+powerpoint cant ... hoovering over people and getting a popup with biblio
+data? And some hint for me to where to hoover?" Unlike the viewer's
+correction, which is a browser preference, who is where in a picture is
+content, so this one is deck data:
+
+- `hotspots` on a figure object: x, y as fractions of the natural size, r
+  as a fraction of the natural width, a required plain `label`, optional
+  `html`. Fractions of the file as served keep the data independent of
+  every layout, window and zoom; the cost is that a re-crop needs new
+  numbers. Only figure objects carry them, not images in slide HTML, so
+  `check` can validate every point.
+- The rings are positioned from the picture as the browser draws it
+  (content box, object-fit, object-position, every transform), measured,
+  not predicted from the deck's CSS. The layer is a child of the frame,
+  like the video expand control, and mirrors its figure's step state: a
+  layer inside the figure card would have needed a positioned card, and
+  WebKit lays a positioned `fit-content` card out at another width (a
+  figure 400 px wide became 615 px), which is exactly the moved box the
+  owner hates.
+- The hint shows only while the pointer is over the picture, so the
+  audience sees a clean photo until the presenter points at it, and the
+  presenter sees where the hotspots are. `H` turns the hint off for a
+  deliberately clean photo; the hotspot under the pointer still answers.
+  The switch lasts for the tab, not the browser: a new lecture starts with
+  the hint on.
+- A hover shows a popup, a tap or `Enter` pins it. A mouse click on a ring
+  keeps 0.26.0's meaning of a click on the picture: open the viewer.
+- The viewer reuses the same data and the same popup code over its copy;
+  the layer is a sibling of the copy, so the brightness and contrast filter
+  never reaches the rings or the text.
+
 ## Boundaries that hold across all phases
 
 - Offline and CDN-free; releases are self-contained static directories served

@@ -446,6 +446,169 @@ def ranged(body: bytes, content_type: str):
     return fulfill
 
 
+def marked_png(width: int, height: int, marks: list, background=(60, 60, 60)) -> bytes:
+    """A flat picture with a coloured square centred on each (x, y, rgb)
+    mark, x and y fractions of its width and height."""
+    side = max(6, round(min(width, height) * 0.05))
+    rows = [[background] * width for _ in range(height)]
+    for fx, fy, rgb in marks:
+        cx, cy = fx * width, fy * height
+        for y in range(max(0, int(cy - side / 2)), min(height, int(cy + side / 2) + 1)):
+            for x in range(max(0, int(cx - side / 2)), min(width, int(cx + side / 2) + 1)):
+                rows[y][x] = rgb
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        data = kind + payload
+        return struct.pack(">I", len(payload)) + data + struct.pack(">I", zlib.crc32(data))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    body = zlib.compress(b"".join(b"\x00" + bytes(c for px in row for c in px) for row in rows))
+    return (
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", body) + chunk(b"IEND", b"")
+    )
+
+
+# Photo hotspots: a 5:3 photo and a portrait one, each with coloured marks
+# exactly where its hotspots are, so a screenshot proves a ring sits on its
+# spot of the picture as the browser draws it.
+PHOTO_MARKS = [(0.25, 0.5, (230, 40, 40)), (0.8, 0.3, (40, 200, 60)), (0.05, 0.92, (40, 80, 230))]
+TALL_MARKS = [(0.5, 0.25, (40, 80, 230)), (0.3, 0.6, (40, 200, 60)), (0.85, 0.5, (230, 40, 40)),
+              (0.5, 0.9, (240, 220, 40))]
+HOTSPOTS = [
+    {"x": 0.25, "y": 0.5, "r": 0.05, "label": "Left person",
+     "html": "<strong>Left person</strong> (1858–1947)<br>Energy quanta, 1900."},
+    {"x": 0.8, "y": 0.3, "r": 0.04, "label": "Right person",
+     "html": "<p>Light quanta: <math><mi>E</mi><mo>=</mo><mi>h</mi><mi>ν</mi></math></p>"
+             '<p><a id="hs-link" href="#/5">The end</a></p>'},
+    {"x": 0.05, "y": 0.92, "r": 0.03, "label": "Corner person"},
+]
+TALL_HOTSPOTS = [{"x": x, "y": y, "r": 0.06, "label": f"Tall {n}"}
+                 for n, (x, y, _) in enumerate(TALL_MARKS)]
+HOTSPOT_DECK = {
+    "deck": 1,
+    "meta": {"title": "Hotspot deck", "section": "COURSE NAME"},
+    "slides": [
+        {"id": "hs-title", "type": "title", "title": "Hotspot deck", "claim": "No pictures."},
+        {"id": "hs-figure", "title": "A group photo", "claim": "Who is who.",
+         "source": "Source line",
+         "figure": {"id": "hs-photo", "src": "assets/marked.png", "alt": "A group photo",
+                    "caption": "Caption", "hotspots": HOTSPOTS}},
+        {"id": "hs-tall", "title": "A letterboxed portrait",
+         "claim": "Contain, max-height, shift and scale.",
+         "figure": {"id": "hs-tall", "src": "assets/tall.png", "alt": "A portrait",
+                    "shift": [14, -9], "scale": 0.9, "hotspots": TALL_HOTSPOTS}},
+        {"id": "hs-cover", "title": "A cropped portrait", "claim": "Cover, padding, border.",
+         "figure": {"id": "hs-cover", "src": "assets/tall.png", "alt": "A cropped portrait",
+                    "hotspots": TALL_HOTSPOTS}},
+        {"id": "hs-grid", "title": "A stepped photo", "layout": "figures", "claim": "Later.",
+         "figures": [{"id": "hs-step", "src": "assets/marked.png", "alt": "Stepped photo",
+                      "hotspots": HOTSPOTS[:2], "step": 1},
+                     {"id": "hs-plain", "src": "assets/marked.png", "alt": "Plain photo"}]},
+        {"id": "hs-end", "title": "The end", "claim": "Plain."},
+    ],
+}
+HOTSPOT_CSS = (
+    '.figure-card[data-figure-id="hs-tall"] img { width: 520px; max-height: 300px; }\n'
+    '.figure-card[data-figure-id="hs-cover"] img { width: 400px; height: 200px;'
+    " object-fit: cover; object-position: 30% 60%; padding: 6px; border: 3px solid #000; }\n"
+)
+HOTSPOTS_BY_FIGURE = {"hs-photo": HOTSPOTS, "hs-tall": TALL_HOTSPOTS, "hs-cover": TALL_HOTSPOTS,
+                      "hs-step": HOTSPOTS[:2]}
+
+# Each ring of the live slide (or of the viewer) against the picture as the
+# browser draws it, computed here on its own: the image's content box in
+# screen pixels, then object-fit and object-position.
+HOTSPOT_GEOMETRY = """([spotsByFigure, inViewer]) => {
+  const frame = document.querySelector('#deck .slide-frame');
+  const k = frame.getBoundingClientRect().width / frame.offsetWidth;
+  const measure = (img, spots, rings, ringScale, clip = null) => {
+    const s = getComputedStyle(img);
+    const box = img.getBoundingClientRect();
+    const scale = box.width / img.offsetWidth;
+    const edge = side => (parseFloat(s['border' + side + 'Width'])
+      + parseFloat(s['padding' + side])) * scale;
+    const content = {x: box.x + edge('Left'), y: box.y + edge('Top'),
+      w: box.width - edge('Left') - edge('Right'), h: box.height - edge('Top') - edge('Bottom')};
+    const nw = img.naturalWidth, nh = img.naturalHeight;
+    const fit = s.objectFit === 'cover' ? Math.max(content.w / nw, content.h / nh)
+      : s.objectFit === 'fill' ? null : Math.min(content.w / nw, content.h / nh);
+    const drawn = fit === null ? {...content} : {w: nw * fit, h: nh * fit};
+    if (fit !== null) {
+      const [px, py] = s.objectPosition.split(' ').map(v => parseFloat(v) / 100);
+      drawn.x = content.x + (content.w - drawn.w) * px;
+      drawn.y = content.y + (content.h - drawn.h) * py;
+    }
+    return rings.map((ring, n) => {
+      const r = ring.getBoundingClientRect();
+      const spot = spots[n];
+      const ex = drawn.x + spot.x * drawn.w, ey = drawn.y + spot.y * drawn.h;
+      return {label: ring.getAttribute('aria-label'), cx: r.x + r.width / 2, cy: r.y + r.height / 2,
+        w: r.width, h: r.height, ex, ey, ew: Math.max(18 * ringScale, 2 * spot.r * drawn.w),
+        inside: ex > content.x && ex < content.x + content.w && ey > content.y
+          && ey < content.y + content.h && (!clip || (ex > clip.left && ex < clip.right
+            && ey > clip.top && ey < clip.bottom)),
+        hit: document.elementFromPoint(ex, ey) === ring};
+    });
+  };
+  if (inViewer) {
+    // A zoomed photo runs past the stage, which shows only its middle.
+    const img = document.querySelector('#photo-viewer .photo-media');
+    const id = document.querySelector('#deck .figure-card.has-hotspots').dataset.figureId;
+    return measure(img, spotsByFigure[id],
+      [...document.querySelectorAll('#photo-viewer .hotspot-layer > .hotspot')], 1,
+      document.querySelector('#photo-viewer .photo-stage').getBoundingClientRect());
+  }
+  return [...document.querySelectorAll('#deck .figure-card.has-hotspots')].flatMap(card =>
+    measure(card.querySelector(':scope > img'), spotsByFigure[card.dataset.figureId],
+      [...document.querySelectorAll(
+        `#deck .hotspot-layer[data-figure-id="${card.dataset.figureId}"] > .hotspot`)], k));
+}"""
+
+# Pixels of a screenshot, read through a canvas.
+SCREEN_PIXELS = """async ([data, points]) => {
+  const image = new Image();
+  image.src = 'data:image/png;base64,' + data;
+  await image.decode();
+  const canvas = Object.assign(document.createElement('canvas'),
+    {width: image.width, height: image.height});
+  const paint = canvas.getContext('2d');
+  paint.drawImage(image, 0, 0);
+  return points.map(([x, y]) => [...paint.getImageData(Math.floor(x), Math.floor(y), 1, 1).data]
+    .slice(0, 3));
+}"""
+
+# The popup on screen, in the frame's or stage's own pixels.
+HOTSPOT_POPUP = """(where) => {
+  const popup = document.querySelector(where === 'viewer' ? '#hotspot-popup-viewer'
+    : '#hotspot-popup-slide');
+  if (!popup || popup.hidden || !popup.isConnected) return null;
+  const host = popup.parentElement;
+  const box = host.getBoundingClientRect();
+  const k = box.width / parseFloat(getComputedStyle(host).width);
+  const p = popup.getBoundingClientRect();
+  const ring = document.querySelector('.hotspot.is-active');
+  const r = ring.getBoundingClientRect();
+  const style = getComputedStyle(popup);
+  return {
+    text: popup.textContent, html: popup.innerHTML, host: host.className,
+    fontSize: parseFloat(style.fontSize), screenFont: parseFloat(style.fontSize) * k,
+    background: style.backgroundColor, color: style.color,
+    left: (p.left - box.left) / k, top: (p.top - box.top) / k,
+    right: (p.right - box.left) / k, bottom: (p.bottom - box.top) / k,
+    width: box.width / k, height: box.height / k,
+    ring: {label: ring.getAttribute('aria-label'), left: (r.left - box.left) / k,
+      top: (r.top - box.top) / k, right: (r.right - box.left) / k,
+      bottom: (r.bottom - box.top) / k, describedBy: ring.getAttribute('aria-describedby'),
+      opacity: getComputedStyle(ring).opacity},
+    side: popup.dataset.side,
+  };
+}"""
+
+RING_OPACITY = """(where) => [...document.querySelectorAll(
+  where === 'viewer' ? '#photo-viewer .hotspot' : '#deck .hotspot')]
+  .map(ring => getComputedStyle(ring).opacity)"""
+
+
 def build_legacy_unit(unit: Path) -> None:
     webdeck = unit / "webdeck"
     assets = webdeck / "assets"
@@ -2922,6 +3085,474 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(["ph-figure"], [visit["slideId"] for visit in record["visits"]])
         self.assertGreaterEqual(record["visits"][0]["durationMs"], 9000)
         self.assertEqual([], record["pauses"])
+
+    # Photo hotspots ------------------------------------------------------
+
+    def open_hotspot_deck(self, fragment: str = "", deck: dict = HOTSPOT_DECK,
+                          css: str | None = HOTSPOT_CSS, init: str | None = None,
+                          within=None, **options):
+        page = within.new_page(**options) if within else self.browser.new_page(**options)
+        self.addCleanup(page.close)
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        self.addCleanup(lambda: self.assertEqual([], errors))
+        if init:
+            page.add_init_script(init)
+        marked = marked_png(400, 240, PHOTO_MARKS)
+        tall = marked_png(200, 400, TALL_MARKS)
+        page.route("**/assets/marked.png", lambda route: route.fulfill(
+            body=marked, content_type="image/png"))
+        page.route("**/assets/tall.png", lambda route: route.fulfill(
+            body=tall, content_type="image/png"))
+        page.route("**/deck.json", lambda route: route.fulfill(json=deck))
+        if css is not None:
+            page.route("**/deck.css", lambda route: route.fulfill(
+                body=css, content_type="text/css"))
+        page.goto(self.urls["json"] + fragment)
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        self.wait_hotspots(page)
+        return page
+
+    def wait_hotspots(self, page) -> None:
+        page.wait_for_function(
+            "[...document.querySelectorAll('#deck img')].every(i => i.complete)"
+            " && [...document.querySelectorAll('#deck .hotspot-layer')].every(l => !l.hidden)")
+
+    def goto_slide(self, page, fragment: str) -> None:
+        page.evaluate("f => { location.hash = f; }", fragment)
+        page.wait_for_function(
+            "i => document.querySelector('#deck .slide-frame')?.dataset.index === i",
+            arg=fragment[2:].split(".")[0])
+        self.wait_hotspots(page)
+
+    def park_pointer(self, page) -> None:
+        """The pointer on the viewer's bar (or the window's corner), no popup open."""
+        bar = page.locator("#photo-viewer .photo-bar")
+        if bar.is_visible():
+            box = bar.bounding_box()
+            page.mouse.move(box["x"] + 4, box["y"] + box["height"] - 4)
+        else:
+            page.mouse.move(2, 2)
+        page.wait_for_function(
+            "[...document.querySelectorAll('.hotspot-popup')].every(p => p.hidden)")
+
+    def rings(self, page, viewer: bool = False) -> list[dict]:
+        return page.evaluate(HOTSPOT_GEOMETRY, [HOTSPOTS_BY_FIGURE, viewer])
+
+    def screen_pixels(self, page, points: list) -> list:
+        data = base64.b64encode(page.screenshot()).decode()
+        probe = self.browser.new_page()
+        try:
+            return probe.evaluate(SCREEN_PIXELS, [data, points])
+        finally:
+            probe.close()
+
+    def assert_rings_on_marks(self, page, rings: list, marks: list) -> None:
+        """Each ring sits on its spot of the picture: on the computed spot
+        to half a pixel, as wide as its radius says, and on the coloured
+        mark the screenshot shows there."""
+        shown = [ring for ring in rings if ring["inside"]]
+        for ring in rings:
+            with self.subTest(ring=ring["label"]):
+                self.assertAlmostEqual(ring["ex"], ring["cx"], delta=0.5)
+                self.assertAlmostEqual(ring["ey"], ring["cy"], delta=0.5)
+                self.assertAlmostEqual(ring["ew"], ring["w"], delta=0.5)
+                self.assertAlmostEqual(ring["w"], ring["h"], delta=0.5)
+                # A spot cropped away by object-fit is no target either.
+                self.assertEqual(ring["inside"], ring["hit"])
+        colours = {ring["label"]: rgb for ring, (_, _, rgb) in zip(rings, marks)}
+        pixels = self.screen_pixels(page, [[ring["cx"], ring["cy"]] for ring in shown])
+        for ring, pixel in zip(shown, pixels):
+            with self.subTest(mark=ring["label"]):
+                for got, want in zip(pixel, colours[ring["label"]]):
+                    self.assertAlmostEqual(want, got, delta=14)
+
+    def test_hotspots_sit_on_the_drawn_picture(self):
+        # Two window sizes; a figure, a letterboxed portrait under a deck's
+        # width and max-height, and object-fit cover with object-position,
+        # padding and a border, where two spots are cropped away.
+        slides = {"#/1": PHOTO_MARKS, "#/2": TALL_MARKS, "#/3": TALL_MARKS}
+        for size in ({"width": 1280, "height": 800}, {"width": 960, "height": 720}):
+            for fragment, marks in slides.items():
+                with self.subTest(size=size, slide=fragment):
+                    page = self.open_hotspot_deck(fragment, viewport=size)
+                    rings = self.rings(page)
+                    self.assertEqual(len(marks), len(rings))
+                    self.assert_rings_on_marks(page, rings, marks)
+                    if fragment == "#/2":
+                        # The portrait really is letterboxed in a wider box.
+                        self.assertEqual("300px", page.evaluate(
+                            "getComputedStyle(document.querySelector('#deck img')).height"))
+                    if fragment == "#/3":
+                        self.assertEqual([False, True, True, False],
+                                         [ring["inside"] for ring in rings])
+        # Full screen grows the canvas; the rings follow the picture.
+        page = self.open_hotspot_deck("#/1", viewport={"width": 1280, "height": 1000})
+        layer = "document.querySelector('#deck .hotspot-layer').style.top"
+        before = page.evaluate(layer)
+        page.keyboard.press("f")
+        page.wait_for_function("Boolean(document.fullscreenElement)"
+                               " || document.body.classList.contains('pseudo-fullscreen')")
+        page.wait_for_function(
+            "document.querySelector('#deck .slide-frame').style.height === '1000px'")
+        # The taller canvas gives the picture a taller box: it is centred
+        # lower in it, and the rings with it.
+        page.wait_for_function(f"{layer} !== {json.dumps(before)}")
+        self.assert_rings_on_marks(page, self.rings(page), PHOTO_MARKS)
+
+    def test_hotspot_hint_and_popup_on_the_slide(self):
+        for theme, panel in (("dark", "rgb(40, 40, 40)"), ("light", "rgb(238, 231, 216)")):
+            with self.subTest(theme=theme):
+                page = self.open_hotspot_deck(
+                    "#/1", viewport={"width": 1280, "height": 800}, reduced_motion="reduce",
+                    init=f"localStorage.setItem('lecturedeck-theme', '{theme}')")
+                rings = self.rings(page)
+                # Invisible until the pointer is over the photo.
+                self.assertEqual(["0", "0", "0"], page.evaluate(RING_OPACITY, "slide"))
+                self.assertIsNone(page.evaluate(HOTSPOT_POPUP, "slide"))
+                image = page.evaluate("""() => { const r = document.querySelector(
+                  '#deck .figure-card img').getBoundingClientRect();
+                  return {x: r.x, y: r.y, w: r.width, h: r.height}; }""")
+                page.mouse.move(image["x"] + image["w"] * 0.5, image["y"] + image["h"] * 0.12)
+                # Then a faint ring on every hotspot: the presenter's hint.
+                self.assertEqual(["0.7", "0.7", "0.7"], page.evaluate(RING_OPACITY, "slide"))
+                self.assertIsNone(page.evaluate(HOTSPOT_POPUP, "slide"))
+                # A ring under the pointer shows its popup beside it.
+                page.mouse.move(rings[0]["cx"], rings[0]["cy"])
+                popup = page.evaluate(HOTSPOT_POPUP, "slide")
+                self.assertEqual("Left person (1858–1947)Energy quanta, 1900.", popup["text"])
+                self.assertIn("<strong>Left person</strong>", popup["html"])
+                self.assertEqual(("1", "hotspot-popup-slide"), (
+                    popup["ring"]["opacity"], popup["ring"]["describedBy"]))
+                self.assertEqual(["1", "0.7", "0.7"], page.evaluate(RING_OPACITY, "slide"))
+                self.assertIn("slide-frame", popup["host"])
+                self.assert_popup_beside_its_ring(popup)
+                # Caption-size text on the 1280x720 stage, in the theme's colours.
+                self.assertEqual(22, popup["fontSize"])
+                self.assertEqual(panel, popup["background"])
+                # The next ring moves it; MathML and links render.
+                page.mouse.move(rings[1]["cx"], rings[1]["cy"], steps=4)
+                popup = page.evaluate(HOTSPOT_POPUP, "slide")
+                self.assertEqual("Right person", popup["ring"]["label"])
+                self.assertEqual(1, page.locator("#hotspot-popup-slide math").count())
+                self.assert_popup_beside_its_ring(popup)
+                # A ring with only a label shows the label.
+                page.mouse.move(rings[2]["cx"], rings[2]["cy"], steps=4)
+                popup = page.evaluate(HOTSPOT_POPUP, "slide")
+                self.assertEqual("Corner person", popup["text"])
+                self.assert_popup_beside_its_ring(popup)
+                # Off the photo, the popup and the hint go.
+                page.mouse.move(60, 400, steps=4)
+                page.wait_for_selector("#hotspot-popup-slide", state="hidden")
+                self.assertEqual(["0", "0", "0"], page.evaluate(RING_OPACITY, "slide"))
+                # The pointer can travel from a ring into its popup to click a link.
+                page.mouse.move(rings[1]["cx"], rings[1]["cy"], steps=4)
+                link = page.locator("#hs-link").bounding_box()
+                page.mouse.move(link["x"] + link["width"] / 2, link["y"] + link["height"] / 2,
+                                steps=6)
+                page.mouse.click(link["x"] + link["width"] / 2, link["y"] + link["height"] / 2)
+                page.wait_for_function(
+                    "document.querySelector('#deck .slide-frame').dataset.index === '5'")
+                self.assertFalse(self.photo(page)["open"])
+                self.assertIsNone(page.evaluate(HOTSPOT_POPUP, "slide"))
+        # A keyboard user: Enter on a focused ring shows its popup, and the
+        # deck's paging keys still page.
+        self.goto_slide(page, "#/1")
+        page.mouse.move(5, 5)
+        page.focus("#deck .hotspot >> nth=1")
+        page.keyboard.press("Enter")
+        self.assertEqual("Right person", page.evaluate(HOTSPOT_POPUP, "slide")["ring"]["label"])
+        page.keyboard.press("Space")
+        page.wait_for_function("location.hash === '#/2'")
+
+    def assert_popup_beside_its_ring(self, popup: dict) -> None:
+        ring = popup["ring"]
+        # Inside the slide, with its margin.
+        self.assertGreaterEqual(popup["left"], 7.5)
+        self.assertGreaterEqual(popup["top"], 7.5)
+        self.assertLessEqual(popup["right"], popup["width"] - 7.5)
+        self.assertLessEqual(popup["bottom"], popup["height"] - 7.5)
+        # Beside its ring, never over it.
+        apart = (popup["left"] >= ring["right"] or popup["right"] <= ring["left"]
+                 or popup["top"] >= ring["bottom"] or popup["bottom"] <= ring["top"])
+        self.assertTrue(apart, popup)
+        if popup["side"] in ("left", "right"):
+            centre = (ring["top"] + ring["bottom"]) / 2
+            self.assertTrue(popup["top"] - 0.5 <= centre <= popup["bottom"] + 0.5, popup)
+
+    def test_hotspot_rings_key_toggles_the_hint_for_the_whole_deck(self):
+        page = self.open_hotspot_deck("#/1", viewport={"width": 1280, "height": 800},
+                                      reduced_motion="reduce")
+        rings = self.rings(page)
+        image = page.locator("#deck .figure-card img").bounding_box()
+        page.mouse.move(image["x"] + image["width"] / 2, image["y"] + 10)
+        self.assertEqual(["0.7"] * 3, page.evaluate(RING_OPACITY, "slide"))
+        page.keyboard.press("h")
+        self.assertEqual(["0"] * 3, page.evaluate(RING_OPACITY, "slide"))
+        self.assertTrue(page.evaluate("document.body.classList.contains('hotspot-rings-off')"))
+        # A hotspot under the pointer still shows its own ring and popup.
+        page.mouse.move(rings[0]["cx"], rings[0]["cy"], steps=4)
+        self.assertEqual(["1", "0", "0"], page.evaluate(RING_OPACITY, "slide"))
+        self.assertEqual("Left person", page.evaluate(HOTSPOT_POPUP, "slide")["ring"]["label"])
+        # For the whole deck: another slide, the viewer, a reload of the tab.
+        page.keyboard.press("PageDown")
+        self.wait_hotspots(page)
+        page.mouse.move(*self.ring_centre(page, 1))
+        self.assertEqual(["0", "1", "0", "0"], page.evaluate(RING_OPACITY, "slide"))
+        page.reload()
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        self.wait_hotspots(page)
+        self.assertEqual(["off", True], page.evaluate(
+            "[sessionStorage.getItem('lecturedeck-hotspot-rings:/webdeck/:Hotspot deck'),"
+            " document.body.classList.contains('hotspot-rings-off')]"))
+        # Modified keys are not the switch.
+        page.keyboard.press("Control+h")
+        page.keyboard.press("Alt+h")
+        self.assertTrue(page.evaluate("document.body.classList.contains('hotspot-rings-off')"))
+        # The Appearance dialog carries the same switch.
+        page.keyboard.press("t")
+        page.wait_for_selector("#appearance-dialog[open]")
+        checkbox = page.get_by_label("Hint rings on photo hotspots (H)", exact=True)
+        self.assertFalse(checkbox.is_checked())
+        checkbox.check()
+        # Turned on, every ring shows a moment without the pointer.
+        self.assertTrue(page.evaluate("document.body.classList.contains('hotspot-rings-flash')"))
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#appearance-dialog", state="hidden")
+        self.park_pointer(page)
+        self.assertEqual(["0.7"] * 4, page.evaluate(RING_OPACITY, "slide"))
+        page.wait_for_function("!document.body.classList.contains('hotspot-rings-flash')")
+        self.assertEqual(["0"] * 4, page.evaluate(RING_OPACITY, "slide"))
+        # H in the viewer too.
+        self.goto_slide(page, "#/1")
+        image = page.locator("#deck .figure-card img").bounding_box()
+        page.mouse.click(image["x"] + image["width"] / 2, image["y"] + 10)
+        page.wait_for_selector("#photo-viewer[open]")
+        page.keyboard.press("h")
+        self.assertTrue(page.evaluate("document.body.classList.contains('hotspot-rings-off')"))
+        self.assertTrue(self.photo(page)["open"])
+        page.keyboard.press("h")
+        self.assertFalse(page.evaluate("document.body.classList.contains('hotspot-rings-off')"))
+        # A deck without hotspots offers no switch.
+        plain = self.open_photo_deck("#/1")
+        self.assertEqual(0, plain.locator("#hotspot-rings-input").count())
+
+    def ring_centre(self, page, n: int, viewer: bool = False) -> tuple[float, float]:
+        selector = "#photo-viewer .hotspot" if viewer else "#deck .hotspot"
+        box = page.locator(selector).nth(n).bounding_box()
+        return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
+    def test_hotspots_follow_zoom_and_pan_in_the_photo_viewer(self):
+        page = self.open_hotspot_deck("#/1", viewport={"width": 1600, "height": 1000},
+                                      reduced_motion="reduce")
+        image = page.locator("#deck .figure-card img").bounding_box()
+        # A click on the photo, or on a ring, opens it.
+        page.mouse.move(*self.ring_centre(page, 0))
+        page.mouse.click(*self.ring_centre(page, 0))
+        page.wait_for_selector("#photo-viewer[open]")
+        self.assertIsNone(page.evaluate(HOTSPOT_POPUP, "slide"))
+        self.assertEqual(3, page.locator("#photo-viewer .hotspot").count())
+        self.wait_drawn(page)
+        self.park_pointer(page)
+        self.assert_rings_on_marks(page, self.rings(page, viewer=True), PHOTO_MARKS)
+        # Zoom around the cursor and pan: the rings follow exactly.
+        media = self.photo(page)["media"]
+        page.mouse.move(media["x"] + media["w"] * 0.55, media["y"] + media["h"] * 0.75)
+        page.mouse.wheel(0, -300)
+        page.wait_for_function("document.querySelector('#photo-viewer').dataset.zoomed === 'true'")
+        self.park_pointer(page)
+        self.assert_rings_on_marks(page, self.rings(page, viewer=True), PHOTO_MARKS)
+        page.mouse.move(800, 400)
+        page.mouse.down()
+        page.mouse.move(700, 450, steps=4)
+        page.mouse.up()
+        self.assertTrue(self.photo(page)["open"])
+        self.park_pointer(page)
+        self.assert_rings_on_marks(page, self.rings(page, viewer=True), PHOTO_MARKS)
+        page.keyboard.press("0")
+        # Hover shows the popup in the stage, at the slide's text size.
+        page.mouse.move(*self.ring_centre(page, 0, viewer=True), steps=4)
+        popup = page.evaluate(HOTSPOT_POPUP, "viewer")
+        self.assertEqual(("Left person", "photo-stage"), (popup["ring"]["label"], popup["host"]))
+        self.assert_popup_beside_its_ring(popup)
+        scale = min(1600 / 1280, 1000 / 720)
+        self.assertAlmostEqual(22 * scale, popup["fontSize"], delta=0.05)
+        self.assertEqual("rgb(235, 219, 178)", popup["color"])
+        # Brightness and contrast never reach the popup or the rings.
+        page.keyboard.press("b")
+        page.keyboard.press("c")
+        self.assertEqual("brightness(110%) contrast(110%)", self.photo(page)["filter"])
+        self.assertEqual(["none"], page.evaluate("""() => { const out = new Set();
+          for (let n = document.querySelector('#hotspot-popup-viewer'); n; n = n.parentElement)
+            out.add(getComputedStyle(n).filter);
+          for (let n = document.querySelector('#photo-viewer .hotspot'); n; n = n.parentElement)
+            out.add(getComputedStyle(n).filter);
+          return [...out]; }"""))
+        # A popup opened from the keyboard stays, and follows its ring when
+        # the photo zooms.
+        self.park_pointer(page)
+        page.focus("#photo-viewer .hotspot >> nth=0")
+        page.keyboard.press("Enter")
+        before = page.evaluate(HOTSPOT_POPUP, "viewer")
+        self.assertEqual("Left person", before["ring"]["label"])
+        page.keyboard.press("+")
+        after = page.evaluate(HOTSPOT_POPUP, "viewer")
+        self.assertEqual("Left person", after["ring"]["label"])
+        self.assertNotEqual(before["ring"]["left"], after["ring"]["left"])
+        self.assert_popup_beside_its_ring(after)
+        self.assertTrue(self.photo(page)["open"])
+        # A double-click on a ring zooms like one on the picture.
+        page.keyboard.press("0")
+        page.mouse.dblclick(*self.ring_centre(page, 1, viewer=True))
+        self.assertEqual("Zoom 2.0×", self.photo(page)["values"][2])
+        # The laser keeps pointing, and the popup still follows the pointer.
+        page.keyboard.press("l")
+        page.mouse.move(5, 5)
+        page.mouse.move(*self.ring_centre(page, 1, viewer=True), steps=4)
+        self.assertEqual("Right person", page.evaluate(HOTSPOT_POPUP, "viewer")["ring"]["label"])
+        self.assertEqual("photo-viewer", page.evaluate(
+            "document.querySelector('.laser-dot').parentElement.id"))
+        self.assertFalse(page.evaluate("document.querySelector('.laser-dot').hidden"))
+        page.keyboard.press("l")
+        # Paging and clicker keys only close it, on the same slide; no ring
+        # or popup outlives it.
+        state = self.close_photo(page, "PageDown")
+        self.assertEqual(("#/1", False), (state["hash"], state["open"]))
+        self.assertEqual(0, page.locator("#photo-viewer .hotspot, #hotspot-popup-viewer").count())
+        page.keyboard.press("PageDown")
+        page.wait_for_function("location.hash === '#/2'")
+        # A plain image opens with no rings.
+        self.goto_slide(page, "#/4.1")
+        page.click("#deck [data-figure-id='hs-plain'] img")
+        page.wait_for_selector("#photo-viewer[open]")
+        self.assertEqual(0, page.locator("#photo-viewer .hotspot").count())
+        page.keyboard.press("Escape")
+        self.assertTrue(image["width"] > 0)
+
+    def wait_drawn(self, page) -> None:
+        page.wait_for_function("""() => {
+          const m = document.querySelector('#photo-viewer .photo-media');
+          const l = document.querySelector('#photo-viewer .hotspot-layer');
+          return m && m.complete && l && l.style.width === m.style.width; }""")
+
+    def test_a_tap_on_a_ring_shows_its_popup(self):
+        context = self.browser.new_context(viewport={"width": 1280, "height": 800}, has_touch=True)
+        self.addCleanup(context.close)
+        page = self.open_hotspot_deck("#/1", within=context)
+        if page.evaluate("matchMedia('(hover: none)').matches"):
+            # No hover to wait for: the hint shows from the start.
+            page.wait_for_function("getComputedStyle(document.querySelector('#deck .hotspot'))"
+                                   ".opacity === '0.7'")
+        page.touchscreen.tap(*self.ring_centre(page, 0))
+        page.wait_for_selector("#hotspot-popup-slide:not([hidden])")
+        popup = page.evaluate(HOTSPOT_POPUP, "slide")
+        self.assertEqual("Left person", popup["ring"]["label"])
+        self.assert_popup_beside_its_ring(popup)
+        # The tap neither opened the photo nor paged.
+        self.assertEqual((False, "#/1"), (self.photo(page)["open"], self.photo(page)["hash"]))
+        # Another ring moves it; a second tap on the same ring closes it.
+        page.touchscreen.tap(*self.ring_centre(page, 1))
+        self.assertEqual("Right person", page.evaluate(HOTSPOT_POPUP, "slide")["ring"]["label"])
+        page.touchscreen.tap(*self.ring_centre(page, 1))
+        page.wait_for_selector("#hotspot-popup-slide", state="hidden")
+        # A tap anywhere else lets it go.
+        page.touchscreen.tap(*self.ring_centre(page, 0))
+        page.wait_for_selector("#hotspot-popup-slide:not([hidden])")
+        claim = page.locator("#deck .claim").bounding_box()
+        page.touchscreen.tap(claim["x"] + 10, claim["y"] + 10)
+        page.wait_for_selector("#hotspot-popup-slide", state="hidden")
+        self.assertEqual("#/1", self.photo(page)["hash"])
+        # A tap on the photo away from the rings opens the viewer, where a
+        # tap on a ring shows its popup and a tap on the picture hides it.
+        image = page.locator("#deck .figure-card img").bounding_box()
+        page.touchscreen.tap(image["x"] + image["width"] / 2, image["y"] + 8)
+        page.wait_for_selector("#photo-viewer[open]")
+        self.wait_drawn(page)
+        page.touchscreen.tap(*self.ring_centre(page, 2, viewer=True))
+        page.wait_for_selector("#hotspot-popup-viewer:not([hidden])")
+        self.assertEqual("Corner person", page.evaluate(HOTSPOT_POPUP, "viewer")["text"])
+        media = self.photo(page)["media"]
+        page.touchscreen.tap(media["x"] + media["w"] / 2, media["y"] + 8)
+        page.wait_for_selector("#hotspot-popup-viewer", state="hidden")
+        self.assertTrue(self.photo(page)["open"])
+
+    def test_hotspots_never_move_anything(self):
+        boxes = """() => Object.fromEntries(['#deck .page-number', '#deck .course-name',
+          '#deck .source', '#deck .slide-foot', '#deck .slide-head', '#deck .slide-body',
+          '#deck .copy', '#deck .claim', '#deck .figure-stack', '#deck .figure-card',
+          '#deck .figure-card img', '#deck .figure-card figcaption', '#counter',
+          '#controls-tools', '#appearance-button', '#presentation-controls'].map(s => {
+            const r = document.querySelector(s).getBoundingClientRect();
+            return [s, [r.x, r.y, r.width, r.height]]; }))"""
+        bare = {**HOTSPOT_DECK, "slides": [
+            {**slide, "figure": {k: v for k, v in slide["figure"].items() if k != "hotspots"}}
+            if "figure" in slide else slide for slide in HOTSPOT_DECK["slides"]]}
+        for size in ({"width": 1280, "height": 900}, {"width": 960, "height": 720}):
+            with self.subTest(size=size):
+                plain = self.open_hotspot_deck("#/1", deck=bare, viewport=size)
+                plain.wait_for_function(
+                    "document.querySelector('#controls-tools').getAnimations().length === 0")
+                self.assertEqual(0, plain.locator(".hotspot").count())
+                expected = plain.evaluate(boxes)
+                page = self.open_hotspot_deck("#/1", viewport=size)
+                page.wait_for_function(
+                    "document.querySelector('#controls-tools').getAnimations().length === 0")
+                self.assertEqual(expected, page.evaluate(boxes))
+                page.mouse.move(*self.ring_centre(page, 0))
+                self.assertIsNotNone(page.evaluate(HOTSPOT_POPUP, "slide"))
+                self.assertEqual(expected, page.evaluate(boxes))
+                page.keyboard.press("h")
+                page.keyboard.press("h")
+                self.assertEqual(expected, page.evaluate(boxes))
+                page.mouse.click(*self.ring_centre(page, 0))
+                page.wait_for_selector("#photo-viewer[open]")
+                page.mouse.move(*self.ring_centre(page, 0, viewer=True))
+                self.assertEqual(expected, page.evaluate(boxes))
+                self.close_photo(page)
+                self.assertEqual(expected, page.evaluate(boxes))
+
+    def test_hotspots_step_print_and_overview(self):
+        page = self.open_hotspot_deck("#/4", viewport={"width": 1280, "height": 800},
+                                      reduced_motion="reduce")
+        stepped = "#deck .hotspot-layer[data-figure-id='hs-step'] .hotspot"
+        # A stepped figure's rings wait hidden with it, and are no target.
+        self.assertEqual(["hidden", "hidden"], page.evaluate(
+            "s => [...document.querySelectorAll(s)].map(r => getComputedStyle(r).visibility)",
+            stepped))
+        self.assertFalse(any(ring["hit"] for ring in self.rings(page)))
+        page.keyboard.press("ArrowRight")
+        self.assertEqual("#/4.1", self.photo(page)["hash"])
+        rings = self.rings(page)
+        self.assertTrue(all(ring["hit"] for ring in rings))
+        self.assert_rings_on_marks(page, rings, PHOTO_MARKS[:2])
+        page.mouse.move(rings[0]["cx"], rings[0]["cy"])
+        self.assertIsNotNone(page.evaluate(HOTSPOT_POPUP, "slide"))
+        # Stepped back out of view, its popup goes with it.
+        page.keyboard.press("ArrowLeft")
+        self.assertEqual("#/4", self.photo(page)["hash"])
+        self.assertIsNone(page.evaluate(HOTSPOT_POPUP, "slide"))
+        # The overview shows the photos without rings.
+        page.keyboard.press("o")
+        page.wait_for_selector(".overview-card")
+        self.assertEqual(0, page.locator("#overview .hotspot, #overview .hotspot-layer").count())
+        self.assertGreater(page.locator("#overview [data-figure-id='hs-photo'] img").count(), 0)
+        page.keyboard.press("Escape")
+        page.wait_for_function("document.querySelector('#overview').hidden")
+        # Printing a live slide shows the photo without rings or popup.
+        self.goto_slide(page, "#/1")
+        page.mouse.move(*self.ring_centre(page, 0))
+        self.assertIsNotNone(page.evaluate(HOTSPOT_POPUP, "slide"))
+        page.emulate_media(media="print")
+        self.assertEqual(["none", "none", "block"], page.evaluate(
+            "['#deck .hotspot-layer', '#hotspot-popup-slide', '#deck .figure-card img']"
+            ".map(s => getComputedStyle(document.querySelector(s)).display)"))
+        page.emulate_media(media="screen")
+        # Print pages and PDF exports hold none of it.
+        printed = self.open_photo_deck("?print=1", deck=HOTSPOT_DECK)
+        printed.wait_for_function("window.LECTUREDECK_PRINT_READY === true")
+        self.assertEqual(0, printed.locator(
+            ".hotspot, .hotspot-layer, .hotspot-popup, .has-hotspots").count())
+        self.assertGreater(printed.locator("[data-figure-id='hs-photo'] img").count(), 0)
 
 
 PACING_DECK = {
