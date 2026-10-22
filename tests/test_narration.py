@@ -131,6 +131,31 @@ class ChapterTest(unittest.TestCase):
         self.assertNotIn("<!-- backup:", text)
         self.assertEqual([("Opening", False, ["1", "2"])], self.chapters(slides))
 
+    def test_review_slides_read_h_and_leave_the_main_count(self):
+        slides = [
+            {"id": "title", "type": "title", "title": "Lecture"},
+            {"id": "review", "type": "section", "title": "Homework review", "review": True},
+            {"id": "review-one", "title": "Solution", "review": True},
+            {"id": "part-a", "type": "section", "title": "Part A"},
+            {"id": "a-one", "title": "Idea"},
+            {"id": "extra", "type": "section", "title": "Backup", "appendix": True},
+        ]
+        marks = numbering(slides)
+        self.assertEqual((3, 2, 1), (marks.main_total, marks.review_total, marks.backup_total))
+        self.assertEqual(
+            ["1", "H1", "H2", "2", "3", "B1"], [marks.label(i) for i in range(len(slides))]
+        )
+        document = outline(base_deck(slides), unit="unit", deck="d", digest=DIGEST)
+        self.assertEqual(2, document["review_total"])
+        self.assertIn(
+            "; 3 main slides; review H1-H2; backup B1-B1 -->", render(slides).split("\n")[1]
+        )
+        # Without review slides the outline keeps its earlier keys.
+        plain = outline(
+            base_deck([{"id": "one", "title": "One"}]), unit="u", deck="d", digest=DIGEST
+        )
+        self.assertNotIn("review_total", plain)
+
     def test_slides_before_the_first_section_use_the_opening_label(self):
         self.assertEqual("Welcome", self.chapters(SECTIONED, opening="Welcome")[0][0])
         self.assertEqual(

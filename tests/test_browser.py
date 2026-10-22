@@ -176,6 +176,22 @@ APPENDIX_DECK = {
 }
 
 
+# A meeting that opens with a homework review: the review reads H1, H2 and
+# the lecture's own slides count 1, 2, 3 around it.
+REVIEW_DECK = {
+    "deck": 1,
+    "meta": {"title": "Review deck", "section": "SMOKE", "opening": "OPENING"},
+    "slides": [
+        {"id": "r-title", "type": "title", "title": "Review deck", "claim": "Main one."},
+        {"id": "r-review", "type": "section", "title": "Homework review", "review": True},
+        {"id": "r-solution", "title": "Solution", "claim": "Worked.", "review": True},
+        {"id": "r-part", "type": "section", "title": "Part A"},
+        {"id": "r-idea", "title": "Idea", "claim": "Main three."},
+        {"id": "r-backup", "type": "section", "title": "Backup", "appendix": True},
+    ],
+}
+
+
 STEPS_DECK = {
     "deck": 1,
     "meta": {"title": "Steps deck", "section": "SMOKE", "opening": "OPENING"},
@@ -967,6 +983,67 @@ class BrowserSmokeTest(unittest.TestCase):
         deep = self.open_appendix_deck("#/3")
         self.assertEqual("B1 / 2", self.numbering_state(deep)["counter"])
         self.assertTrue(self.numbering_state(deep)["bodyClass"])
+
+    def test_review_slides_read_h_and_leave_the_main_count(self):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.route("**/deck.json", lambda route: route.fulfill(json=REVIEW_DECK))
+        page.goto(self.urls["json"] + "#/2")
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        def state():
+            return page.evaluate("""() => {
+          const frame = document.querySelector('#deck .slide-frame');
+          return {
+            counter: document.querySelector('#counter').textContent,
+            footer: frame.querySelector('.page-number').textContent,
+            aria: frame.getAttribute('aria-label'),
+            review: frame.getAttribute('data-review'),
+            appendix: frame.getAttribute('data-appendix'),
+            inReview: document.body.classList.contains('in-review'),
+            hash: location.hash,
+          };
+        }""")
+        self.assertEqual(
+            {"counter": "H2 / 2", "footer": "H2 / 2", "aria": "Review slide H2 of 2: Solution",
+             "review": "true", "appendix": None, "inReview": True, "hash": "#/2"},
+            state(),
+        )
+        page.keyboard.press("ArrowRight")
+        self.assertEqual(
+            {"counter": "2 / 3", "footer": "2 / 3", "aria": "Slide 2 of 3: Part A",
+             "review": None, "appendix": None, "inReview": False, "hash": "#/3"},
+            state(),
+        )
+        page.keyboard.press("End")
+        self.assertEqual(("B1 / 1", "true", False), (
+            state()["counter"], state()["appendix"], state()["inReview"]))
+        self.assertEqual(
+            ["1. Review deck", "H1. Homework review", "H2. Solution", "2. Part A", "3. Idea",
+             "B1. Backup"],
+            self.overview_labels(page),
+        )
+
+    def test_pacer_labels_review_visits(self):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.route("**/deck.json", lambda route: route.fulfill(json=REVIEW_DECK))
+        page.route("**/presentation-time.json", lambda route: route.fulfill(
+            json={"start": "09:00", "end": "10:00", "timeZone": "UTC",
+                  "dates": ["2026-01-01"]}
+        ))
+        page.clock.install(time=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc))
+        page.goto(self.urls["json"] + "#/2")
+        page.wait_for_selector("#pacing-button")
+        page.clock.run_for(2000)
+        page.keyboard.press("ArrowRight")
+        page.clock.run_for(2000)
+        (entry,) = journal(page)
+        self.assertEqual(
+            {"r-solution": {"number": 3, "label": "H2", "title": "Solution",
+                            "section": "Homework review", "review": True},
+             "r-part": {"number": 4, "label": "2", "title": "Part A", "section": "Part A"}},
+            entry["record"]["slides"],
+        )
 
     def test_appendix_labels_print_pages(self):
         page = self.browser.new_page()

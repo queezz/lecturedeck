@@ -62,6 +62,7 @@ SLIDE_KEYS = frozenset(
         "className",
         "chrome",
         "appendix",
+        "review",
         "formula",
         "cards",
         "figure",
@@ -354,6 +355,7 @@ def _validate_slide(errors: list[str], where: str, slide: object, seen_ids: set[
         errors.append(f"deck.json: {where}.className must be space-separated class names")
     _check_bool(errors, where, slide, "chrome")
     _check_bool(errors, where, slide, "appendix")
+    _check_bool(errors, where, slide, "review")
     if "formula" in slide:
         _validate_formula(errors, f"{where}.formula", slide["formula"])
     if "cards" in slide:
@@ -691,6 +693,28 @@ def _validate_appendix(errors: list[str], slides: list) -> None:
         )
 
 
+def _validate_review(errors: list[str], slides: list) -> None:
+    # Review slides (H1, H2, ...) are main-path material the meeting opens
+    # with; inside the backup they would need two labels at once.
+    start = next(
+        (
+            position
+            for position, slide in enumerate(slides)
+            if isinstance(slide, dict) and slide.get("appendix") is True
+        ),
+        None,
+    )
+    if start is None:
+        return
+    for position in range(start, len(slides)):
+        slide = slides[position]
+        if isinstance(slide, dict) and slide.get("review") is True:
+            errors.append(
+                f"deck.json: slides[{position}].review cannot be true in the appendix; "
+                "review slides come before the slide that sets appendix"
+            )
+
+
 def validate_deck(data: object) -> list[str]:
     """Validate deck.json structure; returns error strings, empty when valid."""
     if not isinstance(data, dict):
@@ -735,6 +759,7 @@ def validate_deck(data: object) -> list[str]:
         for position, slide in enumerate(slides):
             _validate_slide(errors, f"slides[{position}]", slide, seen_ids)
         _validate_appendix(errors, slides)
+        _validate_review(errors, slides)
     return errors
 
 

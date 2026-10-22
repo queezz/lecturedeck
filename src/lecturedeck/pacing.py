@@ -53,7 +53,7 @@ _HHMM = re.compile(r"(?:[01][0-9]|2[0-3])[0-5][0-9]")
 _CLOCK = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
 _INSTANT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z")
 _TIME_ZONE = re.compile(r"[A-Za-z0-9_+/-]{1,64}")
-_LABEL = re.compile(r"B?[0-9]{1,6}")
+_LABEL = re.compile(r"[BH]?[0-9]{1,6}")
 _VIEWER = re.compile(r"[0-9A-Za-z.+-]{1,40}")
 _HOST = re.compile(
     r"(?:\[(?P<v6>[0-9A-Fa-f:.]+)\]|(?P<name>[A-Za-z0-9.-]+))(?::(?P<port>[0-9]{1,5}))?"
@@ -283,7 +283,7 @@ _TOP_OPTIONAL = frozenset({"migratedFrom"})
 _SLOT_KEYS = frozenset({"start", "end", "startAt", "endAt"})
 _WINDOW_KEYS = frozenset({"before", "after", "from", "to"})
 _SLIDE_KEYS = frozenset({"number", "label", "title", "section"})
-_SLIDE_OPTIONAL = frozenset({"backup"})
+_SLIDE_OPTIONAL = frozenset({"backup", "review"})
 _VISIT_KEYS = frozenset({"slideId", "startedAt", "durationMs", "phase"})
 _PAUSE_KEYS = frozenset({"startedAt", "durationMs", "why"})
 
@@ -452,10 +452,11 @@ def parse_record(
             "title": _text(raw["title"], f"{field}.title"),
             "section": _text(raw["section"], f"{field}.section"),
         }
-        if "backup" in raw:
-            if not isinstance(raw["backup"], bool):
-                raise _invalid(f"{field}.backup")
-            slide["backup"] = raw["backup"]
+        for flag in ("backup", "review"):
+            if flag in raw:
+                if not isinstance(raw[flag], bool):
+                    raise _invalid(f"{field}.{flag}")
+                slide[flag] = raw[flag]
         slides[slide_id] = slide
 
     phase_bounds = {

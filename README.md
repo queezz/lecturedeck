@@ -134,6 +134,16 @@ HTTP, with no functions or executable deck code. A minimal deck looks like:
   `data-appendix="true"` and the body gains `in-appendix` while one is shown,
   so `deck.css` can style them. `check` requires a boolean and rejects more
   than one `appendix: true`; without it, numbering stays plain `i / N`.
+- `review: true` marks a slide as part of a homework review that a meeting
+  opens with (since 0.28.0). Review slides are numbered `H1`, `H2`, … in deck
+  order and leave the main count, so the lecture's own slides read `1 … N`
+  wherever the review sits: title `1 / 41`, the review `H1 / 38` … `H38 / 38`,
+  then the first lecture slide `2 / 41`. Screen readers hear "Review slide H4
+  of 38"; the overview and the pacing report show the bare `H4`. Review frames
+  carry `data-review="true"` and the body gains `in-review` while one is
+  shown, so `deck.css` can give them their own shade. `check` requires a
+  boolean and rejects `review: true` on or after the appendix slide. A deck
+  without the marker numbers exactly as before.
 - `check` validates field types, enum values, ids, figure geometry ranges, and
   every declared asset reference before serving or releasing. Unknown fields
   are rejected, so typos surface immediately. Declared media and interactive
@@ -860,7 +870,8 @@ and never deletes a file. One segment (schema 2) looks like:
  "savedAt": "…Z", "savedBy": {"host": "<computer name>", "lecturedeck": "0.24.0"}}
 ```
 
-Backup slides carry `"backup": true` and labels `B1`, `B2`, …. A record
+Backup slides carry `"backup": true` and labels `B1`, `B2`, …; review
+slides carry `"review": true` and labels `H1`, `H2`, …. A record
 holds only slide ids, numbers, labels, titles and sections, visit and pause
 times, time in full screen, the deck title, path and schedule, and the saving
 computer's host name and lecturedeck version: no student data and nothing

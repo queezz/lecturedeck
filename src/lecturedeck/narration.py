@@ -135,26 +135,37 @@ def read_deck(path: Path) -> tuple[dict, str]:
 
 @dataclass(frozen=True)
 class Numbering:
-    """Port of lecturedeck.js slideNumbering: the appendix is a suffix."""
+    """Port of lecturedeck.js slideNumbering: the appendix is a suffix, and
+    review slides before it (H1, H2, ...) leave the main count."""
 
     total: int
     start: int | None
+    reviews: frozenset[int] = frozenset()
+
+    def in_appendix(self, index: int) -> bool:
+        return self.start is not None and index >= self.start
+
+    def in_review(self, index: int) -> bool:
+        return not self.in_appendix(index) and index in self.reviews
+
+    @property
+    def review_total(self) -> int:
+        return sum(1 for index in self.reviews if not self.in_appendix(index))
 
     @property
     def main_total(self) -> int:
-        return self.total if self.start is None else self.start
+        end = self.total if self.start is None else self.start
+        return end - self.review_total
 
     @property
     def backup_total(self) -> int:
         return 0 if self.start is None else self.total - self.start
 
-    def in_appendix(self, index: int) -> bool:
-        return self.start is not None and index >= self.start
-
     def label(self, index: int) -> str:
         if self.in_appendix(index):
             return f"B{index - self.start + 1}"
-        return str(index + 1)
+        same = sum(1 for i in range(index + 1) if self.in_review(i) == self.in_review(index))
+        return f"H{same}" if self.in_review(index) else str(same)
 
 
 def numbering(slides: list) -> Numbering:
@@ -166,7 +177,12 @@ def numbering(slides: list) -> Numbering:
         ),
         None,
     )
-    return Numbering(len(slides), start)
+    reviews = frozenset(
+        position
+        for position, slide in enumerate(slides)
+        if isinstance(slide, dict) and slide.get("review") is True
+    )
+    return Numbering(len(slides), start, reviews)
 
 
 def _string(value: object) -> str:
@@ -239,6 +255,7 @@ def outline(data: dict, *, unit: str, deck: str, digest: str) -> dict:
         "sha256": digest,
         "main_total": marks.main_total,
         "backup_total": marks.backup_total,
+        **({"review_total": marks.review_total} if marks.review_total else {}),
         "chapters": [
             {
                 "title": chapter["title"],
@@ -270,6 +287,8 @@ def skeleton(data: dict, *, unit: str, digest: str) -> str:
     backup = (
         f"backup B1-B{marks.backup_total}" if marks.start is not None else "no backup"
     )
+    if marks.review_total:
+        backup = f"review H1-H{marks.review_total}; {backup}"
     parts = [
         f"<!-- deck: {unit} sha256 {digest} -->\n"
         f"<!-- lecturedeck {__version__} narration skeleton; "

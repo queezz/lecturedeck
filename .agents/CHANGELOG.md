@@ -1,5 +1,29 @@
 # Changelog — shipped version history
 
+## 0.28.0
+
+Owner, 2026-10-23, on a meeting deck that opens with two homework reviews:
+"Maybe mark homework screens pages with H1 and so on, then main sequence
+counts only main lecture slides. Same as we do with the backups." Then:
+"add new counting capability to the viewer."
+
+- `review: true` on a slide before the appendix marks homework-review
+  material. Those slides read `H1`, `H2`, … in deck order (counter and
+  footer `H4 / 38`), and the main slides count without them, so a lecture
+  that follows a review still numbers `1 … N`.
+- Review frames carry `data-review="true"` and the body gains `in-review`
+  while one is shown: `deck.css` can shade them, as it can the backup.
+- Screen readers hear "Review slide H4 of 38"; the overview shows `H4.`.
+- Pacing records label review visits `H4` with `"review": true`; the
+  record parser accepts both, and older records are unchanged.
+- `lecturedeck narration`: labels follow the same numbering; the skeleton
+  header names the review (`review H1-H38`), and `--outline` adds
+  `review_total` only when a deck has review slides.
+- `check` requires a boolean and rejects `review: true` on or after the
+  appendix slide. Decks without the marker number exactly as before.
+- Tests: deck validation, narration numbering, pacing labels, and two
+  browser tests (numbering, overview and the pacer's record).
+
 ## 0.27.0
 
 Owner, 2026-10-19, on a slide of the Solvay 1927 group photograph:

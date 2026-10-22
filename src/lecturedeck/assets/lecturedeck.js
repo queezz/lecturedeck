@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.27.0";
+  const VIEWER_VERSION = "0.28.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -183,30 +183,44 @@
 
 
   // The first slide with `appendix: true` starts backup material. Main slides
-  // count against the main total; appendix slides read B1, B2, … instead. A
-  // deck without the marker keeps plain "i / N" numbering.
+  // count against the main total; appendix slides read B1, B2, … instead.
+  // Slides with `review: true` before the appendix (a homework review the
+  // meeting opens with) read H1, H2, … and leave the main count too, so the
+  // lecture's own slides number 1 … N wherever the review sits. A deck with
+  // neither marker keeps plain "i / N" numbering.
   function slideNumbering(slides) {
     const start = slides.findIndex(slide => slide?.appendix === true);
     const hasAppendix = start >= 0;
-    const mainTotal = hasAppendix ? start : slides.length;
-    const backupTotal = hasAppendix ? slides.length - start : 0;
     const inAppendix = i => hasAppendix && i >= start;
-    const label = i => inAppendix(i) ? `B${i - start + 1}` : String(i + 1);
+    const inReview = i => !inAppendix(i) && slides[i]?.review === true;
+    const ordinal = [];
+    let mainTotal = 0;
+    let reviewTotal = 0;
+    slides.forEach((_, i) => {
+      ordinal[i] = inAppendix(i) ? i - start + 1 : inReview(i) ? ++reviewTotal : ++mainTotal;
+    });
+    const hasReview = reviewTotal > 0;
+    const backupTotal = hasAppendix ? slides.length - start : 0;
+    const label = i => inAppendix(i) ? `B${ordinal[i]}` : inReview(i) ? `H${ordinal[i]}` : String(ordinal[i]);
     return {
       hasAppendix,
+      hasReview,
       inAppendix,
+      inReview,
       label,
-      // Inside the backup the presenter still wants to see where he is:
-      // "B4 / 92" (position and backup total), never "B4 / B92".
-      position: i => inAppendix(i) ? `${label(i)} / ${backupTotal}` : `${i + 1} / ${mainTotal}`,
+      // Inside the backup or the review the presenter still wants to see
+      // where he is: "B4 / 92" (position and that part's total), never "B4 / B92".
+      position: i => inAppendix(i) ? `${label(i)} / ${backupTotal}`
+        : inReview(i) ? `${label(i)} / ${reviewTotal}` : `${ordinal[i]} / ${mainTotal}`,
       // The widest positions, one per line. The page number and the counter
       // keep a box this wide on every slide, so going from 9 to 10 moves
       // nothing beside them.
-      widest: [`${mainTotal} / ${mainTotal}`, hasAppendix ? `B${backupTotal} / ${backupTotal}` : ""]
-        .filter(Boolean).join("\n"),
-      ariaLabel: (i, title) => !hasAppendix ? `Slide ${i + 1}: ${title}`
+      widest: [`${mainTotal} / ${mainTotal}`, hasReview ? `H${reviewTotal} / ${reviewTotal}` : "",
+        hasAppendix ? `B${backupTotal} / ${backupTotal}` : ""].filter(Boolean).join("\n"),
+      ariaLabel: (i, title) => !hasAppendix && !hasReview ? `Slide ${i + 1}: ${title}`
         : inAppendix(i) ? `Backup slide ${label(i)} of ${backupTotal}: ${title}`
-          : `Slide ${i + 1} of ${mainTotal}: ${title}`,
+          : inReview(i) ? `Review slide ${label(i)} of ${reviewTotal}: ${title}`
+            : `Slide ${ordinal[i]} of ${mainTotal}: ${title}`,
     };
   }
 
@@ -455,13 +469,14 @@
     const visits = old.visits.map(visit => {
       const slideId = pacingId(visit.slideId, "slide");
       const number = Number.isInteger(visit.number) && visit.number > 0 ? Math.min(visit.number, 100000) : 1;
-      const label = /^B?\d{1,6}$/.test(String(visit.label ?? "")) ? String(visit.label) : String(number);
+      const label = /^[BH]?\d{1,6}$/.test(String(visit.label ?? "")) ? String(visit.label) : String(number);
       slides[slideId] = {
         number, label,
         title: pacingText(visit.title) || `Slide ${number}`,
         section: pacingText(visit.section) || "Opening",
       };
       if (/^B\d+$/.test(label)) slides[slideId].backup = true;
+      if (/^H\d+$/.test(label)) slides[slideId].review = true;
       return {
         slideId, startedAt: visit.startedAt,
         durationMs: Math.min(86400000, Math.max(0, Math.round(visit.durationMs))), phase: "slot",
@@ -1226,6 +1241,7 @@
       const info = {number: index + 1, label: numbering.label(index),
         title: titleAt(index, deck.querySelector(".slide-frame")), section: sectionAt(index)};
       if (numbering.inAppendix(index)) info.backup = true;
+      if (numbering.inReview(index)) info.review = true;
       seg.record.slides[slideId] = info;
       const visit = {slideId, startedAt: pacingIso(t), durationMs: 0, phase: phaseAt(t)};
       seg.record.visits.push(visit);
@@ -1879,7 +1895,8 @@
       const header = chromeFree ? "" : `<header class="slide-head"><p class="eyebrow">${slide.eyebrow || partLabel(i)}</p><h1 class="slide-title">${slide.title || ""}</h1></header>`;
       const footer = chromeFree ? "" : `<footer class="slide-foot"><span class="source">${slide.source || ""}</span><span class="footer-nav"><span class="course-name">${withoutSteps(spec.meta.section || "")}</span><span class="page-number" data-fit="${numbering.widest}">${numbering.position(i)}</span></span></footer>`;
       const slideId = slide.id ? ` data-slide-id="${escapeHtml(slide.id)}"` : "";
-      const appendix = numbering.inAppendix(i) ? ` data-appendix="true"` : "";
+      const appendix = numbering.inAppendix(i) ? ` data-appendix="true"`
+        : numbering.inReview(i) ? ` data-review="true"` : "";
       return `<article class="slide-frame kind-${escapeHtml(slide.type || "content")}${slide.className ? ` ${escapeHtml(slide.className)}` : ""}${chromeFree ? " chrome-free" : ""}" data-accent="${escapeHtml(slide.accent || partAccent(i))}" data-index="${i}"${slideId}${appendix} aria-label="${numbering.ariaLabel(i, escapeHtml(slideTitleText(slide, i)))}">${header}<section class="slide-body layout-${layout}">${body}</section>${footer}</article>`;
     }
 
@@ -2191,6 +2208,7 @@
       fitFormulas(deck);
       counter.textContent = numbering.position(index);
       if (numbering.hasAppendix) document.body.classList.toggle("in-appendix", numbering.inAppendix(index));
+      if (numbering.hasReview) document.body.classList.toggle("in-review", numbering.inReview(index));
       document.title = typeof spec.meta.tabTitle === "string" && spec.meta.tabTitle.trim()
         ? spec.meta.tabTitle.trim()
         : `${slideTitleText(spec.slides[index], index)} · ${spec.meta.title || "Lecturedeck"}`;

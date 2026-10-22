@@ -298,6 +298,15 @@ class ParseRecordTest(unittest.TestCase):
         self.assertEqual(detail, caught.exception.detail)
         return caught.exception
 
+    def test_review_slides_keep_their_h_label(self):
+        record = segment_record()
+        record["slides"]["second"].update(label="H1", review=True)
+        result = parse(record)
+        self.assertEqual(
+            {"number": 2, "label": "H1", "title": "Second", "section": "Part one", "review": True},
+            result["slides"]["second"],
+        )
+
     def test_live_segment_is_rebuilt_in_fixed_order(self):
         record = segment_record()
         result = parse(record)
@@ -380,6 +389,8 @@ class ParseRecordTest(unittest.TestCase):
             ("number", setter("slides", "opening", "number", value=0), 400, "slides[0].number"),
             ("backup", setter("slides", "opening", "backup", value="yes"),
              400, "slides[0].backup"),
+            ("review", setter("slides", "opening", "review", value="yes"),
+             400, "slides[0].review"),
             ("control title", setter("slides", "opening", "title", value="a\nb"),
              400, "slides[0].title"),
             ("delete title", setter("slides", "opening", "title", value="a\x7fb"),

@@ -391,6 +391,39 @@ class LecturedeckTest(unittest.TestCase):
                     unit = make_json_unit(root, base_deck(slides=deck_slides))
                     self.assertHasError(validate_unit(unit), fragment)
 
+    def test_deck_json_review_slides_come_before_the_appendix(self):
+        slides = [
+            {"id": "opening", "type": "title", "title": "Main"},
+            {"id": "review", "type": "section", "title": "Homework review", "review": True},
+            {"id": "review-two", "title": "Solution", "review": True},
+            {"id": "main-two", "title": "Main two", "review": False},
+            {"id": "backup", "type": "section", "title": "Backup", "appendix": True},
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            unit = make_json_unit(root, base_deck(slides=slides))
+            self.assertEqual([], validate_unit(unit))
+        cases = [
+            ([{"id": "a", "review": "yes"}], "slides[0].review must be true or false"),
+            (
+                [
+                    {"id": "a"},
+                    {"id": "b", "appendix": True},
+                    {"id": "c", "review": True},
+                ],
+                "slides[2].review cannot be true in the appendix; review slides come "
+                "before the slide that sets appendix",
+            ),
+            (
+                [{"id": "a"}, {"id": "b", "appendix": True, "review": True}],
+                "slides[1].review cannot be true in the appendix",
+            ),
+        ]
+        for deck_slides, fragment in cases:
+            with self.subTest(fragment=fragment):
+                with tempfile.TemporaryDirectory() as root:
+                    unit = make_json_unit(root, base_deck(slides=deck_slides))
+                    self.assertHasError(validate_unit(unit), fragment)
+
     def test_deck_json_figure_hotspots_are_validated(self):
         def figure(hotspots, src="assets/a.png") -> dict:
             return {"src": src, "alt": "Group photo", "hotspots": hotspots}
