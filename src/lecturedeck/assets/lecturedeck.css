@@ -223,6 +223,10 @@ body.pseudo-fullscreen .touch-nav { display: flex; }
 .figure-stack.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .slide-foot { min-height: 22px; display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; color: var(--faint); font-size: 15px; line-height: 1.15; }
+/* The collapsed controls gear over the slide's bottom-left corner: the footer
+   starts after it (the slide's own padding is 40px). Never in print. */
+.slide-foot { padding-left: max(0px, calc(var(--chrome-inset, 0px) - 40px)); }
+body.print-deck .slide-foot { padding-left: 0; }
 .slide-foot .source { max-width: 1000px; }
 .footer-nav { position: relative; flex: 0 0 auto; display: flex; align-items: baseline; gap: 12px; }
 .course-name { color: var(--faint); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }

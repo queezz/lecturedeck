@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.28.0";
+  const VIEWER_VERSION = "0.28.1";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -88,6 +88,26 @@
     setTheme(printMode ? printTheme : "dark", false);
     setPresentationStyle("default", false);
   }
+  // A click outside a settings dialog closes it, as Escape does. A modal
+  // dialog's backdrop is the dialog element itself, so both the press and
+  // the release must land outside its box: a drag that starts inside and
+  // ends on the backdrop (selecting text, say) leaves it open.
+  function closeOnOutsideClick(dialog) {
+    if (!dialog) return;
+    const outside = event => {
+      if (event.target !== dialog) return false;
+      const box = dialog.getBoundingClientRect();
+      return event.clientX < box.left || event.clientX > box.right
+        || event.clientY < box.top || event.clientY > box.bottom;
+    };
+    let pressedOutside = false;
+    dialog.addEventListener("pointerdown", event => { pressedOutside = outside(event); });
+    dialog.addEventListener("click", event => {
+      if (pressedOutside && outside(event)) dialog.close();
+      pressedOutside = false;
+    });
+  }
+  closeOnOutsideClick(appearanceDialog);
   appearanceButton?.addEventListener("click", () => appearanceDialog?.showModal());
   // Focus returns to the Appearance button. While a collapsed controls strip
   // makes it inert, focus leaves the closed dialog instead of staying on one
@@ -1188,6 +1208,7 @@
       + '<footer class="pacing-foot"><p id="pacing-status" role="status" data-state="neutral"></p>'
       + '<button id="pacing-export" class="appearance-close" type="button">Export JSON</button></footer>';
     document.body.append(dialog);
+    closeOnOutsideClick(dialog);
     const titleNode = dialog.querySelector("#pacing-title");
     const dateSelect = dialog.querySelector("#pacing-date");
     const body = dialog.querySelector(".pacing-body");
@@ -1935,6 +1956,7 @@
     function positionControls(scale, frameWidth = SLIDE_WIDTH, frameHeight = SLIDE_HEIGHT) {
       if (!presentationControls || !controlsToggle || !controlsTools) return;
       if (touchReview.matches) {
+        document.body.style.setProperty("--chrome-inset", "0px");
         presentationControls.style.left = "";
         presentationControls.style.top = "";
         presentationControls.classList.remove("has-safe-space");
@@ -1980,6 +2002,16 @@
         controlsTools.setAttribute("aria-hidden", String(!toolsVisible));
         controlsTools.inert = !toolsVisible;
       }
+      // With no room above or below the slide (always the case in full
+      // screen), the gear sits in the slide's bottom-left corner. The slide's
+      // footer then starts right of it, so the gear never covers the source
+      // line. --chrome-inset is the gear's right edge in slide pixels.
+      const overSlide = !presentationControls.classList.contains("has-safe-space")
+        && controlsToggle.offsetWidth > 0;
+      const gearRight = overSlide
+        ? (parseFloat(presentationControls.style.left) + controlsToggle.offsetWidth + gutter - frameLeft) / scale
+        : 0;
+      document.body.style.setProperty("--chrome-inset", `${Math.max(0, Math.ceil(gearRight))}px`);
     }
 
     function scaleCurrent() {

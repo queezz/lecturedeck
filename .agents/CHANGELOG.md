@@ -1,5 +1,25 @@
 # Changelog — shipped version history
 
+## 0.28.1
+
+Owner, 2026-10-23: "Gear overlap is real, I lived with it for weeks. Can we
+fix that? Also the appearance selector, I want to close that by clicking
+outside it."
+
+- The controls gear no longer covers the start of the slide's footer.
+  - With no room above or below the slide, the collapsed controls sit in
+    its bottom-left corner. That is always the case in full screen, and on
+    any 16:9 screen.
+  - The gear covered the first letters of the source line on every slide
+    ("⚙mulated: …").
+  - Now the footer starts just right of the gear, at any size. With room
+    beside the slide, and in print, it keeps its own place.
+- Appearance (and Pacing) close on a click outside the dialog, as Escape
+  does. A press inside that ends outside, as in selecting text, leaves it
+  open.
+- Tests: two browser tests (the footer clear of the gear at two sizes; the
+  outside click, an inside click and a drag); both failed on 0.28.0.
+
 ## 0.28.0
 
 Owner, 2026-10-23, on a meeting deck that opens with two homework reviews:

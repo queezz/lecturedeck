@@ -176,6 +176,17 @@ APPENDIX_DECK = {
 }
 
 
+# One slide with a source line in its footer, for the controls gear.
+FOOTER_DECK = {
+    "deck": 1,
+    "meta": {"title": "Footer deck", "section": "SMOKE", "opening": "OPENING"},
+    "slides": [
+        {"id": "f-one", "title": "With a source", "claim": "Claim.",
+         "source": "A source line that starts at the slide's left edge"},
+    ],
+}
+
+
 # A meeting that opens with a homework review: the review reads H1, H2 and
 # the lecture's own slides count 1, 2, 3 around it.
 REVIEW_DECK = {
@@ -1440,6 +1451,52 @@ class BrowserSmokeTest(unittest.TestCase):
             page.wait_for_function("Boolean(document.fullscreenElement)")
             page.keyboard.press("Escape")
             page.wait_for_function("!document.querySelector('#overview').hidden")
+
+    def test_footer_starts_after_the_gear_over_the_slide(self):
+        # A 16:9 window (and full screen) leaves no room above or below the
+        # slide, so the collapsed gear sits in its bottom-left corner. The
+        # footer's source line starts after the gear, at any scale.
+        page = self.browser.new_page(viewport={"width": 1280, "height": 720})
+        self.addCleanup(page.close)
+        page.route("**/deck.json", lambda route: route.fulfill(json=FOOTER_DECK))
+        page.goto(self.urls["json"])
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        for width, height in ((1280, 720), (960, 540)):
+            page.set_viewport_size({"width": width, "height": height})
+            page.wait_for_timeout(200)
+            gear = page.locator("#controls-toggle").bounding_box()
+            source = page.locator(".slide-frame .slide-foot .source").bounding_box()
+            self.assertIsNotNone(gear)
+            self.assertIsNotNone(source)
+            self.assertLess(gear["y"], source["y"] + source["height"])
+            self.assertGreaterEqual(source["x"], gear["x"] + gear["width"])
+        # With room below the slide the controls leave it, and the footer
+        # keeps its own place.
+        page.set_viewport_size({"width": 1280, "height": 900})
+        page.wait_for_function(
+            "getComputedStyle(document.querySelector('.slide-foot')).paddingLeft === '0px'"
+        )
+
+    def test_appearance_closes_on_a_click_outside(self):
+        page = self.open_deck("json")
+        page.keyboard.press("t")
+        page.wait_for_selector("#appearance-dialog[open]")
+        is_open = "document.querySelector('#appearance-dialog').open"
+        box = page.locator("#appearance-dialog").bounding_box()
+        self.assertIsNotNone(box)
+        # A click inside keeps it open.
+        page.mouse.click(box["x"] + box["width"] / 2, box["y"] + 12)
+        self.assertTrue(page.evaluate(is_open))
+        # So does a drag that starts inside and ends outside, as in selecting text.
+        page.mouse.move(box["x"] + 30, box["y"] + 30)
+        page.mouse.down()
+        page.mouse.move(5, 5)
+        page.mouse.up()
+        self.assertTrue(page.evaluate(is_open))
+        # A click on the backdrop closes it, as Escape does.
+        page.mouse.click(5, 5)
+        page.wait_for_selector("#appearance-dialog", state="hidden")
+        self.assertTrue(page.evaluate("document.querySelector('#overview').hidden"))
 
     def test_appearance_selection_is_accessible_and_persists(self):
         page = self.open_deck("json")
