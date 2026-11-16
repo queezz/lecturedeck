@@ -424,6 +424,25 @@ class LecturedeckTest(unittest.TestCase):
                     unit = make_json_unit(root, base_deck(slides=deck_slides))
                     self.assertHasError(validate_unit(unit), fragment)
 
+    def test_deck_json_presenter_notes_are_html_strings(self):
+        tex = ('<svg class="tex" viewBox="0 -8 40 9" fill="currentColor" '
+               'style="width:4em;height:1em"><path d="M0 0h40"/></svg>')
+        slides = [
+            {"id": "opening", "type": "title", "title": "Main",
+             "notes": f"<p>Ask first; then <strong>show</strong> {tex}.</p>"},
+            {"id": "plain", "title": "No notes"},
+            {"id": "empty", "title": "Empty notes", "notes": ""},
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            unit = make_json_unit(root, base_deck(slides=slides))
+            self.assertEqual([], validate_unit(unit))
+        for notes in (3, ["a line"], {"html": "x"}, None, True):
+            with self.subTest(notes=notes):
+                with tempfile.TemporaryDirectory() as root:
+                    unit = make_json_unit(root, base_deck(
+                        slides=[{"id": "a", "title": "A", "notes": notes}]))
+                    self.assertHasError(validate_unit(unit), "slides[0].notes must be a string")
+
     def test_deck_json_figure_hotspots_are_validated(self):
         def figure(hotspots, src="assets/a.png") -> dict:
             return {"src": src, "alt": "Group photo", "hotspots": hotspots}
@@ -1224,6 +1243,17 @@ class LecturedeckTest(unittest.TestCase):
         self.assertIn(
             "@media print { .hotspot-layer, .hotspot-popup { display: none !important; } }", styles)
         self.assertNotIn("hotspot", index)
+        # The presenter window: this page with ?presenter=1, linked to the
+        # deck by a BroadcastChannel, built after the print return; no
+        # markup in index.html and no display sensing.
+        self.assertIn('query.get("presenter") === "1"', script)
+        self.assertIn('url.searchParams.set("presenter", "1")', script)
+        self.assertIn("new BroadcastChannel(", script)
+        self.assertLess(script.index("if (printMode) {\n      renderPrintDeck();"),
+                        script.index("const presenterLink = presenterChannel();"))
+        self.assertIn("body.presenter-mode", styles)
+        self.assertNotIn("presenter", index)
+        self.assertNotIn("getScreenDetails", script)
         # The viewer records, journals and reports pacing, and reaches disk only
         # through the sink it looks up; any open dialog owns deck input.
         self.assertIn("lecturedeckPacingSink", script)
@@ -1265,15 +1295,20 @@ class LecturedeckTest(unittest.TestCase):
             self.assertIn(key, script)
             self.assertIn(documented, section)
         # None of them is a deck shortcut: the deck's handler reads only o,
-        # f, l, t, h (and the serve-only adjust HUD g); L is the laser and H
-        # the hotspot hint rings in both.
+        # f, l, t, h, n (and the serve-only adjust HUD g); L is the laser and
+        # H the hotspot hint rings in both.
         deck_keys = set(re.findall(r'event\.key\.toLowerCase\(\) === "(\w)"', script))
-        self.assertEqual({"o", "f", "l", "t", "h"}, deck_keys)
+        self.assertEqual({"o", "f", "l", "t", "h", "n"}, deck_keys)
         adjust_keys = set(re.findall(r'event\.key\.toLowerCase\(\) === "(\w)"',
                                      packaged_text("adjust.js")))
         self.assertEqual({"g"}, adjust_keys)
         hotspots = readme.split("### Photo hotspots", 1)[1].split("\n## ", 1)[0]
         self.assertIn("| `H` |", hotspots)
+        # N opens the presenter window; its section names the key and the
+        # viewer a deck with notes requires.
+        presenter = readme.split("### Presenter notes and window", 1)[1].split("\n### ", 1)[0]
+        self.assertIn("`N` in the deck", presenter)
+        self.assertIn('"requires": ">=0.29"', presenter)
         self.assertIn("Use on all photos", section)
         self.assertIn('data-photo="off"', section)
 

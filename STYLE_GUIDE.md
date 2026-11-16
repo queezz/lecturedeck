@@ -34,6 +34,16 @@ codes and scene identifiers belong in author metadata; `beat` is never
 rendered. Set a slide's `eyebrow` to a useful label such as "Practice" when
 the inherited part label does not describe that slide.
 
+## Presenter notes
+
+A slide's `notes` ([README](README.md#presenter-notes-and-window)) are for
+the presenter's eyes, read at a glance on a laptop while the room watches the
+projector. Write cues, not a script: the question to ask, the number to
+quote, the point to land before the next step. Notes are slide HTML (`<p>`,
+lists, `<strong>`, inline formulas) and never reach a slide, a thumbnail or a
+PDF. The presenter window draws them in large type in the deck's theme; a
+deck's own rules go under `.presenter-notes`.
+
 ## Appendix numbering
 
 Backup material placed after the main lecture should not inflate the visible

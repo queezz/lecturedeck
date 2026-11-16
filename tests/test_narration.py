@@ -449,6 +449,21 @@ class ContentTest(unittest.TestCase):
         for hidden in ("internal-beat-7", "gold", "style-gradient"):
             self.assertNotIn(hidden, text)
 
+    def test_presenter_notes_stay_out_of_the_skeleton_and_outline(self):
+        # Narration is what the audience sees; notes are the presenter's.
+        slides = [{"id": "one", "title": "One", "claim": "Seen by all.",
+                   "notes": "<p>Ask the room first.</p>"}]
+        text = render(slides)
+        self.assertIn("Seen by all.", text)
+        self.assertNotIn("Ask the room", text)
+        document = outline(base_deck(slides), unit="u", deck="d", digest=DIGEST)
+        self.assertNotIn("Ask the room", json.dumps(document))
+        with tempfile.TemporaryDirectory() as root:
+            unit = make_json_unit(root, base_deck(slides))
+            code, out, err = run_cli("narration", "--deck", unit)
+            self.assertEqual((0, ""), (code, err))
+            self.assertNotIn(b"Ask the room", out)
+
     def test_step_reveals_narrate_fully_and_step_links_resolve(self):
         # Narration is the whole slide: every step, in reading order, unmarked.
         slides = [

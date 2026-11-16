@@ -1,5 +1,40 @@
 # Changelog — shipped version history
 
+## 0.29.0
+
+Owner, 2026-11-16: presenter notes as a nice-to-have, to dry-run in real
+lectures, likely presenting with an extended display. He usually mirrors
+the laptop to the projector and points at the big screen, so it must stay
+simple: when mirroring, nothing changes.
+
+- A slide may carry `notes`: an HTML string written like `body`, formulas
+  as inline SVG or MathML included. Notes are for the presenter only. A
+  slide, the overview, print pages and PDF exports never show them, and
+  `lecturedeck narration` and pacing records leave them out.
+- `N` opens a presenter window: the deck's own page in a second browser
+  window, which you drag to the laptop screen. It shows the current
+  screen's label exactly as the footer reads it (`29 / 64`, `H5 / 12`,
+  `B3 / 10`) with its title and step, its notes in large type (or "No notes
+  for this screen"), the next screen's label and title, the time of day and
+  the time since the window opened.
+- The window follows the deck as it pages and follows its light or dark
+  theme. Its arrow and page keys, `Space`, `Home`, `End` and its Previous
+  and Next buttons drive the deck, so a clicker works with either window in
+  front. As with the deck's own keys, a page request only closes an open
+  photo, and with Appearance or Pacing open the deck stays still.
+- A deck with notes gets a **Notes** control beside Laser. A deck without
+  notes looks and behaves as before; `N` there opens a window that says "No
+  notes" on every screen.
+- Nothing senses displays and nothing goes over the network: the two
+  windows talk inside one browser, under `serve` and from a static release
+  alike. With a mirrored screen, never press `N`.
+- `check` requires `notes` to be a string. A deck that uses it should
+  declare `"requires": ">=0.29"`; an older `check` rejects the field.
+- Tests: validation, notes kept off slides, the overview and print, the
+  window following and driving the deck (steps, `Shift`, `Home`/`End`,
+  buttons, theme, the photo and dialog rules, one window per deck), its
+  clock, a deck without notes, a static release, and narration.
+
 ## 0.28.1
 
 Owner, 2026-10-23: "Gear overlap is real, I lived with it for weeks. Can we

@@ -58,6 +58,7 @@ SLIDE_KEYS = frozenset(
         "quote",
         "source",
         "beat",
+        "notes",
         "accent",
         "className",
         "chrome",
@@ -346,7 +347,8 @@ def _validate_slide(errors: list[str], where: str, slide: object, seen_ids: set[
     _check_enum(errors, where, slide, "type", SLIDE_TYPES)
     _check_enum(errors, where, slide, "layout", LAYOUTS)
     _check_enum(errors, where, slide, "accent", ACCENTS)
-    for key in ("title", "eyebrow", "claim", "body", "quote", "source", "beat"):
+    # `notes` is presenter-only HTML: the presenter window shows it, a slide never.
+    for key in ("title", "eyebrow", "claim", "body", "quote", "source", "beat", "notes"):
         _check_string(errors, where, slide, key)
     if "className" in slide and (
         not isinstance(slide["className"], str)

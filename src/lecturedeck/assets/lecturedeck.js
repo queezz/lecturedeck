@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.28.1";
+  const VIEWER_VERSION = "0.29.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -13,6 +13,9 @@
   const query = new URLSearchParams(location.search);
   const printMode = query.get("print") === "1";
   const printTheme = query.get("theme") === "dark" ? "dark" : "light";
+  // "?presenter=1" is the presenter window (bootPresenter): no slide, no chrome.
+  const presenterMode = !printMode && query.get("presenter") === "1";
+  if (presenterMode) document.body.classList.add("presenter-mode");
   const deck = document.querySelector("#deck");
   const overview = document.querySelector("#overview");
   const counter = document.querySelector("#counter");
@@ -1761,6 +1764,146 @@
     setInterval(() => sample(), 1000);
   }
 
+  const slideTitleText = (slide, i) => {
+    const raw = slide.title || slide.interactive?.title || slide.video?.title || "";
+    return String(raw).replace(/<[^>]*>/g, "").trim() || `Slide ${i + 1}`;
+  };
+
+  // Slide HTML with every data-step dropped: for markup shown on slides
+  // other than the one that wrote it, where a step would hide part of an
+  // unrelated slide, and in the presenter window.
+  function withoutSteps(html) {
+    const text = String(html ?? "");
+    if (!/data-step/i.test(text)) return text;
+    const template = document.createElement("template");
+    template.innerHTML = text;
+    template.content.querySelectorAll("[data-step]").forEach(node => node.removeAttribute("data-step"));
+    return template.innerHTML;
+  }
+
+  // ---------------------------------------------------------------------
+  // Presenter window. In the deck, `N` or the Notes control opens this
+  // page again with ?presenter=1 in a window of its own; the presenter
+  // drags it to the laptop screen. The deck and that window talk over one
+  // BroadcastChannel per deck address, inside this browser: the deck says
+  // where it is, the window asks it to page. Nothing goes over the network
+  // and nothing senses displays. A browser without BroadcastChannel
+  // (Safari before 15.4) opens a window that waits.
+  const PRESENTER_WINDOW = "lecturedeck-presenter";
+  const PRESENTER_OPENED = "lecturedeck-presenter-opened";
+  const presenterChannel = () => typeof BroadcastChannel === "function"
+    ? new BroadcastChannel(`lecturedeck-presenter:${pacingPath()}`) : null;
+
+  // The window itself loads the same deck.json and draws no slide: the
+  // current screen's label as its footer reads it, its title and notes,
+  // the next screen, the time of day and the time since the window opened.
+  // No pacing, no lecture clock, and window.LECTUREDECK stays unset, so the
+  // serve-only adjust HUD finds nothing to move here.
+  function bootPresenter(rawSpec) {
+    const slides = Array.isArray(rawSpec.slides) ? rawSpec.slides : [];
+    const meta = rawSpec.meta || {};
+    if (!slides.length) return;
+    const numbering = slideNumbering(slides);
+    setFavicon(meta.favicon);
+    document.title = `Notes · ${meta.tabTitle || meta.title || "Lecturedeck"}`;
+    const view = document.createElement("div");
+    view.id = "presenter";
+    view.className = "presenter";
+    view.innerHTML = '<header class="presenter-head">'
+      + '<p class="presenter-now"><span class="presenter-label" id="presenter-label"></span>'
+      + '<span class="presenter-title" id="presenter-title"></span>'
+      + '<span class="presenter-steps" id="presenter-steps" hidden></span></p>'
+      + '<p class="presenter-clock" role="timer" aria-live="off">'
+      + '<span><small>Time</small><span id="presenter-time"></span></span>'
+      + '<span><small>Elapsed</small><span id="presenter-elapsed"></span></span></p></header>'
+      + '<p class="presenter-status" id="presenter-status" role="status"></p>'
+      + '<section class="presenter-notes" id="presenter-notes" aria-label="Presenter notes"></section>'
+      + '<footer class="presenter-foot">'
+      + '<button type="button" id="presenter-previous" aria-label="Previous">‹ Previous</button>'
+      + '<p class="presenter-next"><small>Next</small><span class="presenter-label" id="presenter-next-label"></span>'
+      + '<span class="presenter-title" id="presenter-next-title"></span></p>'
+      + '<button type="button" id="presenter-next" aria-label="Next">Next ›</button></footer>';
+    document.body.append(view);
+    const part = name => view.querySelector(`#presenter-${name}`);
+    const link = presenterChannel();
+    const titleHtml = i => typeof slides[i].title === "string" && slides[i].title.trim()
+      ? withoutSteps(slides[i].title) : escapeHtml(slideTitleText(slides[i], i));
+    const count = (value, max) => Math.max(0, Math.min(max, Math.trunc(Number(value)) || 0));
+    const status = text => { part("status").textContent = text; part("status").hidden = !text; };
+    let shown = -1;
+
+    function draw(state) {
+      const i = count(state.index, slides.length - 1);
+      const steps = count(state.steps, 1000);
+      const revealed = count(state.revealed, steps);
+      if (state.theme === "light" || state.theme === "dark") setTheme(state.theme, false);
+      part("label").textContent = numbering.position(i);
+      part("title").innerHTML = titleHtml(i);
+      part("steps").hidden = !steps;
+      part("steps").textContent = steps ? `step ${revealed} of ${steps}` : "";
+      if (i !== shown) {
+        // A step changes nothing below: the notes keep their scroll.
+        shown = i;
+        const notes = typeof slides[i].notes === "string" ? slides[i].notes.trim() : "";
+        const box = part("notes");
+        box.innerHTML = notes || '<p class="presenter-empty">No notes for this screen</p>';
+        box.classList.toggle("is-empty", !notes);
+        box.scrollTop = 0;
+      }
+      const last = i === slides.length - 1;
+      part("next-label").textContent = last ? "" : numbering.position(i + 1);
+      part("next-title").innerHTML = last ? "End of the deck" : titleHtml(i + 1);
+      part("previous").disabled = i === 0 && revealed === 0;
+      part("next").disabled = last && revealed === steps;
+    }
+
+    const page = to => link?.postMessage({type: "page", to});
+    link?.addEventListener("message", event => {
+      const data = event.data;
+      if (data?.type === "state") { status(""); draw(data); }
+      else if (data?.type === "closed") status("The deck window has closed. Open the deck again to follow it.");
+    });
+    status(link ? "Waiting for the deck window…" : "This browser cannot link the two windows.");
+    link?.postMessage({type: "hello"});
+    part("previous").addEventListener("click", () => page("previous"));
+    part("next").addEventListener("click", () => page("next"));
+    // The deck's own paging keys, so a clicker drives the deck from here too.
+    addEventListener("keydown", event => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const onControl = event.target instanceof Element && Boolean(event.target.closest("button, a"));
+      const forward = ["ArrowRight", "ArrowDown", "PageDown"].includes(event.key);
+      const backward = ["ArrowLeft", "ArrowUp", "PageUp"].includes(event.key);
+      const to = event.shiftKey && forward ? "nextSlide" : event.shiftKey && backward ? "previousSlide"
+        : forward || (event.key === " " && !onControl) ? "next" : backward ? "previous"
+          : event.key === "Home" ? "first" : event.key === "End" ? "last" : null;
+      if (!to) return;
+      event.preventDefault();
+      page(to);
+    });
+
+    // The time since the window opened survives a reload of the window.
+    let opened = Date.now();
+    try {
+      const saved = Number(sessionStorage.getItem(PRESENTER_OPENED));
+      if (saved > 0 && saved <= opened) opened = saved;
+      else sessionStorage.setItem(PRESENTER_OPENED, String(opened));
+    } catch (_) {
+      // Counted from this page load only.
+    }
+    const two = n => String(n).padStart(2, "0");
+    const tick = () => {
+      const now = new Date();
+      part("time").textContent = `${two(now.getHours())}:${two(now.getMinutes())}`;
+      const seconds = Math.max(0, Math.floor((now.getTime() - opened) / 1000));
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor(seconds / 60) % 60;
+      part("elapsed").textContent = hours ? `${hours}:${two(minutes)}:${two(seconds % 60)}` : `${minutes}:${two(seconds % 60)}`;
+    };
+    tick();
+    setInterval(tick, 1000);
+    document.addEventListener("visibilitychange", tick);
+  }
+
   function boot(rawSpec) {
     const spec = {
       meta: rawSpec.meta || {},
@@ -1793,11 +1936,8 @@
     let photoViewer = null;
     // Photo hotspots, built after the print-mode return too.
     let hotspots = null;
-
-    const slideTitleText = (slide, i) => {
-      const raw = slide.title || slide.interactive?.title || slide.video?.title || "";
-      return String(raw).replace(/<[^>]*>/g, "").trim() || `Slide ${i + 1}`;
-    };
+    // The presenter window link, built after the print-mode return too.
+    let presenter = null;
 
     function finiteNumber(value, fallback = 0) {
       return typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -1863,18 +2003,6 @@
       const originalLink = video.originalUrl ? `<a class="video-original-link" href="${escapeHtml(video.originalUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(video.originalLabel || "Open the original video")}</a>` : "";
       const caption = video.caption || video.source || originalLink ? `<figcaption>${video.caption || ""}${video.source ? `<strong>${video.source}</strong>` : ""}${originalLink}</figcaption>` : "";
       return `<figure class="video-card"${stepAttribute(video)}><video class="lecture-video" controls playsinline preload="metadata" aria-label="${escapeHtml(title)}"${poster}${video.muted ? " muted" : ""}${video.loop ? " loop" : ""}>${sourceMarkup}${trackMarkup}<p>Your browser cannot play this local video.</p></video>${caption}</figure>`;
-    }
-
-    // Slide HTML with every data-step dropped: for markup shown on slides
-    // other than the one that wrote it, where a step would hide part of an
-    // unrelated slide.
-    function withoutSteps(html) {
-      const text = String(html ?? "");
-      if (!/data-step/i.test(text)) return text;
-      const template = document.createElement("template");
-      template.innerHTML = text;
-      template.content.querySelectorAll("[data-step]").forEach(node => node.removeAttribute("data-step"));
-      return template.innerHTML;
     }
 
     // The part label of slide i: the eyebrow or title of the last section
@@ -2184,6 +2312,7 @@
       nextButton.disabled = open || (index === spec.slides.length - 1 && revealed === stepLevels.length);
       const through = shownStep();
       history.replaceState(null, "", through ? `#/${index}.${through}` : `#/${index}`);
+      presenter?.update();
       // Filled marks for steps shown, open ones for steps to come, drawn at
       // a fixed size, so stepping never changes their width.
       const marks = stepLevels.map((_, n) => `<i${n < revealed ? ' class="shown"' : ""}></i>`).join("");
@@ -3458,10 +3587,60 @@
     };
     applyPhotoSettings(false);
 
+    // The deck's side of the presenter window (bootPresenter): it tells
+    // where it is (slide, step, theme) whenever that changes or a window
+    // says hello, and pages when a window asks, as its own keys would. A
+    // deck with notes gets a Notes control; `N` works in every deck.
+    const presenterLink = presenterChannel();
+    let presenterWindow = null;
+    let presenterSent = "";
+    function presenterUpdate(force = false) {
+      if (!presenterLink) return;
+      const state = {type: "state", index, revealed, steps: stepLevels.length,
+        theme: document.body.classList.contains("light-theme") ? "light" : "dark"};
+      const text = JSON.stringify(state);
+      if (!force && text === presenterSent) return;
+      presenterSent = text;
+      presenterLink.postMessage(state);
+    }
+    function openPresenter() {
+      if (presenterWindow && !presenterWindow.closed) { presenterWindow.focus(); return; }
+      const url = new URL(location.href);
+      url.hash = "";
+      url.searchParams.set("presenter", "1");
+      // A popup window, not a tab, so it can be dragged to another screen.
+      presenterWindow = window.open(url.href, PRESENTER_WINDOW, "popup,width=960,height=640");
+    }
+    presenterLink?.addEventListener("message", event => {
+      const data = event.data;
+      if (data?.type === "hello") { presenterUpdate(true); return; }
+      if (data?.type !== "page") return;
+      // As a paging key here: it only closes an open photo, and any other
+      // open dialog keeps the deck still.
+      if (viewer.open) { closePhoto(); return; }
+      if (modalOpen()) return;
+      ({next, previous, nextSlide, previousSlide,
+        first: () => show(0, 0), last: () => show(spec.slides.length - 1, Infinity)})[data.to]?.();
+    });
+    addEventListener("pagehide", () => presenterLink?.postMessage({type: "closed"}));
+    addEventListener("pageshow", event => { if (event.persisted) presenterUpdate(true); });
+    if (spec.slides.some(slide => typeof slide.notes === "string" && slide.notes.trim())) {
+      const notesButton = document.createElement("button");
+      notesButton.id = "notes-button";
+      notesButton.type = "button";
+      notesButton.textContent = "Notes";
+      notesButton.title = "Presenter window with notes (N)";
+      if (laserButton) laserButton.after(notesButton);
+      else controlsTools?.append(notesButton);
+      notesButton.addEventListener("click", openPresenter);
+    }
+    presenter = {update: presenterUpdate};
+
     addEventListener("resize", () => { scaleCurrent(); scaleOverviewThumbs(); refreshSteps(); });
     // The theme, the presentation style and other body classes may show or
-    // hide stepped content through deck.css.
-    new MutationObserver(() => { refreshSteps(); photoViewer?.placeExpanders(); hotspots?.place(); }).observe(document.body, {
+    // hide stepped content through deck.css; the presenter window follows
+    // the theme.
+    new MutationObserver(() => { refreshSteps(); photoViewer?.placeExpanders(); hotspots?.place(); presenter?.update(); }).observe(document.body, {
       attributes: true, attributeFilter: ["class", "data-presentation-style"],
     });
     addEventListener("hashchange", () => {
@@ -3509,6 +3688,7 @@
       else if (event.key.toLowerCase() === "l") setLaser(!laserOn);
       else if (event.key.toLowerCase() === "t") { event.preventDefault(); appearanceDialog?.showModal(); }
       else if (event.key.toLowerCase() === "h" && !event.ctrlKey && !event.metaKey && !event.altKey) hotspots?.toggle();
+      else if (event.key.toLowerCase() === "n" && !event.ctrlKey && !event.metaKey && !event.altKey) openPresenter();
     });
     let wheelStreak = 0;
     let wheelPrevAt = -1e6;
@@ -3654,6 +3834,11 @@
   pollLiveReload();
 
   (async () => {
+    if (presenterMode) {
+      const spec = await loadSpec();
+      if (spec) bootPresenter(spec);
+      return;
+    }
     const [spec, timing] = await Promise.all([loadSpec(), loadPresentationTime()]);
     if (spec) { boot(spec); setupLectureClock(timing); setupLecturePacer(timing, spec); }
     if (printMode) return;

@@ -413,6 +413,36 @@ content, so this one is deck data:
   the layer is a sibling of the copy, so the brightness and contrast filter
   never reaches the rings or the text.
 
+## 12. Presenter notes and window (shipped 0.29.0)
+
+Owner, 2026-11-16: presenter notes as a nice-to-have, dry-run in real
+lectures, likely with an extended display; he usually mirrors and
+laser-points at the big screen. "When mirroring, nothing must change."
+
+- `notes` is slide data, an HTML string like `body`. Only the presenter
+  window renders it: `slideMarkup` never reads it, so slides, thumbnails,
+  print and PDF cannot show it. Narration and pacing records leave it out:
+  narration is what the audience sees, and a pacing record is a closed list
+  of fields.
+- The window is the same `index.html` at `?presenter=1`, like `?print=1`:
+  no new runtime file, no server route, nothing extra to release. It loads
+  `deck.json` itself and draws from it, so the link carries only where the
+  deck is (slide, step, theme) and which way to page.
+- One `BroadcastChannel` per deck address (the pacing path), inside one
+  browser. The deck answers a window's hello and posts its state on every
+  change; a window posts page requests that the deck runs as its own keys
+  would. No `storage`-event fallback: every browser the owner presents from
+  has `BroadcastChannel` (Safari since 15.4), and an untested fallback would
+  be dead weight. The opener reference is used only to focus the window.
+- No Window Management API and no mirror/extend sensing. The presenter
+  opens the window when he wants it and places it himself.
+- The window runs no pacing, no lecture clock and no recovery sweep, and
+  leaves `window.LECTUREDECK` unset so the serve-only adjust HUD stays inert
+  there. Its elapsed time lives in its own session storage, so a reload of
+  the window keeps counting.
+- A deck without notes keeps its chrome: the Notes control appears only on
+  a deck with notes, while `N` works everywhere.
+
 ## Boundaries that hold across all phases
 
 - Offline and CDN-free; releases are self-contained static directories served

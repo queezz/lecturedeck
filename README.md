@@ -121,6 +121,10 @@ HTTP, with no functions or executable deck code. A minimal deck looks like:
 - A figure (`figure`, or an item of `figures`) may carry `hotspots`: points
   of its picture with a popup, such as the people in a group photograph;
   see [Photo hotspots](#photo-hotspots).
+- `notes` (since 0.29.0) is an optional HTML string, like `body`, for the
+  presenter alone. Only the presenter window shows it; a slide, the
+  overview, print and PDF exports never do. See
+  [Presenter notes and window](#presenter-notes-and-window).
 - `eyebrow` overrides the current part label on that slide. Omit it or leave
   it empty to use the part label. Optional `beat` is author metadata only;
   it is accepted in source data but never shown to the audience.
@@ -335,7 +339,7 @@ export a labeled placeholder, since a PDF cannot retain their live behavior.
 audience sees, for translation into spoken text: chapters are the only `##`
 headings, each slide opens with `<!-- slide: ID -->`, `#/N` links become
 `<!-- nav: … -->` notes, MathML is linearized beside its source, and blocks the
-layout hides are left out. Line 1 carries the deck's sha256 (BOM and CRLF
+layout hides and presenter `notes` are left out. Line 1 carries the deck's sha256 (BOM and CRLF
 normalized) so stale narration can be detected. `--outline` prints the same
 structure as JSON (`schema: 1`) with labels `12` or `B3`. Output is UTF-8 with
 LF on any console; `--output` only creates a new file outside `webdeck/`.
@@ -450,6 +454,10 @@ directory listings are off.
   ring shows its popup, on the slide and in the photo viewer. `H` turns the
   hint rings off and on for the whole deck. See
   [Photo hotspots](#photo-hotspots).
+- **Presenter window:** `N`, or the **Notes** control on a deck with notes,
+  opens a second window with the current screen's notes, the next screen and
+  a clock. It follows the deck, and its paging keys drive the deck. See
+  [Presenter notes and window](#presenter-notes-and-window).
 - **Deck selector:** the home button returns to the selector when the deck was
   opened from one; it stays hidden for a directly served deck.
 - **Viewer version:** the expanded controls strip shows a small `vX.Y.Z`
@@ -626,6 +634,68 @@ ring colors `--hotspot-ring` and `--hotspot-active`, set on the layer:
 ```css
 /* Darker hint rings on one pale photo. */
 .hotspot-layer[data-figure-id="solvay-1927"] { --hotspot-ring: rgba(29, 32, 33, .9); }
+```
+
+### Presenter notes and window
+
+A slide may carry `notes`: an HTML string written like `body`, inline SVG or
+MathML formulas included. Notes are for the presenter. They are never drawn
+on a slide, in the overview thumbnails, on print pages or in PDF exports;
+`lecturedeck narration` and pacing records leave them out too, since
+narration is what the audience sees. `check` requires a string; a deck that
+uses notes should declare `"requires": ">=0.29"`.
+
+```json
+{"id": "uncertainty", "title": "The uncertainty relation",
+ "notes": "<p>Ask first: what limits a measurement?</p><ul><li>Then the slit.</li></ul>"}
+```
+
+`N` in the deck (or the **Notes** control, which appears on a deck with
+notes) opens a second browser window: this deck's page again, at
+`?presenter=1`. It shows
+
+- the current screen's label exactly as its footer reads it (`29 / 64`,
+  `H5 / 12`, `B3 / 10`), its title, and `step 1 of 3` on a stepped slide;
+- the current screen's notes in large type, or a quiet "No notes for this
+  screen";
+- the next screen's label and title;
+- the time of day and the time since the window opened (a reload of the
+  window keeps counting).
+
+The window follows the deck as it pages, and follows its light or dark
+theme. Its own keys and buttons drive the deck, so a clicker works with
+either window in front:
+
+| Key | Presenter window |
+|---|---|
+| `→` `↓` `PageDown` `Space`, **Next** | next step or slide, as in the deck |
+| `←` `↑` `PageUp`, **Previous** | previous step or slide |
+| `Shift` + an arrow or page key | whole slides |
+| `Home` / `End` | first / last slide |
+
+A page request from the window acts like the same key in the deck: it only
+closes an open photo, and with Appearance or Pacing open the deck stays
+still. Pressing `N` again reuses the same window. When the deck window
+closes, the presenter window says so.
+
+Nothing senses displays. With the screen mirrored to the projector, never
+press `N` and nothing changes. With an extended display, put the deck
+window on the projector, press `N`, drag the presenter window to the laptop
+screen, then click the deck and press `F`. Leave the deck window uncovered:
+a browser may count a covered window as hidden, which pauses pacing. A deck
+without notes looks and behaves as before; there `N` opens a window that
+reads "No notes for this screen" throughout.
+
+The two windows talk through a `BroadcastChannel` named for the deck's
+address, inside one browser: nothing goes over the network, there are no
+server changes, and it works under `serve` and from a static release
+(Safari has `BroadcastChannel` since 15.4). The browser opens the window as
+a pop-up; if it blocks pop-ups for the deck's address, allow them once.
+`deck.css` may style notes HTML under `.presenter-notes`, for example a
+display formula:
+
+```css
+.presenter-notes svg.tex-block { display: block; margin: .3em auto; }
 ```
 
 ### Serve-only figure adjustment

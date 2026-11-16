@@ -4,10 +4,11 @@ Runs only when the optional Playwright dev dependency and its Chromium
 browser are installed; otherwise every test is skipped. The suite asserts
 the mechanical contract — loading paths, navigation, step-by-step reveals,
 wheel input, overview, fullscreen, theme, media attributes, iframe
-interaction, and the serve-only geometry-adjust guards, and the pacing
-recorder: its window, journal, report and saving to disk through the
-serve-only sink. Visual density and pedagogical quality remain human
-judgment and are deliberately out of scope.
+interaction, the serve-only geometry-adjust guards, presenter notes and
+the presenter window, and the pacing recorder: its window, journal,
+report and saving to disk through the serve-only sink. Visual density
+and pedagogical quality remain human judgment and are deliberately out
+of scope.
 """
 
 from __future__ import annotations
@@ -634,6 +635,44 @@ HOTSPOT_POPUP = """(where) => {
 RING_OPACITY = """(where) => [...document.querySelectorAll(
   where === 'viewer' ? '#photo-viewer .hotspot' : '#deck .hotspot')]
   .map(ring => getComputedStyle(ring).opacity)"""
+
+
+# Presenter notes: the marker must never reach a slide, the overview or
+# print. Labels: 1 / 4, H1 / 1, 2 / 4, 3 / 4, 4 / 4, B1 / 1.
+NOTE_MARK = "presenter-only-note"
+NOTE_TEX = ('<svg class="tex" viewBox="0 0 10 10" fill="currentColor" '
+            'style="width:1em;height:1em"><circle cx="5" cy="5" r="4"/></svg>')
+NOTES_DECK = {
+    "deck": 1,
+    "meta": {"title": "Notes deck", "section": "SMOKE", "opening": "OPENING"},
+    "slides": [
+        {"id": "n-title", "type": "title", "title": "Notes deck", "claim": "Main one.",
+         "notes": f"<p>Open with a question. <strong>{NOTE_MARK}-1</strong></p>"},
+        {"id": "n-review", "title": "Homework review", "claim": "Worked.", "review": True},
+        {"id": "n-steps", "title": "Stepped <em>idea</em>",
+         "body": '<p data-step="1">First.</p><p data-step="2">Second.</p>',
+         "notes": f"<p>Energy {NOTE_TEX} levels, {NOTE_MARK}-2</p>"},
+        {"id": "n-figure", "title": "Figure", "notes": f"{NOTE_MARK}-3",
+         "figure": {"src": "assets/figure.png", "alt": "Figure"}},
+        {"id": "n-plain", "title": "Plain", "claim": "Main four."},
+        {"id": "n-backup", "type": "section", "title": "Backup", "appendix": True,
+         "notes": f"{NOTE_MARK}-4"},
+    ],
+}
+PRESENTER_STATE = """() => {
+  const text = id => document.querySelector('#presenter-' + id).textContent;
+  const steps = document.querySelector('#presenter-steps');
+  const status = document.querySelector('#presenter-status');
+  return {
+    label: text('label'), title: text('title'), steps: steps.hidden ? '' : steps.textContent,
+    notes: text('notes'), svg: document.querySelectorAll('#presenter-notes svg').length,
+    next: [text('next-label'), text('next-title')],
+    previousDisabled: document.querySelector('#presenter-previous').disabled,
+    nextDisabled: document.querySelector('#presenter-next').disabled,
+    status: status.hidden ? '' : status.textContent,
+    light: document.body.classList.contains('light-theme'),
+  };
+}"""
 
 
 def build_legacy_unit(unit: Path) -> None:
@@ -3687,6 +3726,206 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(0, printed.locator(
             ".hotspot, .hotspot-layer, .hotspot-popup, .has-hotspots").count())
         self.assertGreater(printed.locator("[data-figure-id='hs-photo'] img").count(), 0)
+
+    # -----------------------------------------------------------------
+    # Presenter notes and the presenter window
+
+    def notes_context(self, deck: dict | None = NOTES_DECK, **options):
+        """A context whose pages, the presenter window included, read `deck`."""
+        context = self.browser.new_context(**options)
+        errors = []
+        context.on("weberror", lambda error: errors.append(str(error.error)))
+        self.addCleanup(lambda: self.assertEqual([], errors))
+        self.addCleanup(context.close)
+        if deck is not None:
+            context.route("**/deck.json", lambda route: route.fulfill(json=deck))
+        return context
+
+    def open_in(self, context, url: str):
+        page = context.new_page()
+        page.goto(url)
+        page.wait_for_function("Boolean(window.LECTUREDECK)")
+        return page
+
+    def open_presenter(self, page, press=lambda page: page.keyboard.press("n")):
+        with page.expect_popup() as info:
+            press(page)
+        popup = info.value
+        popup.wait_for_function(
+            "Boolean(document.querySelector('#presenter-label')?.textContent)")
+        return popup
+
+    def presenter(self, popup) -> dict:
+        return popup.evaluate(PRESENTER_STATE)
+
+    def wait_label(self, popup, label: str) -> dict:
+        popup.wait_for_function(
+            "l => document.querySelector('#presenter-label').textContent === l", arg=label)
+        return self.presenter(popup)
+
+    def wait_hash(self, page, value: str) -> None:
+        page.wait_for_function("h => location.hash === h", arg=value)
+
+    def test_notes_never_reach_a_slide_the_overview_or_print(self):
+        context = self.notes_context()
+        page = self.open_in(context, self.urls["json"])
+        for index in range(len(NOTES_DECK["slides"])):
+            # Each slide whole, every step shown.
+            page.evaluate("i => { location.hash = '#/' + i + '.9'; }", index)
+            page.wait_for_function(
+                "i => document.querySelector('#deck .slide-frame')?.dataset.index === String(i)",
+                arg=index)
+            self.assertNotIn(NOTE_MARK, page.content())
+        page.keyboard.press("o")
+        page.wait_for_selector(".overview-card")
+        self.assertEqual(6, page.locator(".overview-card").count())
+        self.assertNotIn(NOTE_MARK, page.content())
+        printed = context.new_page()
+        printed.goto(self.urls["json"] + "?print=1")
+        printed.wait_for_function("window.LECTUREDECK_PRINT_READY === true")
+        self.assertEqual(6, printed.locator("#deck > .slide-frame").count())
+        self.assertNotIn(NOTE_MARK, printed.content())
+        self.assertEqual(0, printed.locator("#notes-button, #presenter").count())
+
+    def test_presenter_window_follows_and_drives_the_deck(self):
+        context = self.notes_context(viewport={"width": 1280, "height": 900})
+        page = self.open_in(context, self.urls["json"])
+        self.assertEqual("Presenter window with notes (N)",
+                         page.get_attribute("#notes-button", "title"))
+        popup = self.open_presenter(page)
+        self.assertEqual(self.urls["json"] + "?presenter=1", popup.url)
+        self.assertEqual("Notes · Notes deck", popup.title())
+        state = self.wait_label(popup, "1 / 4")
+        self.assertEqual("Notes deck", state["title"])
+        self.assertIn("Open with a question.", state["notes"])
+        self.assertEqual(["H1 / 1", "Homework review"], state["next"])
+        self.assertEqual(("", "", True, False),
+                         (state["steps"], state["status"], state["previousDisabled"],
+                          state["nextDisabled"]))
+        # No slide and no chrome in the window; the deck keeps its own.
+        self.assertEqual(0, popup.locator(".slide-frame").count())
+        self.assertFalse(popup.locator("#presentation-controls").is_visible())
+        # The deck pages: the window follows, label as the footer reads it.
+        page.keyboard.press("ArrowRight")
+        state = self.wait_label(popup, "H1 / 1")
+        self.assertEqual("H1 / 1", page.text_content("#deck .page-number").strip())
+        self.assertEqual("No notes for this screen", state["notes"].strip())
+        self.assertEqual(["2 / 4", "Stepped idea"], state["next"])
+        # The window pages the deck, steps first, as the deck's own keys do.
+        popup.keyboard.press("ArrowRight")
+        self.wait_hash(page, "#/2")
+        state = self.wait_label(popup, "2 / 4")
+        self.assertEqual(("Stepped idea", "step 0 of 2", 1),
+                         (state["title"], state["steps"], state["svg"]))
+        self.assertIn("Energy", state["notes"])
+        popup.keyboard.press("PageDown")
+        self.wait_hash(page, "#/2.1")
+        popup.wait_for_function(
+            "document.querySelector('#presenter-steps').textContent === 'step 1 of 2'")
+        popup.click("#presenter-next")
+        self.wait_hash(page, "#/2.2")
+        popup.keyboard.press("PageUp")
+        self.wait_hash(page, "#/2.1")
+        popup.keyboard.press("Shift+ArrowRight")
+        self.wait_hash(page, "#/3")
+        popup.keyboard.press("End")
+        self.wait_hash(page, "#/5")
+        state = self.wait_label(popup, "B1 / 1")
+        self.assertEqual((["", "End of the deck"], True), (state["next"], state["nextDisabled"]))
+        popup.click("#presenter-previous")
+        self.wait_hash(page, "#/4")
+        popup.keyboard.press("Home")
+        self.wait_hash(page, "#/0")
+        self.wait_label(popup, "1 / 4")
+        # The theme follows the deck.
+        page.keyboard.press("t")
+        page.check("input[name='color-mode'][value='light']")
+        page.keyboard.press("Escape")
+        popup.wait_for_function("document.body.classList.contains('light-theme')")
+        # A page request closes an open photo, as a paging key does; any
+        # other open dialog keeps the deck still.
+        page.evaluate("() => { location.hash = '#/3'; }")
+        self.wait_label(popup, "3 / 4")
+        page.click("#deck .figure-card img")
+        page.wait_for_function("document.querySelector('#photo-viewer').open")
+        popup.keyboard.press("ArrowRight")
+        page.wait_for_function("!document.querySelector('#photo-viewer').open")
+        self.assertEqual("#/3", page.evaluate("location.hash"))
+        page.keyboard.press("t")
+        popup.keyboard.press("ArrowRight")
+        popup.wait_for_timeout(200)
+        self.assertEqual("#/3", page.evaluate("location.hash"))
+        page.keyboard.press("Escape")
+        popup.keyboard.press("ArrowRight")
+        self.wait_hash(page, "#/4")
+        # N again, or the Notes control, brings back the same window.
+        page.keyboard.press("n")
+        page.locator("#notes-button").click()
+        page.wait_for_timeout(200)
+        self.assertEqual(2, len(context.pages))
+        # The window says when the deck has gone.
+        page.close()
+        popup.wait_for_function(
+            "document.querySelector('#presenter-status').textContent.includes('closed')")
+
+    def test_decks_without_notes_get_no_control_and_n_an_empty_window(self):
+        context = self.notes_context(deck=None)
+        page = self.open_in(context, self.urls["json"])
+        self.assertEqual(0, page.locator("#notes-button").count())
+        self.assertEqual(
+            ["overview-button", "", "appearance-button", "fullscreen-button", "laser-button",
+             "deck-selector-link", "viewer-version"],
+            page.evaluate("[...document.querySelector('#controls-tools').children]"
+                          ".map(node => node.id)"))
+        popup = self.open_presenter(page)
+        state = self.wait_label(popup, "1 / 11")
+        self.assertEqual("No notes for this screen", state["notes"].strip())
+        page.keyboard.press("ArrowRight")
+        state = self.wait_label(popup, "2 / 11")
+        self.assertEqual("No notes for this screen", state["notes"].strip())
+
+    def test_presenter_clock_shows_the_time_and_the_time_open(self):
+        context = self.notes_context(timezone_id="UTC", viewport={"width": 1280, "height": 900})
+        moment = datetime(2026, 1, 1, 9, 58, 0, tzinfo=timezone.utc)
+        context.clock.install(time=moment)
+        context.clock.pause_at(moment)
+        page = self.open_in(context, self.urls["json"])
+        popup = self.open_presenter(page, press=lambda page: page.locator("#notes-button").click())
+
+        def clock():
+            return popup.evaluate("['time', 'elapsed'].map(id => "
+                                  "document.querySelector('#presenter-' + id).textContent)")
+
+        self.assertEqual(["09:58", "0:00"], clock())
+        context.clock.fast_forward(75_000)
+        self.assertEqual(["09:59", "1:15"], clock())
+        context.clock.fast_forward(3_600_000)
+        self.assertEqual(["10:59", "1:01:15"], clock())
+        # A reload of the window keeps counting from when it opened.
+        popup.reload()
+        popup.wait_for_selector("#presenter")
+        self.assertEqual(["10:59", "1:01:15"], clock())
+
+    def test_presenter_window_works_from_a_static_release(self):
+        with tempfile.TemporaryDirectory() as folder:
+            unit = Path(folder) / "notes"
+            (unit / "webdeck" / "assets").mkdir(parents=True)
+            (unit / "webdeck" / "assets" / "figure.png").write_bytes(png(320, 180, (131, 165, 152)))
+            (unit / "webdeck" / "deck.json").write_text(json.dumps(NOTES_DECK), encoding="utf-8")
+            output = release_unit(unit, Path(folder) / "release")
+            server = ThreadingHTTPServer(
+                ("127.0.0.1", 0), partial(QuietStaticHandler, directory=str(output)))
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+            context = self.notes_context(deck=None)
+            page = self.open_in(context, f"http://127.0.0.1:{server.server_address[1]}/")
+            popup = self.open_presenter(page)
+            self.assertIn("Open with a question.", self.wait_label(popup, "1 / 4")["notes"])
+            popup.keyboard.press("ArrowRight")
+            self.wait_hash(page, "#/1")
+            page.keyboard.press("ArrowRight")
+            self.wait_label(popup, "2 / 4")
 
 
 PACING_DECK = {

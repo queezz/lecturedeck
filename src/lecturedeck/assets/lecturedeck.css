@@ -691,3 +691,54 @@ body.overview-open .lecture-clock { display: none; }
 #pacing-button[data-recording="true"]::after { content: " ●"; color: var(--green); }
 #pacing-button[data-recording="true"][data-saved="browser"]::after { color: var(--gold); }
 #pacing-button[data-recording="true"][data-saved="failing"]::after { color: var(--red); }
+
+/* Presenter window (?presenter=1): the screen's notes in large type, the
+   next screen and a clock, in the deck's theme; no slide and no chrome.
+   deck.css may style notes HTML under .presenter-notes. */
+body.presenter-mode :is(.deck-chrome, .mobile-menu-toggle, .touch-nav, .overview) { display: none !important; }
+body.presenter-mode .deck:empty { display: none; }
+.presenter {
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  background: var(--bg); color: var(--ink);
+}
+.presenter-head, .presenter-foot {
+  display: flex; align-items: center; gap: 12px 24px; padding: 12px 24px; background: var(--panel);
+}
+.presenter-head { border-bottom: 1px solid var(--border); }
+.presenter-foot { border-top: 1px solid var(--border); }
+.presenter-now, .presenter-next { flex: 1 1 auto; min-width: 0; margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+.presenter-label { flex: none; color: var(--blue); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.presenter-now .presenter-label { font-size: 30px; }
+.presenter-now .presenter-title { color: var(--strong); font-size: 28px; font-weight: 700; line-height: 1.15; }
+.presenter-steps { color: var(--muted); font-size: 18px; white-space: nowrap; }
+.presenter-steps[hidden] { display: none; }
+.presenter small {
+  display: block; color: var(--faint); font-size: 12px; font-weight: 700;
+  letter-spacing: .08em; line-height: 1.2; text-transform: uppercase;
+}
+.presenter-clock { flex: none; margin: 0; display: flex; gap: 22px; text-align: right; }
+.presenter-clock > span { display: grid; color: var(--strong); font-size: 30px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.presenter-status { margin: 0; padding: 8px 24px; color: var(--gold); font-size: 18px; }
+.presenter-status[hidden] { display: none; }
+.presenter-notes {
+  flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 22px 32px 32px;
+  color: var(--strong); font-size: clamp(22px, calc(2.2vw + 8px), 40px); line-height: 1.4;
+}
+.presenter-notes > :first-child { margin-top: 0; }
+.presenter-notes p, .presenter-notes ul, .presenter-notes ol { margin: 0 0 .6em; }
+.presenter-notes :is(img, svg, video) { max-width: 100%; }
+.presenter-notes a { color: var(--blue); }
+.presenter-empty { color: var(--faint); font-style: italic; }
+.presenter-next small { flex-basis: 100%; }
+.presenter-next .presenter-label { font-size: 22px; }
+.presenter-next .presenter-title { color: var(--muted); font-size: 22px; line-height: 1.2; }
+.presenter-foot button {
+  flex: none; min-height: 52px; padding: 8px 20px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel-2); color: var(--strong); font-size: 20px; font-weight: 700; cursor: pointer;
+}
+.presenter-foot button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+.presenter-foot button:disabled { opacity: .4; cursor: default; }
+@media (max-width: 640px) {
+  .presenter-head, .presenter-foot { padding: 10px 14px; }
+  .presenter-notes { padding: 16px 16px 24px; }
+}
