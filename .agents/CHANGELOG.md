@@ -1,5 +1,30 @@
 # Changelog — shipped version history
 
+## 0.31.0
+
+The owner, 2026-11-26, presenting from the presenter window with full-text
+notes: "Notes, what if it's too much? Need some mechanism to fit in what is
+needed now"; "Also I need same timer as on the main slide, how much is left
+for me"; "Click the video means navigating to the 'top screen' which is the
+projector."
+
+- Notes fit the window. With step blocks, the window now draws only the
+  block for the step on show (and anything outside the blocks, such as a
+  line of clock times or a fold of facts), and shrinks the text until it
+  fits, down to 16 px. Long notes used to run off the bottom of the window.
+  `A` brings back every block with the bar and the scrolling of 0.30.0.
+  `+` and `-` make the notes larger or smaller and `0` resets them; both
+  choices are kept in the browser.
+- The window shows the time left in the slot, as the deck's lecture clock
+  reads it from `presentation-time.json`: "Starts 13:15", "Left 12 min" (gold
+  in the last five minutes), "Over +3 min". Both clocks share one reading.
+- On a video screen the window offers Play or Pause and Restart; on an
+  animation from the deck's own address, the animation's own buttons, with
+  their labels and pressed state. Pressing one there presses it in the deck,
+  so nobody has to click on the projector's window. If the browser refuses
+  sound to a window not yet clicked, the video plays muted and the window
+  says so.
+
 ## 0.30.0
 
 Owner, 2026-11-25, after trying presenter notes in a lecture: "Presenter

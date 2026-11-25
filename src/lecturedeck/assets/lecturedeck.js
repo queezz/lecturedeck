@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.30.0";
+  const VIEWER_VERSION = "0.31.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -255,22 +255,46 @@
     } catch (_) { return null; }
   }
 
-  function setupLectureClock(timing) {
-    if (!timing || printMode) return;
+  // The lecture clock's reading, shared by the deck's clock and the
+  // presenter window's (0.31.0): the time in the slot's time zone, and
+  // "starts 13:15", "N min left" or "+N min over", with its state.
+  function lectureClockReader(timing) {
+    if (!timing) return null;
     const parse = value => {
       if (typeof value !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) return NaN;
       const [hour, minute] = value.split(":").map(Number);
       return hour * 3600 + minute * 60;
     };
     const start = parse(timing.start), end = parse(timing.end);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
     let formatter;
     try {
       formatter = new Intl.DateTimeFormat("en-GB", {
         timeZone: timing.timeZone, hour: "2-digit", minute: "2-digit",
         second: "2-digit", hourCycle: "h23",
       });
-    } catch (_) { return; }
+    } catch (_) { return null; }
+    return () => {
+      const parts = Object.fromEntries(formatter.formatToParts(new Date()).map(p => [p.type, p.value]));
+      const seconds = +parts.hour * 3600 + +parts.minute * 60 + +parts.second;
+      let label = `${Math.ceil((end - seconds) / 60)} min left`;
+      let state = "running";
+      let word = "Left", value = `${Math.ceil((end - seconds) / 60)} min`;
+      if (seconds < start) { label = `starts ${timing.start}`; state = "before"; word = "Starts"; value = timing.start; }
+      else if (seconds >= end) {
+        label = seconds === end ? "time's up" : `+${Math.ceil((seconds - end) / 60)} min over`;
+        state = "over";
+        word = "Over";
+        value = seconds === end ? "0 min" : `+${Math.ceil((seconds - end) / 60)} min`;
+      } else if (end - seconds <= 300) state = "last-five";
+      return {hour: parts.hour, minute: parts.minute, label, state, word, value};
+    };
+  }
+
+  function setupLectureClock(timing) {
+    if (!timing || printMode) return;
+    const read = lectureClockReader(timing);
+    if (!read) return;
     const clock = document.createElement("div");
     clock.id = "lecture-clock";
     clock.className = "lecture-clock";
@@ -300,16 +324,10 @@
     controlsTools?.append(toggle);
     apply();
     const update = () => {
-      const parts = Object.fromEntries(formatter.formatToParts(new Date()).map(p => [p.type, p.value]));
-      const seconds = +parts.hour * 3600 + +parts.minute * 60 + +parts.second;
-      let label = `${Math.ceil((end - seconds) / 60)} min left`;
-      let state = "running";
-      if (seconds < start) { label = `starts ${timing.start}`; state = "before"; }
-      else if (seconds >= end) { label = seconds === end ? "time's up" : `+${Math.ceil((seconds - end) / 60)} min over`; state = "over"; }
-      else if (end - seconds <= 300) state = "last-five";
+      const {hour, minute, label, state} = read();
       clock.dataset.state = state;
-      clock.textContent = `${parts.hour}:${parts.minute} · ${label}`;
-      clock.setAttribute("aria-label", `Current time ${parts.hour}:${parts.minute}; ${label}`);
+      clock.textContent = `${hour}:${minute} · ${label}`;
+      clock.setAttribute("aria-label", `Current time ${hour}:${minute}; ${label}`);
     };
     update();
     setInterval(update, 1000);
@@ -1815,8 +1833,11 @@
       + '<span class="presenter-steps" id="presenter-steps" hidden></span></p>'
       + '<p class="presenter-clock" role="timer" aria-live="off">'
       + '<span><small>Time</small><span id="presenter-time"></span></span>'
-      + '<span><small>Elapsed</small><span id="presenter-elapsed"></span></span></p></header>'
+      + '<span><small>Elapsed</small><span id="presenter-elapsed"></span></span>'
+      + '<span class="presenter-left" id="presenter-left-box" hidden><small id="presenter-left-word">Left</small>'
+      + '<span id="presenter-left"></span></span></p></header>'
       + '<p class="presenter-status" id="presenter-status" role="status"></p>'
+      + '<div class="presenter-controls" id="presenter-controls" role="group" aria-label="The screen’s video or animation" hidden></div>'
       + '<section class="presenter-notes" id="presenter-notes" aria-label="Presenter notes"></section>'
       + '<footer class="presenter-foot">'
       + '<button type="button" id="presenter-previous" aria-label="Previous">‹ Previous</button>'
@@ -1832,28 +1853,113 @@
     const status = text => { part("status").textContent = text; part("status").hidden = !text; };
     let shown = -1;
     let current = null;
+    let lastRevealed = 0;
+    let noticeUntil = 0;
+
+    // The screen's video or animation, driven from here (0.31.0): the deck
+    // sends what its current screen offers (a video's Play or Pause and
+    // Restart; an animation's own buttons, from a page of the deck's own
+    // address) and presses the one chosen here, so the presenter never
+    // reaches for the projector's window.
+    function drawControls(controls) {
+      const bar = part("controls");
+      const list = Array.isArray(controls) ? controls.filter(c => c && typeof c.id === "string") : [];
+      const signature = JSON.stringify(list);
+      if (bar.dataset.signature === signature) return;
+      bar.dataset.signature = signature;
+      bar.innerHTML = list.map(c => `<button type="button" data-control="${escapeHtml(c.id)}" `
+        + `aria-pressed="${c.pressed ? "true" : "false"}">${escapeHtml(String(c.label || c.id))}</button>`).join("");
+      bar.hidden = !list.length;
+    }
+    part("controls").addEventListener("click", event => {
+      const button = event.target instanceof Element ? event.target.closest("button[data-control]") : null;
+      if (!button) return;
+      link?.postMessage({type: "control", id: button.dataset.control});
+      // The paging keys stay with the window, not with the button.
+      button.blur();
+    });
+
+    // Notes fit the window (0.31.0). With step blocks, only the block on
+    // show is drawn, with whatever stands outside the blocks (a clock line,
+    // a fold of facts); `A` shows every block again, as 0.30.0 did. The
+    // text then shrinks until it fits, never below NOTES_MIN_PX; `+` and
+    // `-` scale the size the stylesheet sets, `0` resets it. Both choices
+    // are kept in this browser.
+    const NOTES_MIN_PX = 16;
+    const NOTES_SCALE = "lecturedeck-presenter-notes-scale";
+    const NOTES_ALL = "lecturedeck-presenter-notes-all";
+    let notesScale = 1;
+    let notesAll = false;
+    try {
+      notesScale = Math.min(2, Math.max(0.5, Number(localStorage.getItem(NOTES_SCALE)) || 1));
+      notesAll = localStorage.getItem(NOTES_ALL) === "1";
+    } catch (_) {
+      // Kept for this page only.
+    }
+    const rememberNotes = () => {
+      try {
+        localStorage.setItem(NOTES_SCALE, String(notesScale));
+        localStorage.setItem(NOTES_ALL, notesAll ? "1" : "0");
+      } catch (_) {
+        // Kept for this page only.
+      }
+    };
+
+    function fitNotes(box) {
+      box.classList.toggle("show-all", notesAll);
+      box.style.fontSize = "";
+      const base = Number.parseFloat(getComputedStyle(box).fontSize) || 24;
+      const top = Math.max(NOTES_MIN_PX, base * notesScale);
+      box.style.fontSize = `${top}px`;
+      // Every block shown: the size is the reader's, and the notes scroll.
+      if (notesAll && box.classList.contains("has-steps")) return;
+      const fits = () => box.scrollHeight <= box.clientHeight + 1;
+      if (fits() || top <= NOTES_MIN_PX) return;
+      let low = NOTES_MIN_PX;
+      let high = top;
+      for (let k = 0; k < 9; k += 1) {
+        const middle = (low + high) / 2;
+        box.style.fontSize = `${middle}px`;
+        if (fits()) low = middle;
+        else high = middle;
+      }
+      box.style.fontSize = `${low}px`;
+    }
 
     // Notes that follow the steps: an element of the notes with
     // data-step="k" is what to say at step k. The block of the step on show
-    // (the last one at or before it) is marked .is-now and scrolled into
-    // view; blocks already passed are .is-said, blocks still to come
-    // .is-ahead. Notes without data-step keep their scroll on a step.
+    // (the last one at or before it) is marked .is-now; blocks already
+    // passed are .is-said, blocks still to come .is-ahead. In the fitted
+    // view only .is-now is drawn; with every block shown (`A`), the block
+    // on show is scrolled into view. Notes without data-step are fitted
+    // whole and keep their scroll on a step.
     function followSteps(box, revealed, entered) {
       const blocks = [...box.querySelectorAll("[data-step]")]
         .map(node => ({node, step: Number.parseInt(node.dataset.step, 10)}))
         .filter(block => Number.isFinite(block.step));
-      if (!blocks.length) return;
-      const lowest = Math.min(...blocks.map(block => block.step));
-      const reached = blocks.filter(block => block.step <= revealed).map(block => block.step);
-      const now = reached.length ? Math.max(...reached) : lowest;
+      box.classList.toggle("has-steps", blocks.length > 0);
       let first = null;
-      for (const block of blocks) {
-        block.node.classList.toggle("is-now", block.step === now);
-        block.node.classList.toggle("is-said", block.step < now);
-        block.node.classList.toggle("is-ahead", block.step > now);
-        if (block.step === now && !first) first = block.node;
+      let now = 0;
+      let lowest = 0;
+      if (blocks.length) {
+        lowest = Math.min(...blocks.map(block => block.step));
+        const reached = blocks.filter(block => block.step <= revealed).map(block => block.step);
+        now = reached.length ? Math.max(...reached) : lowest;
+        for (const block of blocks) {
+          block.node.classList.toggle("is-now", block.step === now);
+          block.node.classList.toggle("is-said", block.step < now);
+          block.node.classList.toggle("is-ahead", block.step > now);
+          if (block.step === now && !first) first = block.node;
+        }
       }
-      if (!first || (!entered && first === current)) return;
+      fitNotes(box);
+      if (!first) return;
+      if (!notesAll) {
+        current = first;
+        box.scrollTop = 0;
+        return;
+      }
+      if (!entered && first === current) return;
       current = first;
       if (now === lowest) { box.scrollTop = 0; return; }
       const smooth = !entered && !matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1880,6 +1986,8 @@
         box.classList.toggle("is-empty", !notes);
         box.scrollTop = 0;
       }
+      lastRevealed = revealed;
+      drawControls(state.controls);
       followSteps(part("notes"), revealed, entered);
       const last = i === slides.length - 1;
       part("next-label").textContent = last ? "" : numbering.position(i + 1);
@@ -1891,16 +1999,32 @@
     const page = to => link?.postMessage({type: "page", to});
     link?.addEventListener("message", event => {
       const data = event.data;
-      if (data?.type === "state") { status(""); draw(data); }
+      if (data?.type === "state") { if (Date.now() > noticeUntil) status(""); draw(data); }
+      else if (data?.type === "notice" && typeof data.text === "string") { noticeUntil = Date.now() + 8000; status(data.text); }
       else if (data?.type === "closed") status("The deck window has closed. Open the deck again to follow it.");
     });
     status(link ? "Waiting for the deck window…" : "This browser cannot link the two windows.");
     link?.postMessage({type: "hello"});
     part("previous").addEventListener("click", () => page("previous"));
     part("next").addEventListener("click", () => page("next"));
+    // The notes refit when the window changes size or a fold opens.
+    const refit = () => { if (shown >= 0) followSteps(part("notes"), lastRevealed, true); };
+    addEventListener("resize", refit);
+    part("notes").addEventListener("toggle", refit, true);
     // The deck's own paging keys, so a clicker drives the deck from here too.
     addEventListener("keydown", event => {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
+      // The notes' own keys: + and - the size, 0 back to the stylesheet's, A every block or the one on show.
+      const key = event.key;
+      if (["+", "=", "-", "_", "0", "a", "A"].includes(key)) {
+        if (key === "a" || key === "A") notesAll = !notesAll;
+        else if (key === "0") notesScale = 1;
+        else notesScale = Math.min(2, Math.max(0.5, notesScale * (key === "-" || key === "_" ? 1 / 1.1 : 1.1)));
+        rememberNotes();
+        event.preventDefault();
+        refit();
+        return;
+      }
       const onControl = event.target instanceof Element && Boolean(event.target.closest("button, a"));
       const forward = ["ArrowRight", "ArrowDown", "PageDown"].includes(event.key);
       const backward = ["ArrowLeft", "ArrowUp", "PageUp"].includes(event.key);
@@ -1929,7 +2053,21 @@
       const hours = Math.floor(seconds / 3600);
       const minutes = Math.floor(seconds / 60) % 60;
       part("elapsed").textContent = hours ? `${hours}:${two(minutes)}:${two(seconds % 60)}` : `${minutes}:${two(seconds % 60)}`;
+      if (readLeft) {
+        const {word, value, state} = readLeft();
+        part("left-word").textContent = word;
+        part("left").textContent = value;
+        part("left-box").dataset.state = state;
+      }
     };
+    // The time left in the slot, as the deck's own lecture clock reads it
+    // (presentation-time.json beside the deck; 0.31.0).
+    let readLeft = null;
+    loadPresentationTime().then(timing => {
+      readLeft = lectureClockReader(timing);
+      part("left-box").hidden = !readLeft;
+      tick();
+    });
     tick();
     setInterval(tick, 1000);
     document.addEventListener("visibilitychange", tick);
@@ -3625,10 +3763,74 @@
     const presenterLink = presenterChannel();
     let presenterWindow = null;
     let presenterSent = "";
+    // What the current screen lets the presenter window drive (0.31.0): a
+    // video's Play or Pause and Restart, or an animation's own buttons when
+    // its page has the deck's address (a page from elsewhere stays shut).
+    const presenterHooked = new WeakSet();
+    const frameButtons = doc => [...doc.querySelectorAll("button")]
+      .filter(button => !button.disabled && button.getClientRects().length).slice(0, 12);
+    function presenterControls() {
+      const frame = deck.querySelector(".slide-frame");
+      if (!frame) return [];
+      const video = frame.querySelector("video");
+      if (video) {
+        if (!presenterHooked.has(video)) {
+          presenterHooked.add(video);
+          for (const name of ["play", "pause", "ended"]) video.addEventListener(name, () => presenterUpdate());
+        }
+        const playing = !video.paused && !video.ended;
+        return [{id: "video:toggle", label: playing ? "Pause video" : "Play video", pressed: playing},
+          {id: "video:restart", label: "Restart video", pressed: false}];
+      }
+      const iframe = frame.querySelector(".interactive-frame iframe");
+      if (!iframe) return [];
+      if (!presenterHooked.has(iframe)) {
+        presenterHooked.add(iframe);
+        iframe.addEventListener("load", () => presenterUpdate());
+      }
+      let doc = null;
+      try { doc = iframe.contentDocument; } catch (_) { return []; }
+      if (!doc?.body) return [];
+      if (!presenterHooked.has(doc)) {
+        presenterHooked.add(doc);
+        // A click inside the animation (on the projector) updates the window too.
+        doc.addEventListener("click", () => setTimeout(() => presenterUpdate(), 60), true);
+      }
+      return frameButtons(doc).map((button, k) => ({id: `frame:${k}`,
+        label: (button.getAttribute("aria-label") || button.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40)
+          || `Button ${k + 1}`,
+        pressed: button.getAttribute("aria-pressed") === "true"}));
+    }
+    function presenterControl(id) {
+      const frame = deck.querySelector(".slide-frame");
+      if (!frame) return;
+      const video = frame.querySelector("video");
+      if (video && id.startsWith("video:")) {
+        if (id === "video:restart") video.currentTime = 0;
+        if (id === "video:restart" || video.paused || video.ended) {
+          // A browser may refuse sound to a window not yet clicked: then play muted, and say so.
+          Promise.resolve(video.play()).catch(() => {
+            video.muted = true;
+            Promise.resolve(video.play()).catch(() => {});
+            presenterLink?.postMessage({type: "notice",
+              text: "The deck window may not play sound yet, so the video plays muted. Click the deck window once to allow sound."});
+          });
+        } else video.pause();
+        return;
+      }
+      if (!id.startsWith("frame:")) return;
+      const iframe = frame.querySelector(".interactive-frame iframe");
+      let doc = null;
+      try { doc = iframe?.contentDocument; } catch (_) { return; }
+      if (!doc) return;
+      frameButtons(doc)[Number(id.slice(6))]?.click();
+      setTimeout(() => presenterUpdate(), 60);
+    }
     function presenterUpdate(force = false) {
       if (!presenterLink) return;
       const state = {type: "state", index, revealed, steps: stepLevels.length,
-        theme: document.body.classList.contains("light-theme") ? "light" : "dark"};
+        theme: document.body.classList.contains("light-theme") ? "light" : "dark",
+        controls: presenterControls()};
       const text = JSON.stringify(state);
       if (!force && text === presenterSent) return;
       presenterSent = text;
@@ -3645,6 +3847,7 @@
     presenterLink?.addEventListener("message", event => {
       const data = event.data;
       if (data?.type === "hello") { presenterUpdate(true); return; }
+      if (data?.type === "control" && typeof data.id === "string") { presenterControl(data.id); return; }
       if (data?.type !== "page") return;
       // As a paging key here: it only closes an open photo, and any other
       // open dialog keeps the deck still.

@@ -739,6 +739,21 @@ body.presenter-mode .deck:empty { display: none; }
 .presenter-notes [data-step].is-said { opacity: .45; }
 .presenter-notes [data-step].is-ahead { opacity: .3; }
 @media (prefers-reduced-motion: reduce) { .presenter-notes [data-step] { transition: none; } }
+/* Fitted (0.31.0): only the block on show, sized to the window; A shows every block again. */
+.presenter-notes.has-steps:not(.show-all) [data-step]:is(.is-said, .is-ahead) { display: none; }
+/* The time left in the slot, coloured as the deck's lecture clock. */
+.presenter-left[hidden] { display: none; }
+.presenter-left[data-state="last-five"] > span { color: var(--gold); }
+.presenter-left[data-state="over"] > span { color: var(--red); }
+/* The screen's video or animation, driven from here. */
+.presenter-controls { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 24px 0; }
+.presenter-controls[hidden] { display: none; }
+.presenter-controls button {
+  min-height: 44px; padding: 6px 16px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel-2); color: var(--strong); font-size: 19px; font-weight: 700; cursor: pointer;
+}
+.presenter-controls button[aria-pressed="true"] { border-color: var(--blue); box-shadow: inset 0 0 0 2px var(--blue); }
+.presenter-controls button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 .presenter-next small { flex-basis: 100%; }
 .presenter-next .presenter-label { font-size: 22px; }
 .presenter-next .presenter-title { color: var(--muted); font-size: 22px; line-height: 1.2; }

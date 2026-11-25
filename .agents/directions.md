@@ -72,7 +72,8 @@ the items below lives in `design-viewer-authoring.md`.
   the projector while the presenter window stays put and a clicker drives
   the deck with either window in front. Tested only in headless Chromium
   and Playwright WebKit on Windows.
-- His first verdict (25 Nov) settled what notes are for: the full text he
-  reads, in sync with the steps (0.30.0). Still his to judge after a
-  lecture with full-text notes: the type size (decks may set it in
-  `deck.css`), and whether he wants a font-size control in the window.
+- His first verdicts (25-26 Nov) settled what notes are for: the full text
+  he reads, in sync with the steps (0.30.0), fitted to the window with a
+  size he can set, the time left, and the screen's video or animation
+  driven from the window (0.31.0). Still his to judge after the lecture:
+  whether the fitted view's 16 px floor and the controls bar suit him.

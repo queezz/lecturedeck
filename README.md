@@ -661,14 +661,15 @@ appears, and so on.
  "notes": "<div data-step=\"0\"><p>Here is a slit.</p></div><div data-step=\"1\"><p>Now narrow it: the spot widens.</p></div>"}
 ```
 
-The presenter window marks the block of the step on show (the last block at
-or before it) with a bar and scrolls it into view; blocks already passed fade,
-blocks still to come stay faint but readable. Arriving on a slide already
-revealed (paging back) marks its last block at once. Notes without
-`data-step` behave as before and keep their scroll as the steps change. The
-blocks carry `.is-now`, `.is-said` and `.is-ahead`, for `deck.css` to restyle.
-A 0.29 viewer shows the same notes in order, unmarked, so a deck may keep
-`"requires": ">=0.29"`; declare `">=0.30"` only if it depends on the marks.
+The presenter window shows the block of the step on show (the last block at
+or before it), with whatever stands outside the blocks (a line of clock times,
+a `<details>` fold of facts). Since 0.31.0 that is all it draws, and the text
+shrinks until it fits the window, down to 16 px at the least; `A` shows every
+block instead, the one on show marked with a bar and scrolled into view,
+blocks passed faded, blocks to come faint but readable (the 0.30.0 view).
+Notes without `data-step` are fitted whole. The blocks carry `.is-now`,
+`.is-said` and `.is-ahead`, for `deck.css` to restyle; a 0.29 viewer shows
+the same notes in order, unmarked.
 
 `N` in the deck (or the **Notes** control, which appears on a deck with
 notes) opens a second browser window: this deck's page again, at
@@ -680,7 +681,17 @@ notes) opens a second browser window: this deck's page again, at
   screen";
 - the next screen's label and title;
 - the time of day and the time since the window opened (a reload of the
-  window keeps counting).
+  window keeps counting), and, when the deck has a `presentation-time.json`,
+  the time left in the slot as the deck's lecture clock reads it: "Starts
+  13:15", then "Left 12 min" (gold in the last five minutes), then "Over
+  +3 min" (since 0.31.0);
+- on a screen with a video, **Play video** (or **Pause video**) and
+  **Restart video**; on a screen with an animation from the deck's own
+  address, that animation's own buttons, labelled as they label themselves
+  (`aria-label`, else their text) and marked when pressed (`aria-pressed`).
+  Pressing one here presses it in the deck, so the presenter never reaches
+  for the projector's window (since 0.31.0). A browser may refuse sound to a
+  window not yet clicked: the video then plays muted, and the window says so.
 
 The window follows the deck as it pages, and follows its light or dark
 theme. Its own keys and buttons drive the deck, so a clicker works with
@@ -692,6 +703,8 @@ either window in front:
 | `←` `↑` `PageUp`, **Previous** | previous step or slide |
 | `Shift` + an arrow or page key | whole slides |
 | `Home` / `End` | first / last slide |
+| `+` / `-`, `0` | notes larger / smaller, back to the stylesheet's size (kept in this browser) |
+| `A` | every notes block, or only the one on show (kept in this browser) |
 
 A page request from the window acts like the same key in the deck: it only
 closes an open photo, and with Appearance or Pacing open the deck stays

@@ -662,6 +662,22 @@ NOTES_DECK = {
          "notes": f"{NOTE_MARK}-4"},
     ],
 }
+# Presenter window, 0.31.0: long notes that must shrink, a video and an
+# animation to drive from the window. Labels: 1 / 4 ... 4 / 4.
+CONTROLS_DECK = {
+    "deck": 1,
+    "meta": {"title": "Controls deck", "section": "SMOKE", "opening": "OPENING"},
+    "slides": [
+        {"id": "c-long", "title": "Long notes", "claim": "Main one.",
+         "notes": "<p>" + " ".join(["word"] * 300) + "</p>"},
+        {"id": "c-video", "title": "A video", "notes": "<p>Play it.</p>",
+         "video": {"src": "assets/clip.mp4", "type": "video/mp4", "poster": "assets/poster.png",
+                   "title": "Smoke video"}},
+        {"id": "c-demo", "title": "An animation", "notes": "<p>Press it.</p>",
+         "interactive": {"src": "assets/demo/index.html", "title": "Demo"}},
+        {"id": "c-end", "title": "End", "claim": "Done.", "notes": "<p>The end.</p>"},
+    ],
+}
 PRESENTER_STATE = """() => {
   const text = id => document.querySelector('#presenter-' + id).textContent;
   const steps = document.querySelector('#presenter-steps');
@@ -3904,15 +3920,27 @@ class BrowserSmokeTest(unittest.TestCase):
         def scroll():
             return popup.evaluate("document.querySelector('#presenter-notes').scrollTop")
 
+        def drawn():
+            return popup.evaluate("""() => [...document.querySelectorAll(
+                '#presenter-notes [data-step]')]
+              .filter(n => getComputedStyle(n).display !== 'none').map(n => n.dataset.step)""")
+
         page.evaluate("() => { location.hash = '#/2'; }")
         self.wait_label(popup, "2 / 4")
         self.assertEqual(["0:is-now", "1:is-ahead", "2:is-ahead"], marks())
         self.assertEqual(0, scroll())
-        # Each step moves the mark and brings its block into view.
+        # Fitted (the default): only the block on show is drawn.
+        self.assertEqual(["0"], drawn())
         page.keyboard.press("ArrowRight")
         popup.wait_for_function(
             "document.querySelector('#presenter-steps').textContent === 'step 1 of 2'")
         self.assertEqual(["0:is-said", "1:is-now", "2:is-ahead"], marks())
+        self.assertEqual(["1"], drawn())
+        self.assertEqual(0, scroll())
+        # A: every block, the one on show scrolled into view, as in 0.30.0.
+        popup.keyboard.press("a")
+        popup.wait_for_function("document.querySelector('#presenter-notes').classList.contains('show-all')")
+        self.assertEqual(["0", "1", "2"], drawn())
         popup.wait_for_function("document.querySelector('#presenter-notes').scrollTop > 1000")
         popup.keyboard.press("ArrowRight")
         popup.wait_for_function(
@@ -3932,6 +3960,113 @@ class BrowserSmokeTest(unittest.TestCase):
         self.wait_label(popup, "2 / 4")
         self.assertEqual(["0:is-said", "1:is-said", "2:is-now"], marks())
         self.assertGreater(scroll(), 1000)
+        # The choice is kept: A again goes back to the fitted view.
+        self.assertEqual("1", popup.evaluate(
+            "localStorage.getItem('lecturedeck-presenter-notes-all')"))
+        popup.keyboard.press("a")
+        popup.wait_for_function("!document.querySelector('#presenter-notes').classList.contains('show-all')")
+        self.assertEqual(["2"], drawn())
+
+    def test_presenter_notes_shrink_to_fit_and_keep_a_chosen_size(self):
+        context = self.notes_context(deck=CONTROLS_DECK, viewport={"width": 1280, "height": 900})
+        page = self.open_in(context, self.urls["json"])
+        popup = self.open_presenter(page)
+        self.wait_label(popup, "1 / 4")
+        size = ("(() => { const b = document.querySelector('#presenter-notes');"
+                " return [parseFloat(getComputedStyle(b).fontSize),"
+                " b.scrollHeight <= b.clientHeight + 1]; })()")
+        shrunk, fits = popup.evaluate(size)
+        # The stylesheet asks for about 36 px at this width; 300 words fit only smaller.
+        self.assertTrue(fits)
+        self.assertGreater(shrunk, 16)
+        self.assertLess(shrunk, 34)
+        # A short note is drawn at the full size.
+        page.evaluate("() => { location.hash = '#/1'; }")
+        self.wait_label(popup, "2 / 4")
+        full, _ = popup.evaluate(size)
+        self.assertGreater(full, shrunk)
+        # - and + scale it, 0 resets; the choice is kept in this browser.
+        popup.keyboard.press("-")
+        popup.wait_for_function(
+            "localStorage.getItem('lecturedeck-presenter-notes-scale') !== null")
+        smaller, _ = popup.evaluate(size)
+        self.assertAlmostEqual(full / 1.1, smaller, delta=0.6)
+        popup.keyboard.press("0")
+        popup.wait_for_function("localStorage.getItem('lecturedeck-presenter-notes-scale') === '1'")
+        self.assertAlmostEqual(full, popup.evaluate(size)[0], delta=0.6)
+
+    def test_presenter_window_drives_the_video_and_the_animation(self):
+        context = self.notes_context(deck=CONTROLS_DECK, viewport={"width": 1280, "height": 900})
+        # The fixture clip is not a real encoding: count play() and act as if it played.
+        context.add_init_script("""
+          window.__plays = 0;
+          HTMLMediaElement.prototype.play = function () {
+            window.__plays += 1;
+            Object.defineProperty(this, 'paused', {value: false, configurable: true});
+            this.dispatchEvent(new Event('play'));
+            return Promise.resolve();
+          };
+          HTMLMediaElement.prototype.pause = function () {
+            Object.defineProperty(this, 'paused', {value: true, configurable: true});
+            this.dispatchEvent(new Event('pause'));
+          };""")
+        page = self.open_in(context, self.urls["json"])
+        popup = self.open_presenter(page)
+        self.wait_label(popup, "1 / 4")
+        self.assertTrue(popup.locator("#presenter-controls").is_hidden())
+
+        def controls():
+            return popup.evaluate("[...document.querySelectorAll('#presenter-controls button')]"
+                                  ".map(b => b.textContent)")
+
+        page.evaluate("() => { location.hash = '#/1'; }")
+        self.wait_label(popup, "2 / 4")
+        popup.wait_for_function(
+            "document.querySelectorAll('#presenter-controls button').length === 2")
+        self.assertEqual(["Play video", "Restart video"], controls())
+        popup.click("#presenter-controls button[data-control='video:toggle']")
+        page.wait_for_function("window.__plays === 1")
+        popup.wait_for_function(
+            "document.querySelector('#presenter-controls button').textContent === 'Pause video'")
+        popup.click("#presenter-controls button[data-control='video:toggle']")
+        popup.wait_for_function(
+            "document.querySelector('#presenter-controls button').textContent === 'Play video'")
+        # The animation's own button, pressed from here, pages the deck as it does there.
+        page.evaluate("() => { location.hash = '#/2'; }")
+        self.wait_label(popup, "3 / 4")
+        popup.wait_for_function(
+            "document.querySelectorAll('#presenter-controls button').length === 1")
+        self.assertEqual(["Next slide"], controls())
+        popup.click("#presenter-controls button[data-control='frame:0']")
+        self.wait_hash(page, "#/3")
+        self.wait_label(popup, "4 / 4")
+        self.assertTrue(popup.locator("#presenter-controls").is_hidden())
+
+    def test_presenter_window_shows_the_time_left(self):
+        context = self.notes_context(timezone_id="UTC", viewport={"width": 1280, "height": 900})
+        context.route("**/presentation-time.json", lambda route: route.fulfill(
+            json={"start": "10:00", "end": "11:30", "timeZone": "UTC"}))
+        moment = datetime(2026, 1, 1, 9, 58, 0, tzinfo=timezone.utc)
+        context.clock.install(time=moment)
+        context.clock.pause_at(moment)
+        page = self.open_in(context, self.urls["json"])
+        popup = self.open_presenter(page)
+        popup.wait_for_function("!document.querySelector('#presenter-left-box').hidden")
+
+        def left():
+            return popup.evaluate("['left-word', 'left']"
+                                  ".map(id => document.querySelector('#presenter-' + id)"
+                                  ".textContent).concat(document.querySelector('#presenter-left-box')"
+                                  ".dataset.state)")
+
+        self.assertEqual(["Starts", "10:00", "before"], left())
+        context.clock.fast_forward(33 * 60 * 1000)          # 10:31
+        self.assertEqual(["Left", "59 min", "running"], left())
+        self.assertIn("59 min left", page.inner_text("#lecture-clock"))
+        context.clock.fast_forward(56 * 60 * 1000)          # 11:27
+        self.assertEqual(["Left", "3 min", "last-five"], left())
+        context.clock.fast_forward(8 * 60 * 1000)           # 11:35
+        self.assertEqual(["Over", "+5 min", "over"], left())
 
     def test_presenter_clock_shows_the_time_and_the_time_open(self):
         context = self.notes_context(timezone_id="UTC", viewport={"width": 1280, "height": 900})
