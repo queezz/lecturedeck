@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.29.0";
+  const VIEWER_VERSION = "0.30.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -1831,6 +1831,35 @@
     const count = (value, max) => Math.max(0, Math.min(max, Math.trunc(Number(value)) || 0));
     const status = text => { part("status").textContent = text; part("status").hidden = !text; };
     let shown = -1;
+    let current = null;
+
+    // Notes that follow the steps: an element of the notes with
+    // data-step="k" is what to say at step k. The block of the step on show
+    // (the last one at or before it) is marked .is-now and scrolled into
+    // view; blocks already passed are .is-said, blocks still to come
+    // .is-ahead. Notes without data-step keep their scroll on a step.
+    function followSteps(box, revealed, entered) {
+      const blocks = [...box.querySelectorAll("[data-step]")]
+        .map(node => ({node, step: Number.parseInt(node.dataset.step, 10)}))
+        .filter(block => Number.isFinite(block.step));
+      if (!blocks.length) return;
+      const lowest = Math.min(...blocks.map(block => block.step));
+      const reached = blocks.filter(block => block.step <= revealed).map(block => block.step);
+      const now = reached.length ? Math.max(...reached) : lowest;
+      let first = null;
+      for (const block of blocks) {
+        block.node.classList.toggle("is-now", block.step === now);
+        block.node.classList.toggle("is-said", block.step < now);
+        block.node.classList.toggle("is-ahead", block.step > now);
+        if (block.step === now && !first) first = block.node;
+      }
+      if (!first || (!entered && first === current)) return;
+      current = first;
+      if (now === lowest) { box.scrollTop = 0; return; }
+      const smooth = !entered && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const top = first.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 12;
+      box.scrollTo({top: Math.max(0, top), behavior: smooth ? "smooth" : "auto"});
+    }
 
     function draw(state) {
       const i = count(state.index, slides.length - 1);
@@ -1841,15 +1870,17 @@
       part("title").innerHTML = titleHtml(i);
       part("steps").hidden = !steps;
       part("steps").textContent = steps ? `step ${revealed} of ${steps}` : "";
-      if (i !== shown) {
-        // A step changes nothing below: the notes keep their scroll.
+      const entered = i !== shown;
+      if (entered) {
         shown = i;
+        current = null;
         const notes = typeof slides[i].notes === "string" ? slides[i].notes.trim() : "";
         const box = part("notes");
         box.innerHTML = notes || '<p class="presenter-empty">No notes for this screen</p>';
         box.classList.toggle("is-empty", !notes);
         box.scrollTop = 0;
       }
+      followSteps(part("notes"), revealed, entered);
       const last = i === slides.length - 1;
       part("next-label").textContent = last ? "" : numbering.position(i + 1);
       part("next-title").innerHTML = last ? "End of the deck" : titleHtml(i + 1);

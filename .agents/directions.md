@@ -64,7 +64,7 @@ the items below lives in `design-viewer-authoring.md`.
 - Hotspots exist only on figure objects. An image in slide HTML (a photo
   card) has none; a `data-hotspots` attribute would need its own check.
 
-## Open after presenter notes (0.29.0)
+## Open after presenter notes (0.29.0, 0.30.0)
 
 - Dry-run on the presenting Mac with an extended display, in Safari and
   Chrome: that `N` opens a window rather than a blocked pop-up, that it
@@ -72,5 +72,7 @@ the items below lives in `design-viewer-authoring.md`.
   the projector while the presenter window stays put and a clicker drives
   the deck with either window in front. Tested only in headless Chromium
   and Playwright WebKit on Windows.
-- Owner judgment after a lecture with notes: the type size, what the head
-  shows (label, title, step) and whether he wants a font-size control.
+- His first verdict (25 Nov) settled what notes are for: the full text he
+  reads, in sync with the steps (0.30.0). Still his to judge after a
+  lecture with full-text notes: the type size (decks may set it in
+  `deck.css`), and whether he wants a font-size control in the window.

@@ -729,6 +729,16 @@ body.presenter-mode .deck:empty { display: none; }
 .presenter-notes :is(img, svg, video) { max-width: 100%; }
 .presenter-notes a { color: var(--blue); }
 .presenter-empty { color: var(--faint); font-style: italic; }
+/* Notes that follow the steps: the block of the step on show is marked, the
+   blocks said fade, the blocks to come wait quietly. */
+.presenter-notes [data-step] {
+  margin: 0 0 .7em; padding: .15em 0 .15em .7em; border-radius: 4px;
+  box-shadow: inset 4px 0 0 transparent; transition: opacity .2s ease, box-shadow .2s ease;
+}
+.presenter-notes [data-step].is-now { box-shadow: inset 4px 0 0 var(--blue); }
+.presenter-notes [data-step].is-said { opacity: .45; }
+.presenter-notes [data-step].is-ahead { opacity: .3; }
+@media (prefers-reduced-motion: reduce) { .presenter-notes [data-step] { transition: none; } }
 .presenter-next small { flex-basis: 100%; }
 .presenter-next .presenter-label { font-size: 22px; }
 .presenter-next .presenter-title { color: var(--muted); font-size: 22px; line-height: 1.2; }

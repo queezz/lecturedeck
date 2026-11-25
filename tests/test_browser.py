@@ -651,7 +651,10 @@ NOTES_DECK = {
         {"id": "n-review", "title": "Homework review", "claim": "Worked.", "review": True},
         {"id": "n-steps", "title": "Stepped <em>idea</em>",
          "body": '<p data-step="1">First.</p><p data-step="2">Second.</p>',
-         "notes": f"<p>Energy {NOTE_TEX} levels, {NOTE_MARK}-2</p>"},
+         # Notes that follow the steps; a tall first block, so step 1 scrolls.
+         "notes": (f'<div data-step="0" style="min-height:1600px"><p>Energy {NOTE_TEX} levels, '
+                   f'{NOTE_MARK}-2</p></div><div data-step="1"><p>Say first.</p></div>'
+                   '<div data-step="2"><p>Say second.</p></div>')},
         {"id": "n-figure", "title": "Figure", "notes": f"{NOTE_MARK}-3",
          "figure": {"src": "assets/figure.png", "alt": "Figure"}},
         {"id": "n-plain", "title": "Plain", "claim": "Main four."},
@@ -3883,6 +3886,52 @@ class BrowserSmokeTest(unittest.TestCase):
         page.keyboard.press("ArrowRight")
         state = self.wait_label(popup, "2 / 11")
         self.assertEqual("No notes for this screen", state["notes"].strip())
+
+    def test_presenter_notes_follow_the_steps(self):
+        context = self.notes_context(viewport={"width": 1280, "height": 900})
+        page = self.open_in(context, self.urls["json"])
+        popup = self.open_presenter(page)
+        self.wait_label(popup, "1 / 4")
+        # Notes without data-step get no marks.
+        self.assertEqual(0, popup.locator("#presenter-notes .is-now").count())
+
+        def marks():
+            return popup.evaluate("""() => [...document.querySelectorAll(
+                '#presenter-notes [data-step]')]
+              .map(n => n.dataset.step + ':' + ['is-now', 'is-said', 'is-ahead']
+                .filter(c => n.classList.contains(c)).join(''))""")
+
+        def scroll():
+            return popup.evaluate("document.querySelector('#presenter-notes').scrollTop")
+
+        page.evaluate("() => { location.hash = '#/2'; }")
+        self.wait_label(popup, "2 / 4")
+        self.assertEqual(["0:is-now", "1:is-ahead", "2:is-ahead"], marks())
+        self.assertEqual(0, scroll())
+        # Each step moves the mark and brings its block into view.
+        page.keyboard.press("ArrowRight")
+        popup.wait_for_function(
+            "document.querySelector('#presenter-steps').textContent === 'step 1 of 2'")
+        self.assertEqual(["0:is-said", "1:is-now", "2:is-ahead"], marks())
+        popup.wait_for_function("document.querySelector('#presenter-notes').scrollTop > 1000")
+        popup.keyboard.press("ArrowRight")
+        popup.wait_for_function(
+            "document.querySelector('#presenter-steps').textContent === 'step 2 of 2'")
+        self.assertEqual(["0:is-said", "1:is-said", "2:is-now"], marks())
+        # Back to step 0: the first block again, at the top.
+        page.keyboard.press("ArrowLeft")
+        page.keyboard.press("ArrowLeft")
+        popup.wait_for_function(
+            "document.querySelector('#presenter-steps').textContent === 'step 0 of 2'")
+        self.assertEqual(["0:is-now", "1:is-ahead", "2:is-ahead"], marks())
+        popup.wait_for_function("document.querySelector('#presenter-notes').scrollTop === 0")
+        # Arriving on a screen already revealed marks its last block at once.
+        page.evaluate("() => { location.hash = '#/3'; }")
+        self.wait_label(popup, "3 / 4")
+        page.evaluate("() => { location.hash = '#/2.2'; }")
+        self.wait_label(popup, "2 / 4")
+        self.assertEqual(["0:is-said", "1:is-said", "2:is-now"], marks())
+        self.assertGreater(scroll(), 1000)
 
     def test_presenter_clock_shows_the_time_and_the_time_open(self):
         context = self.notes_context(timezone_id="UTC", viewport={"width": 1280, "height": 900})

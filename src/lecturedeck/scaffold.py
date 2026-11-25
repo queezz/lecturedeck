@@ -15,6 +15,8 @@ CONTENT_FILES = ("deck.css", "deck.json")
 # file matching one of these is a clean snapshot that refresh may replace.
 PUBLISHED_RUNTIME_HASHES = frozenset(
     {
+        "1b8e0df94b86fdbb8ff83030269e92c499489de6b7d5efb3799c1d48d6424d60",  # js v0.30.0
+        "6b2c71e0c91a5def8d0278e97fd16eb6ed34112af16911d95c545754a614d748",  # css v0.30.0
         "7524d9d882fe435ab07e8206d4f634feb926c2eb527391a5bb4c5d4e88ff541b",  # js v0.29.0
         "2d7c2850aca4e42070ebd296b46358bd4c99a04afe6302855b8a9a773f0feec5",  # css v0.29.0
         "93b63b0bafb25992669080857fe10e76498aefe00a073ff7660755d01ba4f3da",  # js v0.28.1

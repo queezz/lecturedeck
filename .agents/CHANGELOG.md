@@ -1,5 +1,20 @@
 # Changelog — shipped version history
 
+## 0.30.0
+
+Owner, 2026-11-25, after trying presenter notes in a lecture: "Presenter
+notes, I hated empty ones. I need all the text I need to read. And in sync
+with what's showing..."
+
+- Presenter notes can follow the steps. A part of the notes marked
+  `data-step="k"` is what to say at step k. The presenter window marks the
+  block of the step on show with a bar and scrolls it into view as the deck
+  steps; blocks already said fade, blocks to come stay faint but readable.
+  Paging back onto a revealed slide marks its last block at once, and step 0
+  returns to the top.
+- Notes without `data-step` behave as in 0.29.0.
+- The blocks carry `.is-now`, `.is-said` and `.is-ahead`, for `deck.css`.
+
 ## 0.29.0
 
 Owner, 2026-11-16: presenter notes as a nice-to-have, to dry-run in real

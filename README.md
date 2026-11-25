@@ -650,6 +650,26 @@ uses notes should declare `"requires": ">=0.29"`.
  "notes": "<p>Ask first: what limits a measurement?</p><ul><li>Then the slit.</li></ul>"}
 ```
 
+**Notes that follow the steps** (since 0.30.0). On a stepped slide, give each
+part of the notes the step it belongs to with `data-step`, as in a slide's
+body: `data-step="0"` for what to say when the slide opens, `"1"` when step 1
+appears, and so on.
+
+```json
+{"id": "slit", "title": "A slit",
+ "body": "<p data-step=\"1\">Narrow it.</p>",
+ "notes": "<div data-step=\"0\"><p>Here is a slit.</p></div><div data-step=\"1\"><p>Now narrow it: the spot widens.</p></div>"}
+```
+
+The presenter window marks the block of the step on show (the last block at
+or before it) with a bar and scrolls it into view; blocks already passed fade,
+blocks still to come stay faint but readable. Arriving on a slide already
+revealed (paging back) marks its last block at once. Notes without
+`data-step` behave as before and keep their scroll as the steps change. The
+blocks carry `.is-now`, `.is-said` and `.is-ahead`, for `deck.css` to restyle.
+A 0.29 viewer shows the same notes in order, unmarked, so a deck may keep
+`"requires": ">=0.29"`; declare `">=0.30"` only if it depends on the marks.
+
 `N` in the deck (or the **Notes** control, which appears on a deck with
 notes) opens a second browser window: this deck's page again, at
 `?presenter=1`. It shows
