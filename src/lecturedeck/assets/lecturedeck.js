@@ -1,7 +1,7 @@
 (() => {
   "use strict";
   // Kept in lockstep with the Python package version by the test suite.
-  const VIEWER_VERSION = "0.31.0";
+  const VIEWER_VERSION = "0.32.0";
   const DECK_SCHEMA_VERSION = 1;
   const SLIDE_WIDTH = 1280;
   const SLIDE_HEIGHT = 720;
@@ -2823,11 +2823,14 @@
     viewer.className = "photo-viewer";
     viewer.setAttribute("aria-label", "Photo viewer");
     const photoButton = (act, label, text, key) => `<button type="button" data-photo-act="${act}" aria-label="${label}" title="${label} (${key})">${text}</button>`;
-    const photoGroup = (name, label, down, up) => `<span class="photo-group">${photoButton(...down)}<span class="photo-value" data-photo-value="${name}" aria-live="polite">${label} <span class="photo-number"></span></span>${photoButton(...up)}</span>`;
+    // Brightness and contrast also have a slider (0.32.0), between the value
+    // and the + button, over the same range in the same steps.
+    const photoSlider = (name, label) => `<input type="range" class="photo-slider" data-photo-slider="${name}" min="${PHOTO_MIN}" max="${PHOTO_MAX}" step="${PHOTO_STEP}" value="100" aria-label="${label}">`;
+    const photoGroup = (name, label, down, up, slider = false) => `<span class="photo-group">${photoButton(...down)}<span class="photo-value" data-photo-value="${name}" aria-live="polite">${label} <span class="photo-number"></span></span>${slider ? photoSlider(name, label) : ""}${photoButton(...up)}</span>`;
     viewer.innerHTML = '<div class="photo-stage" tabindex="-1"></div>'
       + '<div class="photo-bar" role="group" aria-label="Photo controls">'
-      + photoGroup("brightness", "Brightness", ["brightness-down", "Less brightness", "−", "Shift+B"], ["brightness-up", "More brightness", "+", "B"])
-      + photoGroup("contrast", "Contrast", ["contrast-down", "Less contrast", "−", "Shift+C"], ["contrast-up", "More contrast", "+", "C"])
+      + photoGroup("brightness", "Brightness", ["brightness-down", "Less brightness", "−", "Shift+B"], ["brightness-up", "More brightness", "+", "B"], true)
+      + photoGroup("contrast", "Contrast", ["contrast-down", "Less contrast", "−", "Shift+C"], ["contrast-up", "More contrast", "+", "C"], true)
       + photoGroup("zoom", "Zoom", ["zoom-out", "Zoom out", "−", "−"], ["zoom-in", "Zoom in", "+", "+"])
       + '<button type="button" class="photo-toggle" data-photo-act="all" aria-pressed="false" title="Use this brightness and contrast on every photo and video of the deck (A)">Use on all photos</button>'
       + photoButton("reset", "Reset brightness, contrast and zoom", "Reset", "0")
@@ -2862,6 +2865,9 @@
       const {brightness, contrast, all} = photoSettings;
       photoNumber("brightness").textContent = `${brightness}${NBSP}%`;
       photoNumber("contrast").textContent = `${contrast}${NBSP}%`;
+      for (const slider of viewer.querySelectorAll("[data-photo-slider]")) {
+        slider.value = String(photoSettings[slider.dataset.photoSlider]);
+      }
       photoNumber("zoom").textContent = `${photoView.zoom.toFixed(1)}×`;
       const limits = {
         "brightness-down": brightness <= PHOTO_MIN, "brightness-up": brightness >= PHOTO_MAX,
@@ -3123,6 +3129,9 @@
     // it; every other deck shortcut waits behind it, except the laser.
     function photoKeydown(event) {
       const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
+      // A slider reached with Tab takes its own arrows, Home and End.
+      if (event.target instanceof HTMLInputElement && event.target.type === "range"
+        && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
       if (event.key === "Escape" || (plain && PHOTO_CLOSE_KEYS.has(event.key))) {
         event.preventDefault();
         closePhoto();
@@ -3155,6 +3164,19 @@
     photoBar.addEventListener("click", event => {
       const button = event.target instanceof Element ? event.target.closest("[data-photo-act]") : null;
       if (button) photoAction(button.dataset.photoAct);
+    });
+    photoBar.addEventListener("input", event => {
+      const slider = event.target instanceof Element ? event.target.closest("[data-photo-slider]") : null;
+      if (!slider) return;
+      photoSettings[slider.dataset.photoSlider] = photoLevel(Number(slider.value));
+      applyPhotoSettings();
+    });
+    // A slider dragged with the mouse lets go of the focus, so the
+    // clicker's keys close the photo again instead of moving the slider.
+    photoBar.addEventListener("pointerup", event => {
+      if (event.target instanceof HTMLInputElement && event.target.type === "range") {
+        setTimeout(() => event.target.blur(), 0);
+      }
     });
     // The stage around the picture is the backdrop; a drag that ends there
     // is no click on it.
@@ -3776,11 +3798,20 @@
       if (video) {
         if (!presenterHooked.has(video)) {
           presenterHooked.add(video);
-          for (const name of ["play", "pause", "ended"]) video.addEventListener(name, () => presenterUpdate());
+          for (const name of ["play", "pause", "ended", "volumechange"]) {
+            video.addEventListener(name, () => presenterUpdate());
+          }
         }
         const playing = !video.paused && !video.ended;
+        // Sound (0.32.0): on or off, and the volume in tenths; a change made
+        // on the projector's own player shows here too.
+        const sound = !video.muted && video.volume > 0;
         return [{id: "video:toggle", label: playing ? "Pause video" : "Play video", pressed: playing},
-          {id: "video:restart", label: "Restart video", pressed: false}];
+          {id: "video:restart", label: "Restart video", pressed: false},
+          {id: "video:sound", label: sound ? `Mute · ${Math.round(video.volume * 100)} %` : "Sound on",
+            pressed: sound},
+          {id: "video:quieter", label: "Quieter", pressed: false},
+          {id: "video:louder", label: "Louder", pressed: false}];
       }
       const iframe = frame.querySelector(".interactive-frame iframe");
       if (!iframe) return [];
@@ -3806,6 +3837,29 @@
       if (!frame) return;
       const video = frame.querySelector("video");
       if (video && id.startsWith("video:")) {
+        if (["video:sound", "video:quieter", "video:louder"].includes(id)) {
+          if (id === "video:sound" && !video.muted && video.volume > 0) { video.muted = true; return; }
+          if (id !== "video:sound") {
+            const step = id === "video:louder" ? 1 : -1;
+            video.volume = Math.min(1, Math.max(0, Math.round(video.volume * 10 + step) / 10));
+          }
+          if (id === "video:quieter") return;
+          if (video.volume === 0) video.volume = 0.5;
+          const wasPlaying = !video.paused && !video.ended;
+          video.muted = false;
+          // A browser that refuses sound to a window not yet clicked pauses
+          // the video instead: play it on, muted, and say so.
+          if (wasPlaying) {
+            setTimeout(() => {
+              if (!video.paused || video.ended) return;
+              video.muted = true;
+              Promise.resolve(video.play()).catch(() => {});
+              presenterLink?.postMessage({type: "notice",
+                text: "The deck window may not play sound yet. Click the deck window once to allow sound."});
+            }, 150);
+          }
+          return;
+        }
         if (id === "video:restart") video.currentTime = 0;
         if (id === "video:restart" || video.paused || video.ended) {
           // A browser may refuse sound to a window not yet clicked: then play muted, and say so.

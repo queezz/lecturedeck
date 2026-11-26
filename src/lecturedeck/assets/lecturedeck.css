@@ -357,6 +357,8 @@ body.laser-active .photo-viewer[open] .photo-stage, body.laser-active .photo-vie
    90 % to 100 % or 1.0× to 1.4× moves no button. */
 .photo-value { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .photo-number { display: inline-block; min-width: 3em; text-align: right; }
+.photo-slider { width: 160px; height: 32px; margin: 0; accent-color: #fabd2f; cursor: pointer; touch-action: none; }
+.photo-slider:focus-visible { outline: 3px solid #83a598; outline-offset: 2px; }
 .photo-toggle::before {
   content: ""; display: inline-block; width: .8em; height: .8em; margin-right: .45em; vertical-align: -.08em;
   border: 2px solid currentColor; border-radius: 3px;
@@ -365,6 +367,7 @@ body.laser-active .photo-viewer[open] .photo-stage, body.laser-active .photo-vie
 .photo-toggle[aria-pressed="true"]::before { background: currentColor; box-shadow: inset 0 0 0 2px #fabd2f; }
 @media (max-width: 700px) {
   .photo-bar { gap: 8px 12px; padding-top: 8px; font-size: 18px; }
+  .photo-slider { width: 100px; }
 }
 @media print { .photo-viewer, .photo-viewer[open] { display: none; } }
 /* Photo hotspots. The layer lies exactly on the drawn picture, placed from

@@ -1,5 +1,25 @@
 # Changelog — shipped version history
 
+## 0.32.0
+
+The owner, 2026-11-26, from the presenter window on a video screen: "I need
+sound controls for video in my notes." Then, on the enlarged video: "Also the
+contrast and brightness, I want a slider, keep the buttons too."
+
+- On a video screen the presenter window now also offers the sound: "Sound
+  on", or "Mute" with the volume beside it ("Mute · 80 %"), and "Quieter" and
+  "Louder" in tenths. Until now the window could only play, pause and
+  restart, and a muted clip could be unmuted only on the projector's own
+  player. A change made on the projector's player shows in the window too.
+  If the browser refuses sound to a deck window nobody has clicked yet, the
+  video keeps playing muted and the window says to click the deck window
+  once.
+- The enlarged photo or video has a slider for brightness and one for
+  contrast, between each value and its + button, over the same range (50 to
+  300 %) in the same steps. The buttons and the B and C keys stay and move
+  the slider with them. A slider dragged with the mouse gives the focus back,
+  so the clicker's keys still close the photo.
+
 ## 0.31.0
 
 The owner, 2026-11-26, presenting from the presenter window with full-text

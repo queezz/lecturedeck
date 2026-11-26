@@ -2768,6 +2768,34 @@ class BrowserSmokeTest(unittest.TestCase):
             ".map((s, i) => getComputedStyle(document.querySelector(s))"
             "[i === 1 ? 'color' : 'backgroundColor'])"))
 
+    def test_photo_sliders_follow_the_buttons(self):
+        # 0.32.0: a slider for brightness and one for contrast, beside the buttons.
+        page = self.open_photo_deck("#/1", viewport={"width": 1280, "height": 800})
+        self.open_photo(page, "#deck .figure-card img")
+        sliders = ("[...document.querySelectorAll('#photo-viewer [data-photo-slider]')]"
+                   ".map(s => [s.dataset.photoSlider, s.value, s.min, s.max, s.step])")
+        self.assertEqual([["brightness", "100", "50", "300", "10"],
+                          ["contrast", "100", "50", "300", "10"]], page.evaluate(sliders))
+        page.click('#photo-viewer [data-photo-act="brightness-up"]')
+        self.assertEqual("110", page.evaluate(
+            "document.querySelector('[data-photo-slider=brightness]').value"))
+        page.evaluate("""() => {
+          const s = document.querySelector('[data-photo-slider=contrast]');
+          s.value = '170';
+          s.dispatchEvent(new Event('input', {bubbles: true}));
+        }""")
+        state = self.photo(page)
+        self.assertEqual((["Brightness 110 %", "Contrast 170 %", "Zoom 1.0×"],
+                          "brightness(110%) contrast(170%)"), (state["values"], state["filter"]))
+        # A slider moved with the mouse gives the focus back: the clicker still closes.
+        box = self.box(page, '#photo-viewer [data-photo-slider="brightness"]')
+        page.mouse.click(box["x"] + box["w"] * 0.9, box["y"] + box["h"] / 2)
+        page.wait_for_function(
+            "document.querySelector('[data-photo-slider=brightness]').value !== '110'"
+            " && document.activeElement?.dataset?.photoSlider !== 'brightness'")
+        page.keyboard.press("PageDown")
+        page.wait_for_selector("#photo-viewer", state="hidden")
+
     def test_photo_brightness_contrast_and_shortcuts(self):
         page = self.open_photo_deck("#/1", viewport={"width": 1280, "height": 800})
         image = "#deck .figure-card img"
@@ -4022,8 +4050,28 @@ class BrowserSmokeTest(unittest.TestCase):
         page.evaluate("() => { location.hash = '#/1'; }")
         self.wait_label(popup, "2 / 4")
         popup.wait_for_function(
-            "document.querySelectorAll('#presenter-controls button').length === 2")
-        self.assertEqual(["Play video", "Restart video"], controls())
+            "document.querySelectorAll('#presenter-controls button').length === 5")
+        self.assertEqual(["Play video", "Restart video", "Mute · 100 %", "Quieter", "Louder"],
+                         controls())
+        # Sound (0.32.0): off and on again, and the volume in tenths, here
+        # and on the deck's own player.
+        sound = "#presenter-controls button[data-control='video:sound']"
+        muted = "document.querySelector('.slide-frame video').muted"
+
+        def sound_label(text):
+            popup.wait_for_function(f"document.querySelector(\"{sound}\").textContent === '{text}'")
+
+        popup.click(sound)
+        page.wait_for_function(f"{muted} === true")
+        sound_label("Sound on")
+        popup.click("#presenter-controls button[data-control='video:quieter']")
+        popup.click(sound)
+        page.wait_for_function(f"{muted} === false")
+        sound_label("Mute · 90 %")
+        popup.click("#presenter-controls button[data-control='video:louder']")
+        sound_label("Mute · 100 %")
+        page.evaluate(f"{muted} = true")
+        sound_label("Sound on")
         popup.click("#presenter-controls button[data-control='video:toggle']")
         page.wait_for_function("window.__plays === 1")
         popup.wait_for_function(

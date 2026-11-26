@@ -485,8 +485,9 @@ and never page the deck, and `Escape` only closes the dialog.
 A projector eats contrast. A click or tap on a content image of the live
 slide opens it in an overlay that fills the window, scaled to fit, with big
 plain controls along the bottom edge: brightness `−`/`+`, contrast `−`/`+`,
-zoom `−`/`+`, **Use on all photos**, **Reset** and **Close**, each value
-shown as it changes (`Brightness 130 %`). The zoom-in cursor marks every
+each with a slider between the value and its `+` (since 0.32.0), zoom
+`−`/`+`, **Use on all photos**, **Reset** and **Close**, each value shown as
+it changes (`Brightness 130 %`). The zoom-in cursor marks every
 image that opens: figures, figure grids, and images in slide HTML such as a
 photo card. A click on a `<video>` still plays and pauses it, so a video
 opens from a small expand control on its top right corner instead; the
@@ -685,8 +686,10 @@ notes) opens a second browser window: this deck's page again, at
   the time left in the slot as the deck's lecture clock reads it: "Starts
   13:15", then "Left 12 min" (gold in the last five minutes), then "Over
   +3 min" (since 0.31.0);
-- on a screen with a video, **Play video** (or **Pause video**) and
-  **Restart video**; on a screen with an animation from the deck's own
+- on a screen with a video, **Play video** (or **Pause video**),
+  **Restart video**, and the sound: **Sound on**, or **Mute** with the volume
+  beside it, and **Quieter** and **Louder** in tenths (since 0.32.0); on a
+  screen with an animation from the deck's own
   address, that animation's own buttons, labelled as they label themselves
   (`aria-label`, else their text) and marked when pressed (`aria-pressed`).
   Pressing one here presses it in the deck, so the presenter never reaches
